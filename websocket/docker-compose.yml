@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: osmo-backend
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - SAVE_TO_DB=${SAVE_TO_DB:-False}
+      - DATABASE_URL=postgresql://osmo_user:osmo_password@db:5432/osmo_db
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: osmo-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+  db:
+    image: postgres:15-alpine
+    container_name: osmo-db
+    environment:
+      POSTGRES_USER: osmo_user
+      POSTGRES_PASSWORD: osmo_password
+      POSTGRES_DB: osmo_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+volumes:
+  postgres_data:
+
+
+networks:
+  osmo-network:
+    driver: bridge

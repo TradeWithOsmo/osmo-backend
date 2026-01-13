@@ -1,0 +1,26 @@
+{
+    "info": {
+        "_postman_id": "c7e30534-38b1-4506-bb29-a0a07a9c7e0c",
+        "name": "Backend Websocket Test",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Echo Test",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "ws://localhost:8000",
+                    "protocol": "ws",
+                    "host": [
+                        "localhost"
+                    ],
+                    "port": "8000"
+                },
+                "description": "Connect to WebSocket server. Send JSON: {\"action\": \"subscribe\", \"symbol\": \"BTC/USDT\"}"
+            },
+            "response": []
+        }
+    ]
+}

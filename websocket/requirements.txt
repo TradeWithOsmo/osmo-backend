@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+websockets
+httpx
+pandas
+sqlalchemy
+psycopg2-binary
+asyncpg
+msgpack
+pydantic-settings
+prometheus-client
+python-dotenv
+PyJWT[crypto]
+cryptography
+redis
