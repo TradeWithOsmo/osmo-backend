@@ -1,0 +1,16 @@
+    
+    async def _register_mem0(self) -> None:
+        """Register mem0 Memory connector"""
+        try:
+            config = {
+                "enabled": os.getenv("MEM0_ENABLED", "false").lower() == "true",
+                "storage_type": os.getenv("MEM0_STORAGE_TYPE", "in_memory"),
+                "embedding_model": os.getenv("MEM0_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+            }
+            
+            connector = Mem0Connector(config)
+            self.manager.register_connector("mem0", connector)
+            
+            logger.info(f"✓ mem0 connector registered ({'enabled' if config['enabled'] else 'disabled'})")
+        except Exception as e:
+            logger.error(f"✗ mem0 registration failed: {e}")

@@ -1,0 +1,31 @@
+# Dependencies for Data Connectors
+
+## Core Dependencies (Already Installed)
+fastapi
+uvicorn
+websockets
+httpx
+redis
+pydantic
+
+## New Required Dependencies
+
+### Chainlink (Oracle)
+web3==6.15.0
+
+### Dune Analytics (On-chain)
+dune-client==1.5.0
+
+### OpenRouter (Web Search)
+# Uses httpx (already installed)
+
+### Optional: mem0 (Memory Layer - Phase 4)
+# mem0ai==0.1.12
+# qdrant-client==1.7.0
+# openai==1.7.0
+
+## Install New Dependencies
+# pip install web3==6.15.0 dune-client==1.5.0
+
+## Install All at Once
+# pip install -r requirements.txt

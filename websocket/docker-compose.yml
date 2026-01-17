@@ -6,6 +6,9 @@ services:
     container_name: osmo-backend
     volumes:
       - .:/app
+      - ../connectors:/app/connectors
+      - ../analysis:/app/analysis
+      - ../analysis:/app/analysis
     ports:
       - "8000:8000"
     env_file:
@@ -40,11 +43,48 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-q", "-d", "osmo_db", "-U", "osmo_user" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - osmo-network
+
+  mem0:
+    build:
+      context: ../mem0/server
+      dockerfile: Dockerfile
+    container_name: osmo-mem0
+    ports:
+      - "8888:8000"
+    env_file:
+      - ../mem0/server/.env
+    environment:
+      - VECTOR_STORE_PROVIDER=qdrant
+      - QDRANT_HOST=osmo-qdrant
+      - QDRANT_PORT=6333
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    networks:
+      - osmo-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: osmo-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
     networks:
       - osmo-network
 
 volumes:
   postgres_data:
+  qdrant_data:
 
 
 networks:

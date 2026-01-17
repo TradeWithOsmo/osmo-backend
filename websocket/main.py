@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app, Counter, Gauge, Histogram
 import signal
 import sys
+import os
 import logging
 import asyncio
 import json
@@ -22,6 +23,12 @@ from Ostium.persistence import CandlePersister
 from database.connection import init_db
 from database.models import Candle, Trade
 from storage.redis_manager import redis_manager
+
+# Import connector system
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from connectors.init_connectors import connector_registry
+from connectors.api_routes import router as connectors_router
 
 # Configure logging
 logging.basicConfig(
@@ -216,8 +223,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Redis connection failed: {e}")
     
-    # Start Bridge Monitor
-    await bridge_monitor.start()
+    # Start Bridge Monitor - REMOVED (Not implemented)
+    # await bridge_monitor.start()
 
     # Start Hyperliquid WebSocket client
     try:
@@ -242,6 +249,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Failed to start Ostium poller: {e}")
 
+    # Initialize Connector System
+    try:
+        await connector_registry.initialize(redis_url=settings.REDIS_URL)
+        logger.info("✅ Connector system initialized")
+    except Exception as e:
+        logger.error(f"❌ Connector initialization failed: {e}")
+    
     # Initialize Database
     try:
         await init_db()
@@ -253,6 +267,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("🛑 Shutting down gracefully...")
+    
+    # Shutdown connector system
+    await connector_registry.shutdown()
+    
     if hyperliquid_client:
         await hyperliquid_client.disconnect()
     
@@ -293,6 +311,9 @@ app.mount("/metrics", metrics_app)
 # Include Routers
 from routers.user import router as user_router
 app.include_router(user_router)
+
+# Include Connector Routes
+app.include_router(connectors_router)
 
 
 # Health check endpoint

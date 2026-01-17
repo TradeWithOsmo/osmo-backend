@@ -13,3 +13,5 @@ python-dotenv
 PyJWT[crypto]
 cryptography
 redis
+pandas_ta
+numpy
