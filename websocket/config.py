@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # Security
     JWT_SECRET: Optional[str] = None
     JWT_EXPIRY_HOURS: int = 1
-    CORS_ORIGINS: str = "*"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://localhost:8000"
     PRIVY_APP_ID: Optional[str] = None
     PRIVY_VERIFICATION_KEY: Optional[str] = None
     

@@ -142,3 +142,29 @@ async def set_timeframe(symbol: str, timeframe: str) -> Dict[str, Any]:
             return {"status": "success", "info": f"Timeframe set to {timeframe} for {symbol}."}
         except Exception as e:
             return {"error": f"Failed to set timeframe: {str(e)}"}
+
+async def set_symbol(symbol: str, target_symbol: str) -> Dict[str, Any]:
+    """
+    Change the symbol/ticker of the chart.
+    
+    Args:
+        symbol: Current symbol identifier (not used for targeting, but for consistency).
+        target_symbol: The new symbol to load (e.g., "ETHUSDT", "NASDAQ:AAPL").
+    """
+    url = f"{CONNECTORS_API}/tradingview/commands"
+    
+    command = {
+        "symbol": symbol,
+        "action": "set_symbol",
+        "params": {
+            "symbol": target_symbol
+        }
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=command)
+            resp.raise_for_status()
+            return {"status": "success", "info": f"Chart switched to {target_symbol}."}
+        except Exception as e:
+            return {"error": f"Failed to set symbol: {str(e)}"}
