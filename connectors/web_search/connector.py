@@ -163,6 +163,15 @@ class WebSearchConnector(BaseConnector):
             )
             
             result = response.json()
+            
+            # Check for API error
+            if "error" in result:
+                error_msg = result["error"].get("message", str(result["error"]))
+                raise Exception(f"OpenRouter API Error: {error_msg}")
+            
+            if "choices" not in result:
+                raise Exception(f"Unexpected API response: {result}")
+                
             content = result["choices"][0]["message"]["content"]
             
             # Calculate cost
@@ -177,6 +186,7 @@ class WebSearchConnector(BaseConnector):
             }
         
         except Exception as e:
+            # self.status = ConnectorStatus.ERROR # Don't mark offline for transient errors
             raise Exception(f"Perplexity search failed: {e}")
     
     def normalize(self, raw_data: Any, source: str) -> Dict[str, Any]:

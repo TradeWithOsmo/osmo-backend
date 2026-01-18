@@ -9,7 +9,6 @@ from typing import Dict, Any, Callable
 import os
 import asyncio
 
-
 class DuneConnector(BaseConnector):
     """
     Dune Analytics connector for on-chain data.

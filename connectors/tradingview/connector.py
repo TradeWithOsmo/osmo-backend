@@ -5,7 +5,7 @@ Receive pre-calculated indicators from frontend TradingView widget.
 """
 
 from ..base_connector import BaseConnector, ConnectorStatus
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, List
 import json
 
 
@@ -120,6 +120,48 @@ class TradingViewConnector(BaseConnector):
             "has_screenshot": "chart_screenshot" in data
         }
     
+    async def queue_command(self, symbol: str, command: Dict[str, Any]) -> None:
+        """
+        Queue a command for the frontend to execute.
+        
+        Args:
+            symbol: Trading symbol (e.g., "BTCUSD")
+            command: Command dict (e.g., {"action": "set_timeframe", "params": "1h"})
+        """
+        if not symbol or not command:
+            return
+            
+        key = f"commands:tradingview:{symbol}"
+        # Expire commands after 60s if not picked up
+        await self.redis_client.rpush(key, json.dumps(command))
+        await self.redis_client.expire(key, 60)
+        
+    async def get_pending_commands(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Get and clear pending commands for a symbol.
+        """
+        key = f"commands:tradingview:{symbol}"
+        
+        # Get all items
+        # Use simple transaction logic: get all, delete key
+        # Or just lpop loop. lrange + del is safer for atomicity if script, but here simple is fine.
+        
+        # Using pipeline for atomicity
+        async with self.redis_client.pipeline() as pipe:
+            pipe.lrange(key, 0, -1)
+            pipe.delete(key)
+            result = await pipe.execute()
+            
+        raw_commands = result[0]
+        commands = []
+        for cmd_str in raw_commands:
+            try:
+                commands.append(json.loads(cmd_str))
+            except:
+                pass
+                
+        return commands
+
     def normalize(self, raw_data: Any) -> Dict[str, Any]:
         """
         Normalize TradingView data.

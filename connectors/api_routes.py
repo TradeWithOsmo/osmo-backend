@@ -43,9 +43,17 @@ class ConnectorStatusResponse(BaseModel):
 # Dependency: Get Redis client
 async def get_redis():
     """Get Redis connection"""
-    redis_client = await redis.from_url("redis://redis:6379")
     try:
+        # Use service name 'redis' which is defined in docker-compose
+        redis_client = await redis.from_url(
+            "redis://redis:6379",
+            encoding="utf-8",
+            decode_responses=True
+        )
         yield redis_client
+    except Exception as e:
+        print(f"Redis Dependency Error: {e}")
+        raise
     finally:
         await redis_client.close()
 
@@ -54,19 +62,50 @@ async def get_redis():
 def get_manager():
     """
     Get connector manager instance.
-    
-    In production, this should be initialized once at app startup
-    and stored in app.state.
+    Uses the global registry initialized in main.py.
     """
-    from ..manager import ConnectorManager
-    from ..tradingview import TradingViewConnector
-    from ..chainlink import ChainlinkConnector
-    from ..hyperliquid import HyperliquidConnector
-    from ..ostium import OstiumConnector
-    
-    # This is simplified - in production, initialize in lifespan
-    manager = ConnectorManager()
-    return manager
+    from connectors.init_connectors import get_connector_manager
+    return get_connector_manager()
+
+
+class CommandRequest(BaseModel):
+    symbol: str
+    action: str  # "set_timeframe", "add_indicator"
+    params: Dict[str, Any]
+
+
+@router.post("/tradingview/commands")
+async def send_tradingview_command(
+    cmd: CommandRequest,
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """
+    Queue a command for the TradingView frontend.
+    """
+    try:
+        from connectors.tradingview import TradingViewConnector
+        connector = TradingViewConnector({"redis_client": redis_client})
+        await connector.queue_command(cmd.symbol, {"action": cmd.action, "params": cmd.params})
+        return {"status": "queued", "command": cmd.dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tradingview/commands/{symbol}")
+async def get_tradingview_commands(
+    symbol: str,
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """
+    Get pending commands for the frontend.
+    """
+    try:
+        from connectors.tradingview import TradingViewConnector
+        connector = TradingViewConnector({"redis_client": redis_client})
+        commands = await connector.get_pending_commands(symbol)
+        return commands
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tradingview/indicators", response_model=IndicatorResponse)
@@ -170,23 +209,141 @@ async def get_price(
 ):
     """
     Get current price for symbol.
-    
-    Args:
-        symbol: Trading symbol (e.g., "BTC", "GOLD")
-        asset_type: "crypto" (Hyperliquid) or "rwa" (Ostium)
-    
-    Returns:
-        Price data from appropriate connector
     """
     try:
-        from ..data.market import get_current_price
+        from connectors.manager import AssetType, DataCategory
         
-        price_data = await get_current_price(manager, symbol, asset_type)
+        a_type = AssetType.CRYPTO if asset_type == "crypto" else AssetType.RWA
         
-        return price_data
+        # Use manager directly
+        result = await manager.fetch_data(
+            category=DataCategory.MARKET,
+            symbol=symbol,
+            asset_type=a_type
+        )
+        return result
+        
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/funding/{symbol}")
+async def get_funding_rate(
+    symbol: str,
+    manager = Depends(get_manager)
+):
+    """
+    Get funding rate data.
+    """
+    try:
+        from connectors.manager import DataCategory
+        result = await manager.fetch_data(
+            category=DataCategory.FUNDING,
+            symbol=symbol
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/orderbook/{symbol}")
+async def get_orderbook(
+    symbol: str,
+    manager = Depends(get_manager)
+):
+    """
+    Get L2 Orderbook data.
+    """
+    try:
+        from connectors.manager import DataCategory
+        result = await manager.fetch_data(
+            category=DataCategory.ORDERBOOK,
+            symbol=symbol
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/candles/{symbol}")
+async def get_candles(
+    symbol: str,
+    timeframe: str = "1H",
+    limit: int = 100,
+    asset_type: str = "crypto",
+    manager = Depends(get_manager)
+):
+    """
+    Get OHLCV Candles (Raw).
+    """
+    try:
+        from connectors.manager import AssetType, DataCategory
+        
+        a_type = AssetType.CRYPTO if asset_type == "crypto" else AssetType.RWA
+        
+        result = await manager.fetch_data(
+            category=DataCategory.CANDLES,
+            symbol=symbol,
+            asset_type=a_type,
+            timeframe=timeframe,
+            limit=limit
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/web_search/search")
+async def search_web(
+    query: str,
+    source: str = "news",
+    manager = Depends(get_manager)
+):
+    """
+    Execute web search via Grok or Perplexity.
+    """
+    try:
+        # Get connector by name
+        connector = manager.get_connector("web_search")
+        if not connector:
+            raise HTTPException(status_code=404, detail="Web search connector not active")
+
+        result = await connector.fetch("UNKNOWN", query=query, source=source)
+        return result
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/dune/whale_trades/{symbol}")
+async def get_whale_trades(
+    symbol: str,
+    min_size_usd: int = 100000,
+    manager = Depends(get_manager)
+):
+    """
+    Get whale trades from Dune Analytics.
+    """
+    try:
+        connector = manager.get_connector("dune")
+        if not connector:
+            raise HTTPException(status_code=404, detail="Dune connector not active")
+
+        result = await connector.fetch(symbol, min_size_usd=min_size_usd)
+        return result
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/analysis/technical/{symbol}")
 async def get_technical_analysis(
@@ -196,43 +353,23 @@ async def get_technical_analysis(
     manager = Depends(get_manager)
 ):
     """
-    Get algorithmic technical analysis (patterns + indicators).
-    Uses pandas-ta on raw OHLCV data.
-    
-    Args:
-        symbol: Trading symbol
-        timeframe: Candle timeframe (default 1D)
-        asset_type: "crypto" or "rwa"
-        
-    Returns:
-        {
-            "symbol": "BTC",
-            "price": 42000,
-            "indicators": {...},
-            "patterns": ["Doji", "Bullish Engulfing"]
-        }
+    Get algorithmic technical analysis.
     """
     try:
         from analysis.engine import TechnicalAnalysisEngine
-        from ..manager import DataCategory, AssetType
+        from connectors.manager import DataCategory, AssetType
         
         # 1. Fetch OHLCV Data
-        # Map string asset_type to Enum
         a_type = AssetType.CRYPTO if asset_type == "crypto" else AssetType.RWA
         
-        # Fetch candles (returns list of dicts)
-        # Note: We rely on ConnectorManager to route to Hyperliquid/Ostium
         candles_data = await manager.fetch_data(
             category=DataCategory.CANDLES,
             symbol=symbol,
             asset_type=a_type,
             timeframe=timeframe,
-            limit=50  # Need enough for indicators
+            limit=50
         )
         
-        # Extract the list of candles from the response
-        # Hyperliquid/Ostium connectors should return standard format
-        # If response is wrapped, extract 'data'
         ohlcv = candles_data.get("data", []) if isinstance(candles_data, dict) else candles_data
         
         # 2. Run Analysis
@@ -242,5 +379,6 @@ async def get_technical_analysis(
         return result
 
     except Exception as e:
-        print(f"Analysis error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
