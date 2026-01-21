@@ -168,3 +168,154 @@ async def set_symbol(symbol: str, target_symbol: str) -> Dict[str, Any]:
             return {"status": "success", "info": f"Chart switched to {target_symbol}."}
         except Exception as e:
             return {"error": f"Failed to set symbol: {str(e)}"}
+
+async def setup_trade(
+    symbol: str, 
+    side: str, 
+    entry: float, 
+    sl: float, 
+    tp: float, 
+    tp2: Optional[float] = None, 
+    tp3: Optional[float] = None,
+    trailing_sl: Optional[float] = None,
+    be: Optional[float] = None,
+    liq: Optional[float] = None,
+    gp: Optional[float] = None,
+    gl: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Visually setup a trade on the chart using Native Order Lines.
+    
+    Args:
+        symbol: The trading symbol.
+        side: "long" or "short"
+        entry: Entry price.
+        sl: Stop Loss price.
+        tp: Take Profit 1 price.
+        tp2: (Optional) Take Profit 2 price.
+        tp3: (Optional) Take Profit 3 price.
+        trailing_sl: (Optional) Trailing Stop price.
+        be: (Optional) Break Even price.
+        liq: (Optional) Liquidation price.
+        gp: (Optional) Generate Profit Decision (AI Tripwire).
+        gl: (Optional) Generate Loss Decision (AI Tripwire).
+    """
+    enhanced_command = {
+        "symbol": symbol,
+        "action": "setup_trade", # Special action for the handler
+        "params": {
+            "side": side.lower(),
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "tp2": tp2,
+            "tp3": tp3,
+            "trailing_sl": trailing_sl,
+            "be": be,
+            "liq": liq,
+            "gp": gp,
+            "gl": gl
+        }
+    }
+    
+    url = f"{CONNECTORS_API}/tradingview/commands"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=enhanced_command)
+            resp.raise_for_status()
+            return {"status": "success", "info": f"Trade setup ({side}) visualized on chart."}
+        except Exception as e:
+            return {"error": f"Failed to setup trade: {str(e)}"}
+
+async def add_price_alert(symbol: str, price: float, message: str) -> Dict[str, Any]:
+    """
+    Create a Price Alert.
+    1. Visualizes it on the chart (Dashed Orange Line).
+    2. Registers it in the system for monitoring.
+    """
+    # 1. Visualization Command
+    visual_cmd = {
+        "symbol": symbol,
+        "action": "draw_shape",
+        "params": {
+            "type": "horizontal_line",
+            "id": f"alert_{int(price)}",
+            "points": [{"price": price}],
+            "text": f"🔔 ALERT: {message}",
+            "style": {
+                "color": "#FF9800",
+                "linestyle": 1,
+                "linewidth": 2,
+                "text": f"🔔 {message}"
+            }
+        }
+    }
+
+    # 2. System Registration (for log)
+    print(f"Server: Registered Alert for {symbol} @ {price} | Msg: {message}")
+
+    url = f"{CONNECTORS_API}/tradingview/commands"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(url, json=visual_cmd)
+            return {"status": "success", "info": f"Alert set at {price}: {message}"}
+        except Exception as e:
+            return {"error": f"Failed to set alert: {str(e)}"}
+
+async def mark_trading_session(symbol: str, session: str) -> Dict[str, Any]:
+    """
+    Highlight a trading session on the current day's chart.
+    Sessions: 'ASIA', 'LONDON', 'NEW_YORK'.
+    Assumes chart is on UTC or aligns with UTC calculations.
+    """
+    # Local import is fine to avoid top-level clutter if preferred, or move to top.
+    import datetime 
+    
+    session = session.upper()
+    
+    SCHEDULE = {
+        "ASIA": {"start": 0, "end": 9, "color": "rgba(0, 0, 255, 0.1)", "text": "Tokyo"},
+        "LONDON": {"start": 7, "end": 16, "color": "rgba(0, 255, 0, 0.1)", "text": "London"},
+        "NEW_YORK": {"start": 13, "end": 22, "color": "rgba(255, 165, 0, 0.1)", "text": "NY"},
+    }
+
+    if session not in SCHEDULE:
+        return {"error": f"Unknown session: {session}. Use ASIA, LONDON, or NEW_YORK."}
+    
+    cfg = SCHEDULE[session]
+    
+    # Calculate timestamps for "Today"
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    start_of_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    t_start = int((start_of_day + datetime.timedelta(hours=cfg["start"])).timestamp())
+    t_end = int((start_of_day + datetime.timedelta(hours=cfg["end"])).timestamp())
+    
+    cmd = {
+        "symbol": symbol,
+        "action": "draw_shape",
+        "params": {
+            "type": "rectangle",
+            "id": f"session_{session.lower()}",
+            "points": [
+                {"time": t_start, "price": 1000000}, # Sky High
+                {"time": t_end, "price": 0}        # Ground Zero (or -1000)
+            ],
+            "text": cfg["text"],
+            "style": {
+                "fillColor": cfg["color"],
+                "color": cfg["color"],
+                "filled": True
+            }
+        }
+    }
+    
+    url = f"{CONNECTORS_API}/tradingview/commands"
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(url, json=cmd)
+            return {"status": "success", "info": f"Marked {session} session."}
+        except Exception as e:
+            return {"error": f"Failed to mark session: {str(e)}"}
