@@ -4,7 +4,7 @@ FastAPI Routes for Data Connectors
 API endpoints for TradingView indicator receiver and connector management.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 import redis.asyncio as redis
@@ -201,12 +201,41 @@ async def get_all_connector_statuses(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/hyperliquid/prices")
+async def get_hyperliquid_prices(
+    manager = Depends(get_manager)
+):
+    """
+    Get ALL Hyperliquid prices/tickers.
+    """
+    try:
+        from connectors.manager import AssetType
+        return await manager.fetch_all_markets(AssetType.CRYPTO)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ostium/prices")
+async def get_ostium_prices(
+    manager = Depends(get_manager)
+):
+    """
+    Get ALL Ostium prices/tickers.
+    """
+    try:
+        from connectors.manager import AssetType
+        return await manager.fetch_all_markets(AssetType.RWA)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/price/{symbol}")
 async def get_price(
     symbol: str,
     asset_type: str = "crypto",  # "crypto" or "rwa"
     manager = Depends(get_manager)
 ):
+
     """
     Get current price for symbol.
     """
@@ -382,3 +411,28 @@ async def get_technical_analysis(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/history")
+async def get_history(
+    symbol: str,
+    resolution: str,
+    from_: int = Query(..., alias="from"),
+    to: int = Query(..., alias="to"),
+    source: str = "hyperliquid",
+    manager = Depends(get_manager)
+):
+    """
+    Get Historical Candles for TradingView.
+    """
+    try:
+        # TODO: Implement actual history fetch using manager
+        
+        # Temporary Mock Response to prevent Chart Error
+        return {
+            "s": "no_data",
+            "nextTime": None
+        }
+        
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+

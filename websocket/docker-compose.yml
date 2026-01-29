@@ -16,8 +16,10 @@ services:
     environment:
       - SAVE_TO_DB=${SAVE_TO_DB:-False}
       - DATABASE_URL=postgresql://osmo_user:osmo_password@db:5432/osmo_db
+      - REDIS_URL=redis://osmo-redis:6379/0
     depends_on:
       - db
+      - redis
     restart: unless-stopped
     networks:
       - osmo-network
@@ -79,6 +81,67 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
+    networks:
+      - osmo-network
+
+  inngest:
+    image: inngest/inngest:latest
+    container_name: osmo-inngest
+    ports:
+      - "8288:8288"
+    environment:
+      - INNGEST_EVENT_KEY=local
+      - INNGEST_SIGNING_KEY=local
+    # Start dev server pointing to our worker service automatically
+    command: inngest dev -u http://osmo-inngest-worker:8000/api/inngest
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+  inngest-worker:
+    build:
+      context: ../inngest-py
+      dockerfile: Dockerfile
+    container_name: osmo-inngest-worker
+    ports:
+      - "8008:8000"
+    environment:
+      - QDRANT_HOST=osmo-qdrant
+      - QDRANT_PORT=6333
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # Inngest Configuration
+      - INNGEST_BASE_URL=http://osmo-inngest:8288
+      - INNGEST_EVENT_KEY=local
+      # If flask autoreload is needed:
+      - FLASK_DEBUG=1
+    volumes:
+      - ../inngest-py:/app
+      - ../agent/Knowledge/ContectCats:/app/ContectCats
+      - ../../book:/app/book
+    depends_on:
+      - qdrant
+      - inngest
+    networks:
+      - osmo-network
+
+  upload-ui:
+    build:
+      context: ../inngest-py
+      dockerfile: Dockerfile
+    container_name: osmo-upload-ui
+    ports:
+      - "8501:8501"
+    environment:
+      - INNGEST_EVENT_KEY=local
+      - INNGEST_SIGNING_KEY=local
+      # Point to Inngest Dev Server
+      - INNGEST_BASE_URL=http://osmo-inngest:8288
+    volumes:
+      - ../inngest-py:/app
+    command: streamlit run app.py
+    depends_on:
+      - inngest
     networks:
       - osmo-network
 

@@ -5,7 +5,7 @@ Wrapper around existing Ostium API poller.
 """
 
 from ..base_connector import BaseConnector, ConnectorStatus
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, List
 import sys
 import os
 
@@ -37,7 +37,7 @@ class OstiumConnector(BaseConnector):
     def __init__(self, config: Dict[str, Any]):
         super().__init__("ostium", config)
         
-        self.api_url = config.get("api_url", os.getenv("OSTIUM_API_URL"))
+        self.api_url = config.get("api_url") or os.getenv("OSTIUM_API_URL") or "https://metadata-backend.ostium.io"
         self.poll_interval = config.get("poll_interval", 5)  # 5 seconds
         
         # Initialize clients
@@ -112,6 +112,74 @@ class OstiumConnector(BaseConnector):
         except Exception as e:
             self.status = ConnectorStatus.ERROR
             raise Exception(f"Ostium fetch error: {e}")
+
+    async def fetch_all_markets(self) -> List[Dict[str, Any]]:
+        """
+        Fetch data for ALL Ostium markets, enriched with Subgraph volume.
+        """
+        try:
+            # 1. Fetch latest prices from Metadata API
+            raw_data = await self.api_client.get_latest_prices()
+            if not raw_data:
+                return []
+            
+            # 2. Fetch Volume/OI from Subgraph
+            subgraph_data = {}
+            try:
+                from Ostium.subgraph_client import OstiumSubgraphClient
+                subgraph = OstiumSubgraphClient()
+                pairs = await subgraph.get_formatted_pairs_details()
+                subgraph_data = {p['symbol']: p for p in pairs}
+            except Exception as e:
+                print(f"Warning: Could not fetch Subgraph data for enrichment: {e}")
+
+            markets = []
+            for item in raw_data:
+                # Construct symbol
+                symbol = item.get("from", "") + "-" + item.get("to", "")
+                
+                # Determine Category
+                category = "Stocks" 
+                s = symbol.upper().replace("-", "") 
+                
+                # Crypto - Filter OUT
+                crypto_skips = ['ADAUSD', 'BNBUSD', 'BTCUSD', 'ETHUSD', 'LINKUSD', 'SOLUSD', 'TRXUSD', 'XRPUSD', 'HYPEUSD', 'GLXYUSD', 'BMNRUSD', 'CRCLUSD', 'SBETUSD']
+                if s in crypto_skips:
+                    continue
+                    
+                # Forex
+                forex_pairs = ['AUDUSD', 'EURUSD', 'GBPUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY', 'USDMXN']
+                if s in forex_pairs:
+                    category = "Forex"
+                elif s in ['CLUSD', 'HGUSD', 'XAGUSD', 'XAUUSD', 'XPDUSD', 'XPTUSD']:
+                    category = "Commodities"
+                elif s in ['DAXEUR', 'DJIUSD', 'FTSEGBP', 'HSIHKD', 'NDXUSD', 'NIKJPY', 'SPXUSD']:
+                    category = "index"
+                
+                # Get volume from Subgraph data
+                stats = subgraph_data.get(symbol, {})
+                volume = stats.get("totalOI", 0)
+                utilization = stats.get("utilization", 0)
+                
+                markets.append({
+                    "symbol": symbol,
+                    "price": float(item.get("mid", 0)),
+                    "change_24h": 0, # To be filled by real-time history or API if available
+                    "change_percent_24h": 0,
+                    "volume_24h": float(volume),
+                    "openInterest": float(volume),
+                    "utilization": float(utilization),
+                    "high_24h": 0,
+                    "low_24h": 0,
+                    "source": "ostium",
+                    "category": category
+                })
+            
+            return markets
+            
+        except Exception as e:
+            print(f"Ostium fetch_all error: {e}")
+            return []
     
     async def subscribe(
         self,
@@ -214,3 +282,75 @@ class OstiumConnector(BaseConnector):
         """Stop the poller"""
         if self.poller.is_running:
             await self.poller.stop()
+
+    # ===== Trading Methods (Stubs - Smart Contract Integration Required) =====
+    
+    async def place_order(
+        self,
+        user_address: str,
+        symbol: str,
+        side: str,
+        order_type: str,
+        size: float,
+        price: float = None,
+        stop_price: float = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Place order on Ostium (stub).
+        
+        Ostium requires smart contract interaction for order placement.
+        This method is a placeholder for future implementation.
+        
+        TODO: Implement with smart contract integration
+        - Requires Web3.py
+        - Needs Ostium orderbook contract ABI
+        - Session key signing for user transactions
+        """
+        raise NotImplementedError(
+            "Ostium order placement requires smart contract integration. "
+            "Use backend/connectors/ostium/contracts/ for implementation."
+        )
+    
+    async def cancel_order(
+        self,
+        user_address: str,
+        order_id: str
+    ) -> Dict[str, Any]:
+        """
+        Cancel order on Ostium (stub).
+        
+        TODO: Implement via smart contract
+        """
+        raise NotImplementedError(
+            "Ostium order cancellation requires smart contract integration."
+        )
+    
+    async def get_user_positions(
+        self,
+        user_address: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user positions from Ostium (stub).
+        
+        TODO: Query Ostium subgraph or contracts for user positions
+        """
+        raise NotImplementedError(
+            "Ostium position query requires subgraph or contract integration. "
+            "Consider using The Graph API or direct contract calls."
+        )
+    
+    async def get_user_orders(
+        self,
+        user_address: str,
+        status: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user orders from Ostium (stub).
+        
+        TODO: Query Ost ium subgraph for user order history
+        """
+        raise NotImplementedError(
+            "Ostium order history requires subgraph integration."
+        )
+

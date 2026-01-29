@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # Security
     JWT_SECRET: Optional[str] = None
     JWT_EXPIRY_HOURS: int = 1
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://localhost:8000"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:8000"
     PRIVY_APP_ID: Optional[str] = None
     PRIVY_VERIFICATION_KEY: Optional[str] = None
     
@@ -25,10 +25,14 @@ class Settings(BaseSettings):
     # Hyperliquid
     HYPERLIQUID_WS_URL: str = "wss://api.hyperliquid.xyz/ws"
     HYPERLIQUID_API_URL: str = "https://api.hyperliquid.xyz"
+    HYPERLIQUID_RPC_URL: Optional[str] = None
+    HYPERLIQUID_TESTNET: bool = False
     HYPERLIQUID_RATE_LIMIT: int = 1200
     
     # Ostium
     OSTIUM_API_URL: str = "https://metadata-backend.ostium.io"
+    OSTIUM_RPC_URL: Optional[str] = None
+    OSTIUM_TESTNET: bool = False
     OSTIUM_POLL_INTERVAL: int = 2
     OSMO_BUILDER_ADDRESS: Optional[str] = None
     OSMO_BUILDER_FEE_BPS: int = 50

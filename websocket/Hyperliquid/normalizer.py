@@ -43,6 +43,10 @@ def normalize_all_mids(data: Dict[str, str]) -> Dict[str, Any]:
     timestamp = int(datetime.now().timestamp() * 1000)
     
     for coin, price in data.get("mids", {}).items():
+        # Filter out dead markets / indices (starting with @)
+        if coin.startswith("@"):
+            continue
+            
         symbol = normalize_symbol(coin)
         normalized[symbol] = {
             "symbol": symbol,

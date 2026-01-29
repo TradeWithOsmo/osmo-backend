@@ -10,9 +10,17 @@ logger = logging.getLogger(__name__)
 class HyperliquidHTTPClient:
     """HTTP Client for Hyperliquid Info API"""
     
-    def __init__(self, base_url: str = "https://api.hyperliquid.xyz"):
-        self.base_url = base_url
-        self.rate_limit_remaining = 1200
+    def __init__(self, base_url: Optional[str] = None):
+        # Priority: constructor arg > settings.HYPERLIQUID_RPC_URL > settings.HYPERLIQUID_API_URL
+        self.base_url = base_url or settings.HYPERLIQUID_RPC_URL or settings.HYPERLIQUID_API_URL or "https://api.hyperliquid.xyz"
+        self.is_testnet = settings.HYPERLIQUID_TESTNET
+        
+        if self.is_testnet:
+            logger.info(f"🚀 Hyperliquid client initialized in TESTNET mode: {self.base_url}")
+        else:
+            logger.info(f"🚀 Hyperliquid client initialized in MAINNET mode: {self.base_url}")
+            
+        self.rate_limit_remaining = settings.HYPERLIQUID_RATE_LIMIT
         
     async def _post(self, payload: dict) -> Any:
         """Execute POST request to Info API"""
@@ -85,6 +93,14 @@ class HyperliquidHTTPClient:
             "type": "openOrders",
             "user": user_address
         }
+        return await self._post(payload)
+
+    async def get_meta_and_asset_ctxs(self) -> tuple:
+        """
+        Fetch metadata and asset contexts (stats)
+        Returns: (meta, assetCtxs)
+        """
+        payload = {"type": "metaAndAssetCtxs"}
         return await self._post(payload)
 
 # Global Instance

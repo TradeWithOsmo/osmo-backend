@@ -106,6 +106,27 @@ class ConnectorManager:
                 return await fallback.fetch(symbol, **kwargs)
             
             raise
+
+    async def fetch_all_markets(self, asset_type: AssetType = AssetType.CRYPTO) -> List[Dict[str, Any]]:
+        """
+        Fetch ALL markets for a given asset type (Crypto/RWA).
+        """
+        connector_id = "hyperliquid" if asset_type == AssetType.CRYPTO else "ostium"
+        connector = self.get_connector(connector_id)
+        
+        if not connector:
+            print(f"Connector not found for fetch_all: {connector_id}")
+            return []
+
+        try:
+            if hasattr(connector, 'fetch_all_markets'):
+                return await connector.fetch_all_markets()
+            else:
+                print(f"Connector {connector_id} does not support fetch_all_markets")
+                return []
+        except Exception as e:
+            print(f"Error in fetch_all_markets ({connector_id}): {e}")
+            return []
     
     def _route_connector(
         self,

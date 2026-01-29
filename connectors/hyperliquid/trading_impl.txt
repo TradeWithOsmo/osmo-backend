@@ -1,0 +1,222 @@
+"""
+Trading method implementations for Hyperliquid Connector
+"""
+
+import time
+from typing import Dict, Any, List
+
+
+# Add to HyperliquidConnector class:
+
+async def place_order(
+    self,
+    user_address: str,
+    symbol: str,
+    side: str,
+    order_type: str,
+    size: float,
+    price: float = None,
+    stop_price: float = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Place order via Hyperliquid Exchange API.
+    
+    Args:
+        user_address: User's wallet address (for session key signing)
+        symbol: Trading pair (e.g., 'BTC-USD')
+        side: 'buy' or 'sell'
+        order_type: 'market', 'limit', or 'stop_limit'
+        size: Order size in base currency
+        price: Limit price (required for limit/stop_limit)
+        stop_price: Stop trigger price (required for stop_limit)
+        **kwargs: Additional params (reduce_only, time_in_force, etc.)
+    
+    Returns:
+        {
+            'exchange': 'hyperliquid',
+            'exchange_order_id': str,
+            'status': str,
+            'raw_response': dict
+        }
+    """
+    try:
+        # Convert symbol format (BTC-USD → BTC)
+        coin = symbol.split('-')[0]
+        
+        # Build order params
+        order_params = {
+            "asset": coin,
+            "is_buy": side == 'buy',
+            "sz": size,
+            "reduce_only": kwargs.get('reduce_only', False)
+        }
+        
+        # Order type specific params
+        if order_type == 'market':
+            order_params["order_type"] = {"market": {}}
+        elif order_type == 'limit':
+            if not price:
+                raise ValueError("Limit orders require price")
+            order_params["limit_px"] = price
+            order_params["order_type"] = {
+                "limit": {
+                    "tif": kwargs.get('time_in_force', 'Gtc')  # Good-til-cancel
+                }
+            }
+        elif order_type == 'stop_limit':
+            if not stop_price or not price:
+                raise ValueError("Stop limit orders require both stop_price and price")
+            order_params["trigger_px"] = stop_price
+            order_params["limit_px"] = price
+            order_params["order_type"] = {
+                "trigger": {
+                    "tpsl": "sl",
+                    "limit_px": price
+                }
+            }
+        
+        # TODO: Sign with user's session key (Phase 2 - Security Enhancement)
+        # For now, this is a placeholder - actual signing would require:
+        # - User's session key
+        # - Proper EIP-712 signature
+        # - Vault address (if using smart account)
+        
+        # Commented out actual API call until session key signing is implemented
+        # response = await self.http_client.place_order(order_params)
+        
+        # Placeholder response for development
+        print(f"[Hyperliquid] Would place {side} order for {size} {coin} (type: {order_type})")
+        
+        return {
+            "exchange": "hyperliquid",
+            "exchange_order_id": f"hl_test_{symbol}_{int(time.time() * 1000)}",
+            "status": "pending",
+            "raw_response": {
+                "note": "Placeholder - session key signing not yet implemented",
+                "order_params": order_params
+            }
+        }
+    
+    except Exception as e:
+        print(f"[Hyperliquid] Error placing order: {e}")
+        raise
+
+
+async def cancel_order(
+    self,
+    user_address: str,
+    order_id: str
+) -> Dict[str, Any]:
+    """
+    Cancel order on Hyperliquid.
+    
+    Args:
+        user_address: User's wallet address
+        order_id: Exchange order ID
+    
+    Returns:
+        {'status': 'cancelled', 'order_id': str}
+    """
+    try:
+        # TODO: Implement with session key signing
+        # response = await self.http_client.cancel_order(order_id)
+        
+        print(f"[Hyperliquid] Would cancel order {order_id}")
+        
+        return {
+            "status": "cancelled",
+            "order_id": order_id,
+            "note": "Placeholder - session key signing not yet implemented"
+        }
+    
+    except Exception as e:
+        print(f"[Hyperliquid] Error cancelling order: {e}")
+        raise
+
+
+async def get_user_positions(
+    self,
+    user_address: str
+) -> List[Dict[str, Any]]:
+    """
+    Fetch positions from Hyperliquid clearinghouse state.
+    
+    Args:
+        user_address: User's wallet address
+    
+    Returns:
+        List of position dicts
+    """
+    try:
+        payload = {"type": "clearinghouseState", "user": user_address}
+        response = await self.http_client._post(payload)
+        
+        positions = []
+        if 'assetPositions' in response:
+            for pos in response['assetPositions']:
+                position_data = pos['position']
+                
+                positions.append({
+                    "symbol": position_data['coin'] + '-USD',
+                    "side": 'long' if float(position_data['szi']) > 0 else 'short',
+                    "size": abs(float(position_data['szi'])),
+                    "entry_price": float(position_data['entryPx']),
+                    "mark_price": float(position_data.get('markPx', position_data['entryPx'])),
+                    "unrealized_pnl": float(position_data.get('unrealizedPnl', 0)),
+                    "liquidation_price": float(position_data.get('liquidationPx', 0)) if position_data.get('liquidationPx') else None,
+                    "leverage": float(position_data.get('leverage', {}).get('value', 1)),
+                    "margin_used": float(position_data.get('marginUsed', 0))
+                })
+        
+        return positions
+    
+    except Exception as e:
+        print(f"[Hyperliquid] Error fetching positions: {e}")
+        return []
+
+
+async def get_user_orders(
+    self,
+    user_address: str,
+    status: str = None
+) -> List[Dict[str, Any]]:
+    """
+    Get user's orders from Hyperliquid.
+    
+    Args:
+        user_address: User's wallet address
+        status: Optional filter ('open', 'filled', 'cancelled')
+    
+    Returns:
+        List of order dicts
+    """
+    try:
+        # Fetch open orders
+        payload = {"type": "openOrders", "user": user_address}
+        response = await self.http_client._post(payload)
+        
+        orders = []
+        for order in response:
+            order_dict = {
+                "id": order.get('oid'),
+                "symbol": order.get('coin') + '-USD',
+                "side": 'buy' if order.get('side') == 'B' else 'sell',
+                "order_type": order.get('orderType', 'limit'),
+                "price": float(order.get('limitPx', 0)),
+                "size": float(order.get('sz', 0)),
+                "filled_size": float(order.get('filledSz', 0)),
+                "status": 'open',
+                "timestamp": order.get('timestamp', 0)
+            }
+            orders.append(order_dict)
+        
+        # Filter by status if requested
+        if status:
+            orders = [o for o in orders if o['status'] == status]
+        
+        return orders
+    
+    except Exception as e:
+        print(f"[Hyperliquid] Error fetching orders: {e}")
+        return []
