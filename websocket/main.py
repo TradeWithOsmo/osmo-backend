@@ -641,11 +641,13 @@ from routers.watchlist import router as watchlist_router
 from routers.leaderboard import router as leaderboard_router
 from routers.portfolio import router as portfolio_router
 from routers.orders import router as orders_router
+from routers.agent import router as agent_router
 app.include_router(user_router)
 app.include_router(watchlist_router)
 app.include_router(leaderboard_router)
 app.include_router(portfolio_router)
 app.include_router(orders_router)
+app.include_router(agent_router)
 
 # Include Connector Routes
 app.include_router(connectors_router)
