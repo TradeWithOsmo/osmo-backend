@@ -8,7 +8,7 @@ services:
       - .:/app
       - ../connectors:/app/connectors
       - ../analysis:/app/analysis
-      - ../analysis:/app/analysis
+      - ../agent:/app/agent
     ports:
       - "8000:8000"
     env_file:

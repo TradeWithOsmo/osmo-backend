@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, Literal
 
 
 class Settings(BaseSettings):
@@ -7,6 +7,10 @@ class Settings(BaseSettings):
     
     # Environment
     ENV: str = "development"
+    
+    # Network Mode
+    NETWORK_MODE: Literal["testnet", "mainnet"] = "testnet"
+    NETWORK_NAME: str = "arbitrum_sepolia"
     
     # Security
     JWT_SECRET: Optional[str] = None
@@ -37,10 +41,41 @@ class Settings(BaseSettings):
     OSMO_BUILDER_ADDRESS: Optional[str] = None
     OSMO_BUILDER_FEE_BPS: int = 50
     
-    # Bridge Monitoring
-    ARBITRUM_RPC_URL: str = "https://arb1.arbitrum.io/rpc"
-    BRIDGE_CONTRACT_ADDRESS: Optional[str] = None
-    BRIDGE_POLL_INTERVAL: int = 15
+    # Web3 & Smart Contracts
+    ARBITRUM_RPC_URL: str = "https://lb.drpc.live/arbitrum-sepolia/Ap-mSigiUE5YpeoVD1OiMP2Wh_Av-QMR8JYggtEkfQq9"
+    ARBITRUM_BACKUP_RPC_URL: str = "https://sepolia-rollup.arbitrum.io/rpc"
+    CHAIN_ID: int = 421614
+    BLOCK_EXPLORER_URL: str = "https://sepolia.arbiscan.io"
+    
+    # Faucet (Testnet Only)
+    FAUCET_ENABLED: bool = True
+    FAUCET_AUTO_CLAIM: bool = True
+    FAUCET_ADDRESS: Optional[str] = None
+    
+    # Contract Addresses (Network-specific)
+    OSMO_CORE_ADDRESS: Optional[str] = None
+    TRADING_VAULT_ADDRESS: Optional[str] = None
+    AI_VAULT_ADDRESS: Optional[str] = None
+    ORDER_ROUTER_ADDRESS: Optional[str] = None
+    SESSION_KEY_MANAGER_ADDRESS: Optional[str] = None
+    PRICE_FEED_ADDRESS: Optional[str] = None
+    SYMBOL_REGISTRY_ADDRESS: Optional[str] = None
+    RISK_MANAGER_ADDRESS: Optional[str] = None
+    OSTIUM_ADAPTER_ADDRESS: Optional[str] = None
+    FEE_MANAGER_ADDRESS: Optional[str] = None
+    USDC_ADDRESS: Optional[str] = None
+    
+    # Web3 Settings
+    WEB3_PROVIDER_TIMEOUT: int = 30
+    WEB3_MAX_RETRIES: int = 3
+    GAS_PRICE_MULTIPLIER: float = 1.2
+    
+    # Treasury for automated operations
+    TREASURY_PRIVATE_KEY: Optional[str] = None
+    
+    # Backend Instance
+    BACKEND_INSTANCE_ID: str = "testnet"
+    BACKEND_PORT: int = 8001
     
     # Performance & Scalability
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -61,6 +96,14 @@ class Settings(BaseSettings):
     AI_AGENT_API_URL: str = "http://localhost:8001"
     AI_WEBHOOK_SECRET: Optional[str] = None
     AI_RATE_LIMIT: int = 100
+    
+    @property
+    def is_testnet(self) -> bool:
+        return self.NETWORK_MODE == "testnet"
+
+    @property
+    def is_mainnet(self) -> bool:
+        return self.NETWORK_MODE == "mainnet"
     
     class Config:
         env_file = ".env"

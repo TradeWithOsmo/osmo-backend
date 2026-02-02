@@ -31,7 +31,8 @@ from storage.redis_manager import redis_manager
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from connectors.init_connectors import connector_registry
-from connectors.api_routes import router as connectors_router
+from connectors.web3_arbitrum.api_routes import router as web3_router
+from connectors.hyperliquid.category_map import get_category  # Import category mapping
 
 # Import orders API
 from routers.orders import router as orders_router
@@ -88,13 +89,32 @@ async def handle_hyperliquid_message(data: dict):
         if "price" in new_data:
             hl_price_history.update_price(symbol, float(new_data["price"]))
 
+    # Update latest_prices and enrich normalized data with stats
+    for symbol, data in normalized.items():
         if symbol in latest_prices:
-            existing = latest_prices[symbol]
-            for field in ["volume_24h", "openInterest", "funding", "change_24h", "change_percent_24h", "high_24h", "low_24h"]:
-                if field in existing:
-                    new_data[field] = existing[field]
-    
-    latest_prices.update(normalized)
+            latest_prices[symbol].update(data)
+            # Inject stats into the broadcast message so frontend gets them
+            current_stats = latest_prices[symbol]
+            data["high_24h"] = current_stats.get("high_24h", 0)
+            data["low_24h"] = current_stats.get("low_24h", 0)
+            data["volume_24h"] = current_stats.get("volume_24h", 0)
+            data["change_24h"] = current_stats.get("change_24h", 0)
+            data["change_24h"] = current_stats.get("change_24h", 0)
+            data["change_percent_24h"] = current_stats.get("change_percent_24h", 0)
+            data["maxLeverage"] = current_stats.get("maxLeverage", 50)
+            data["category"] = current_stats.get("category", "Crypto")
+        else:
+            # New symbol from WS - Initialize with defaults
+            # Extract coin from symbol (e.g., "BTC-USD" -> "BTC")
+            coin = symbol.split("-")[0]
+            data["category"] = get_category(coin)
+            data["maxLeverage"] = 0 # Default until poll_hyperliquid_stats updates it
+            data["high_24h"] = 0
+            data["low_24h"] = 0
+            data["volume_24h"] = 0
+            data["change_24h"] = 0
+            data["change_percent_24h"] = 0
+            latest_prices[symbol] = data
     
     # Broadcast to "ALL" subscribers (global stream)
     if "ALL" in connected_clients and normalized:
@@ -142,8 +162,12 @@ async def handle_hyperliquid_message(data: dict):
 
 async def handle_l2book_message(data: dict):
     """Handle incoming L2 Orderbook data"""
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Handling L2Book message: {str(data)[:100]}...")
+
     coin = data.get("coin")
     if not coin:
+        logger.warning(f"⚠️ L2Book data missing 'coin' field: {data.keys()}")
         return
         
     symbol = f"{coin}-USD" # Normalize
@@ -174,10 +198,12 @@ async def handle_trades_message(data: dict):
     """Handle incoming Trades data"""
     # trades data is usually a list of trades
     if not isinstance(data, list) or not data:
+        logger.warning(f"⚠️ Trades data is not a non-empty list: {type(data)}")
         return
         
     coin = data[0].get("coin")
     if not coin:
+        logger.warning(f"⚠️ Trades data missing 'coin' field in first element: {data[0].keys()}")
         return
 
     symbol = f"{coin}-USD"
@@ -326,7 +352,9 @@ async def poll_ostium_volume():
                         latest_prices[symbol] = {
                             "symbol": symbol,
                             "price": 0,
+                            "price": 0,
                             "source": "ostium",
+                            "maxLeverage": 100, # Default for Forex/Commodities on Ostium
                             "timestamp": int(time.time() * 1000)
                         }
                     
@@ -334,7 +362,10 @@ async def poll_ostium_volume():
                     latest_prices[symbol]["volume_24h"] = item['totalOI'] 
                     latest_prices[symbol]["openInterest"] = item['totalOI']
                     latest_prices[symbol]["utilization"] = item['utilization']
-                    latest_prices[symbol]["source"] = "ostium" # Ensure source is set
+                    latest_prices[symbol]["openInterest"] = item['totalOI']
+                    latest_prices[symbol]["utilization"] = item['utilization']
+                    latest_prices[symbol]["source"] = "ostium" 
+                    latest_prices[symbol]["maxLeverage"] = 100 # Ensure present update
                     
                     # Add 24h stats from history
                     stats = ostium_price_history.get_stats(symbol)
@@ -363,7 +394,7 @@ async def poll_hyperliquid_stats():
     
     while True:
         try:
-            # logger.debug("Polling Hyperliquid stats...")
+            logger.info("Polling Hyperliquid stats (Volume, OI, etc)...")
             # Add timeout
             data = await asyncio.wait_for(http_client.get_meta_and_asset_ctxs(), timeout=30.0)
             
@@ -379,17 +410,24 @@ async def poll_hyperliquid_stats():
                         ctx = ctxs[i]
                         symbol = f"{coin}-USD"
                         
+                        # Extract maxLeverage from universe info
+                        max_leverage = asset_info.get("maxLeverage", 50)
+                        
                         # Ensure entry exists
                         if symbol not in latest_prices:
                             latest_prices[symbol] = {
                                 "symbol": symbol,
                                 "price": float(ctx.get("midPx") or ctx.get("markPx") or 0),
                                 "source": "hyperliquid",
+                                "category": get_category(coin),  # Add category
+                                "maxLeverage": max_leverage,
                                 "timestamp": int(time.time() * 1000)
                             }
                         else:
                             # Re-assert source to be sure
                             latest_prices[symbol]["source"] = "hyperliquid"
+                            latest_prices[symbol]["category"] = get_category(coin)  # Add category
+                            latest_prices[symbol]["maxLeverage"] = max_leverage
                         
                         # dayNtlVlm is 24h volume
                         latest_prices[symbol]["volume_24h"] = float(ctx.get("dayNtlVlm", 0))
@@ -422,8 +460,7 @@ async def poll_hyperliquid_stats():
                         count += 1
                 
                 if count > 0:
-                     # Log only occasionally to avoid spam
-                     pass 
+                     logger.info(f"Updated stats for {count} Hyperliquid assets")
                      
         except Exception as e:
             logger.error(f"Error polling Hyperliquid stats: {e}")
@@ -446,6 +483,9 @@ async def bootstrap_hyperliquid_history():
                 coin = asset["name"]
                 symbol = f"{coin}-USD"
                 try:
+                    # Extract Max Leverage
+                    max_leverage = asset.get("maxLeverage", 50) # Use 50 as fallback if missing, but should be there
+
                     # Fetch 1d candle for current high/low
                     candles = await http_client.get_candles(coin, interval="1d")
                     if candles:
@@ -458,10 +498,24 @@ async def bootstrap_hyperliquid_history():
                         if low > 0:
                             hl_price_history.update_price(symbol, low)
                             
-                        # Also update directly in latest_prices if it exists
-                        if symbol in latest_prices:
-                            latest_prices[symbol]["high_24h"] = high
-                            latest_prices[symbol]["low_24h"] = low
+                        # Ensure latest_prices has the data, initializing if needed
+                        if symbol not in latest_prices:
+                            latest_prices[symbol] = {
+                                "symbol": symbol, 
+                                "source": "hyperliquid",
+                                "category": get_category(coin),  # Add category
+                                "maxLeverage": max_leverage,     # Add maxLeverage
+                                "price": 0, # Will be updated by WS
+                                "change_24h": 0,
+                                "change_percent_24h": 0,
+                                "volume_24h": 0
+                            }
+                        else:
+                             latest_prices[symbol]["category"] = get_category(coin)
+                             latest_prices[symbol]["maxLeverage"] = max_leverage
+                        
+                        latest_prices[symbol]["high_24h"] = high
+                        latest_prices[symbol]["low_24h"] = low
                     
                     # Small delay to be polite to the API
                     if i % 10 == 0:
@@ -506,13 +560,20 @@ async def lifespan(app: FastAPI):
 
     # Start Hyperliquid WebSocket client
     try:
-        hyperliquid_client = HyperliquidWebSocketClient(settings.HYPERLIQUID_WS_URL)
+        ws_url = settings.HYPERLIQUID_WS_URL or "wss://api.hyperliquid.xyz/ws"
+        logger.info(f"🔌 Connecting to Hyperliquid WS at: {ws_url}")
+        
+        hyperliquid_client = HyperliquidWebSocketClient(ws_url)
         await hyperliquid_client.connect()
+        logger.info("✅ Connection established, subscribing to allMids...")
+        
         await hyperliquid_client.subscribe("allMids", handle_hyperliquid_message)
+        logger.info("✅ Subscribed to allMids, starting listen loop...")
+        
         asyncio.create_task(hyperliquid_client.listen())
-        logger.info("✅ Hyperliquid WebSocket client started")
+        logger.info("✅ Hyperliquid WebSocket client started successfully")
     except Exception as e:
-        logger.error(f"❌ Failed to start Hyperliquid client: {e}")
+        logger.error(f"❌ Failed to start Hyperliquid client: {e}", exc_info=True)
         
     # Start Hyperliquid Stats Poller & Bootstrap
     asyncio.create_task(poll_hyperliquid_stats())
@@ -614,50 +675,73 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Shutdown complete")
 
 
-# Initialize FastAPI app
+# Initialize FastAPI
 app = FastAPI(
-    title="Osmo Backend API",
-    description="Real-time trading data aggregation for Hyperliquid and Ostium",
+    title="Osmo API",
+    description="Trading & AI Agent API",
     version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS Headers
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all for dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Prometheus metrics endpoint
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
+# Mount Routers
+app.include_router(orders_router, prefix="/api/orders", tags=["orders"])
+app.include_router(web3_router, prefix="/api/v1", tags=["web3"])
+
+# Add Prometheus metrics to FastAPI
+# We need to expose /metrics endpoint
+from starlette.responses import Response
+import time
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type="text/plain")
 
 # Include Routers
 from routers.user import router as user_router
-from routers.watchlist import router as watchlist_router
 from routers.leaderboard import router as leaderboard_router
-from routers.portfolio import router as portfolio_router
 from routers.orders import router as orders_router
+from connectors.web3_arbitrum.api_routes import router as web3_router
+from routers.usage import router as usage_router
+from routers.portfolio import router as portfolio_router
 from routers.agent import router as agent_router
-app.include_router(user_router)
-app.include_router(watchlist_router)
-app.include_router(leaderboard_router)
-app.include_router(portfolio_router)
-app.include_router(orders_router)
-app.include_router(agent_router)
+from routers.markets import router as markets_router
+from routers.connectors import router as connectors_router # NEW
+from routers.history import router as history_router # NEW
+from routers.watchlist import router as watchlist_router # NEW
 
-# Include Connector Routes
-app.include_router(connectors_router)
+app.include_router(user_router, prefix="/api/user", tags=["user"])
+app.include_router(leaderboard_router, prefix="/api/leaderboard", tags=["leaderboard"])
+app.include_router(orders_router, prefix="/api/orders", tags=["orders"])
+app.include_router(web3_router, prefix="/api/v1", tags=["web3"])
+app.include_router(usage_router, prefix="/api/usage", tags=["usage"])
+app.include_router(portfolio_router, prefix="/api/portfolio", tags=["portfolio"])
+app.include_router(agent_router, prefix="/api/agent", tags=["agent"])
+app.include_router(markets_router, prefix="/api/markets", tags=["markets"])
+app.include_router(connectors_router, prefix="/api/connectors", tags=["connectors"]) # NEW: /api/connectors/hyperliquid/prices
+app.include_router(history_router, prefix="/api/history", tags=["history"]) # NEW: /api/history
+app.include_router(watchlist_router, tags=["watchlist"]) # NEW: /api/watchlist (prefix already in router)
 
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     """Comprehensive health status"""
-    hl_status = hyperliquid_client.get_status() if hyperliquid_client else {"connected": False}
+    hl_status = {"connected": False}
+    try:
+        hl_status = hyperliquid_client.get_status() if hyperliquid_client else {"connected": False}
+    except Exception as e:
+        logger.error(f"Health check: HL status fail: {e}")
     
     # Check Database
     db_connected = False
@@ -665,13 +749,16 @@ async def health_check():
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
             db_connected = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Health check: DB status fail: {e}")
 
     # Check Ostium
     ostium_connected = False
-    if ostium_poller and ostium_poller.is_running:
-        ostium_connected = True
+    try:
+        if ostium_poller and ostium_poller.is_running:
+            ostium_connected = True
+    except Exception as e:
+        logger.error(f"Health check: Ostium status fail: {e}")
 
     return {
         "status": "healthy",
@@ -749,6 +836,12 @@ async def get_candles(symbol: str, exchange: str = None, limit: int = 100):
 async def get_markets():
     """List all available markets"""
     markets = []
+    
+    # DEBUG: Log first market keys to verify category/leverage presence
+    if latest_prices:
+        first_key = list(latest_prices.keys())[0]
+        logger.info(f"DEBUG /api/markets sample ({first_key}): {latest_prices[first_key].keys()} | Category: {latest_prices[first_key].get('category')} | Leverage: {latest_prices[first_key].get('maxLeverage')} | Vol: {latest_prices[first_key].get('volume_24h')}")
+
     for symbol, data in latest_prices.items():
         markets.append({
             "symbol": symbol,

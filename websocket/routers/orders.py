@@ -25,6 +25,9 @@ class PlaceOrderRequest(BaseModel):
     price: Optional[float] = None
     stop_price: Optional[float] = None
     exchange: Optional[str] = None  # Auto-detect if not provided
+    reduce_only: bool = False
+    post_only: bool = False
+    time_in_force: Optional[str] = 'GTC'  # 'GTC', 'IOC', 'FOK'
 
 
 @router.post("/place")
@@ -43,7 +46,10 @@ async def place_order(request_data: PlaceOrderRequest, req: Request):
             leverage=request_data.leverage,
             price=request_data.price,
             stop_price=request_data.stop_price,
-            exchange=request_data.exchange
+            exchange=request_data.exchange,
+            reduce_only=request_data.reduce_only,
+            post_only=request_data.post_only,
+            time_in_force=request_data.time_in_force
         )
         return {"success": True, **result}
     except HTTPException:
@@ -88,6 +94,31 @@ async def get_positions(user_address: str, req: Request = None):
         
         positions = await order_service.get_user_positions(user_address)
         return {"success": True, "positions": positions}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class UpdateTPSLRequest(BaseModel):
+    user_address: str
+    symbol: str
+    tp: Optional[str] = None
+    sl: Optional[str] = None
+    exchange: Optional[str] = None
+
+@router.post("/positions/tpsl")
+async def update_tpsl(request_data: UpdateTPSLRequest, req: Request):
+    """Update TP/SL for a position"""
+    try:
+        await security_middleware.verify_user(req, request_data.user_address)
+        
+        result = await order_service.update_position_tpsl(
+            user_address=request_data.user_address,
+            symbol=request_data.symbol,
+            tp=request_data.tp,
+            sl=request_data.sl,
+            exchange=request_data.exchange
+        )
+        return {"success": True, **result}
     except HTTPException:
         raise
     except Exception as e:

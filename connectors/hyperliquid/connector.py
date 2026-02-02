@@ -41,6 +41,11 @@ class HyperliquidConnector(BaseConnector):
         self.ws_client = HyperliquidWebSocketClient(self.ws_url)
         self.http_client = HyperliquidHTTPClient(self.http_url)
         
+        # Builder Settings
+        self.builder_address = config.get("builder_address", os.getenv("BUILDER_ADDRESS"))
+        # Default 2.5 BPS = 25 in tenths of BPS
+        self.builder_fee_tenths = int(config.get("builder_fee_tenths", os.getenv("EXPECTED_KICKBACK_BPS", 25)))
+        
         self.status = ConnectorStatus.HEALTHY
     
     async def fetch(self, symbol: str, **kwargs) -> Dict[str, Any]:
@@ -374,6 +379,13 @@ class HyperliquidConnector(BaseConnector):
                 "sz": size,
                 "reduce_only": kwargs.get('reduce_only', False)
             }
+            
+            # Add Builder Fee (Hyperliquid Protocol Spec)
+            if self.builder_address:
+                order_params["f"] = self.builder_fee_tenths
+                # Note: 'b' (builder address) is usually passed at the action level 
+                # in the SDK, but we store it here for the payload builder.
+                order_params["builder"] = self.builder_address 
             
             # Order type specific params
             if order_type == 'market':

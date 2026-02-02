@@ -69,6 +69,7 @@ class ConnectorRegistry:
         await self._register_web_search()
         await self._register_mem0()
         await self._register_qdrant()
+        await self._register_onchain()
         
         self._initialized = True
         logger.info("✓ All connectors initialized")
@@ -210,6 +211,20 @@ class ConnectorRegistry:
             logger.info(f"✓ Qdrant connector registered ({'enabled' if config['enabled'] else 'disabled'})")
         except Exception as e:
             logger.error(f"✗ Qdrant registration failed: {e}")
+
+    async def _register_onchain(self) -> None:
+        """Register Web3 On-chain Trading connector"""
+        try:
+            config = {
+                "chain_id": os.getenv("CHAIN_ID", 421614)
+            }
+            # Import locally to avoid circular dependency issues if any
+            from connectors.web3_arbitrum.onchain_connector import OnchainConnector
+            connector = OnchainConnector(config)
+            self.manager.register_connector("onchain", connector)
+            logger.info("✓ On-chain connector registered")
+        except Exception as e:
+            logger.error(f"✗ On-chain registration failed: {e}")
     
     async def shutdown(self) -> None:
         """Cleanup all connectors"""
@@ -238,6 +253,10 @@ class ConnectorRegistry:
         if not self._initialized:
             raise RuntimeError("Connectors not initialized. Call initialize() first.")
         return self.manager
+
+    def get_connector(self, name: str) -> Any:
+        """Get a registered connector by name"""
+        return self.get_manager().get_connector(name)
 
 
 # Global registry instance

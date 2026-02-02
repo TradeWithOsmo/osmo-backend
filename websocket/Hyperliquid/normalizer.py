@@ -68,7 +68,7 @@ def normalize_trade(trade: Dict[str, Any]) -> Dict[str, Any]:
     """
     return {
         "source": "hyperliquid",
-        "symbol": normalize_symbol(trade["coin"]),
+        "symbol": normalize_symbol(trade.get("coin", "UNKNOWN")),
         "price": normalize_price(trade["px"]),
         "size": normalize_price(trade["sz"]),
         "side": trade["side"].lower(),
@@ -89,7 +89,7 @@ def normalize_orderbook(book: Dict[str, Any]) -> Dict[str, Any]:
     
     return {
         "source": "hyperliquid",
-        "symbol": normalize_symbol(book["coin"]),
+        "symbol": normalize_symbol(book.get("coin", "UNKNOWN")),
         "bids": [
             {"price": normalize_price(level["px"]), "size": normalize_price(level["sz"])}
             for level in bids

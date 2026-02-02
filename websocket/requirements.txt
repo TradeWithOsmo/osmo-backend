@@ -16,3 +16,6 @@ redis
 pandas_ta
 numpy
 ostium-python-sdk
+langchain
+langchain-openai
+langchain-community

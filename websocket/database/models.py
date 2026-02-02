@@ -56,6 +56,11 @@ class Order(Base):
     price = Column(Float, nullable=True)  # Limit price
     stop_price = Column(Float, nullable=True)  # Stop trigger price
     
+    # Advanced Options
+    reduce_only = Column(Boolean, default=False)
+    post_only = Column(Boolean, default=False)
+    time_in_force = Column(String, default='GTC')
+    
     # Size & Leverage
     size = Column(Float, nullable=False)  # Contract size
     notional_usd = Column(Float, nullable=False)  # USD value
@@ -107,6 +112,10 @@ class Position(Base):
     # Risk management
     liquidation_price = Column(Float, nullable=True)
     margin_used = Column(Float, nullable=False)
+    
+    # Active orders
+    tp = Column(String, nullable=True) # "Take Profit" price/value
+    sl = Column(String, nullable=True) # "Stop Loss" price/value
     
     # Timestamps
     opened_at = Column(DateTime, default=datetime.utcnow)
@@ -185,4 +194,80 @@ class PortfolioSnapshot(Base):
     
     __table_args__ = (
         Index('idx_portfolio_user_time', 'user_address', 'timestamp'),
+    )
+
+class SessionKey(Base):
+    """Session keys for AI agent autonomous trading"""
+    __tablename__ = "session_keys"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, nullable=False, index=True)
+    session_address = Column(String, nullable=False, unique=True, index=True)
+    encrypted_private_key = Column(String, nullable=False) # Encrypted or plain for now (User Rule: Demo mode ok)
+    
+    # Permissions
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+    
+    __table_args__ = (
+        Index('idx_user_session', 'user_address', 'session_address'),
+    )
+
+class OnchainTransaction(Base):
+    """Track on-chain transaction status"""
+    __tablename__ = "onchain_transactions"
+    
+    id = Column(String, primary_key=True) # tx_hash
+    user_address = Column(String, nullable=False, index=True)
+    session_address = Column(String, nullable=True) # Key used to sign
+    
+    # Details
+    contract_name = Column(String, nullable=False) # 'OrderRouter', 'TradingVault'
+    function_name = Column(String, nullable=False) # 'placeOrder', 'deposit'
+    params = Column(Text, nullable=True) # JSON args
+    
+    # Status
+    status = Column(String, default='pending') # 'pending', 'confirmed', 'failed'
+    block_number = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+
+class AIUsageLog(Base):
+    """Log of individual AI agent requests"""
+    __tablename__ = "ai_usage_logs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, nullable=False, index=True)
+    session_id = Column(String, nullable=True) # Optional link to chat/agent session
+    
+    model = Column(String, nullable=False) # 'gpt-4o', 'claude-3.5-sonnet'
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    cost = Column(Float, default=0.0)
+    
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    __table_args__ = (
+        Index('idx_usage_user_time', 'user_address', 'timestamp'),
+    )
+
+class DailyUsageSnapshot(Base):
+    """Daily aggregation of AI usage for charts"""
+    __tablename__ = "daily_usage_snapshots"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, index=True)
+    user_address = Column(String, nullable=False, index=True)
+    
+    total_cost = Column(Float, default=0.0)
+    total_tokens = Column(Integer, default=0)
+    request_count = Column(Integer, default=0)
+    
+    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_daily_usage_user', 'date', 'user_address', unique=True),
     )

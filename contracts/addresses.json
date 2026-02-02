@@ -1,0 +1,19 @@
+{
+    "arbitrum_sepolia": {
+        "chainId": 421614,
+        "contracts": {
+            "OsmoCore": "0xd84937AAa3007296c95705ce379Ba8f4f7111d45",
+            "TradingVault": "0xe6f612353ba036b167c782A8AD384AF66ab4B1d5",
+            "AIVault": "0x4CF11512FD0d2A86A0E95Cf48C76682893A39dA7",
+            "OrderRouter": "0xFd8b09f95E4B2dd9dA7B5c22CC0eBb0186B14358",
+            "SessionKeyManager": "0x97cDc270fB00F13E84a05CCde8E15586B92C8501",
+            "Faucet": "0x921daADeaC569aDEB234e2Ca4bfcA7104A6efD2f",
+            "PriceFeed": "0x7a7a7ba203EC2B5FEdE76A6fFa310801023BDE17",
+            "SymbolRegistry": "0x4191056E217f8cE2F1583aDAA5B02C9590d741A5",
+            "RiskManager": "0x6d6568D5980ba002f78b0fD90F5828cAB346135A",
+            "OstiumAdapter": "0xAc3dd1854e7C72690803B1cbf68B15F1bc78a647",
+            "FeeManager": "0xEA0c5D87624d33B73AA67BC6449214557a56d9c5",
+            "USDC": "0x891BAcc68c2cf6609AFD9FD2A0CA5E28AF037128"
+        }
+    }
+}
