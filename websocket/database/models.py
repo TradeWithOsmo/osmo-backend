@@ -41,20 +41,36 @@ class Watchlist(Base):
     symbol = Column(String, index=True, nullable=False)
     source = Column(String, nullable=True) # hyperliquid or ostium
 
+class LedgerAccount(Base):
+    """Off-chain Ledger for high-frequency trading balance"""
+    __tablename__ = "ledger_accounts"
+    
+    address = Column(String, primary_key=True)  # Wallet Address
+    balance = Column(Float, default=0.0)  # Realized Balance (Deposits + Realized PnL)
+    locked_margin = Column(Float, default=0.0)  # Margin locked in open positions
+    available_balance = Column(Float, default=0.0)  # balance - locked_margin (Cached for speed)
+    
+    realized_pnl = Column(Float, default=0.0)  # Total historical PnL
+    
+    last_updated_block = Column(BigInteger, default=0) # For sync safety with Vault
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class Order(Base):
     """User order records for trading engine"""
     __tablename__ = "orders"
     
-    id = Column(String, primary_key=True)  # UUID
+    id = Column(String, primary_key=True)  # UUID (KECCAK256 from Contract or Backend)
     user_address = Column(String, index=True, nullable=False)
     exchange = Column(String, nullable=False)  # 'hyperliquid' | 'ostium'
     symbol = Column(String, nullable=False)  # 'BTC-USD', 'EURUSD'
     side = Column(String, nullable=False)  # 'buy' | 'sell'
-    order_type = Column(String, nullable=False)  # 'market' | 'limit' | 'stop_limit'
+    order_type = Column(String, nullable=False)  # 'market' | 'limit' | 'stop_market' | 'stop_limit'
     
     # Prices
     price = Column(Float, nullable=True)  # Limit price
-    stop_price = Column(Float, nullable=True)  # Stop trigger price
+    trigger_price = Column(Float, nullable=True)  # Stop/Trigger price
+    trigger_condition = Column(String, nullable=True) # 'ABOVE', 'BELOW'
+
     
     # Advanced Options
     reduce_only = Column(Boolean, default=False)
@@ -70,6 +86,15 @@ class Order(Base):
     status = Column(String, default='pending')  # 'pending' | 'filled' | 'cancelled' | 'rejected'
     filled_size = Column(Float, default=0)
     avg_fill_price = Column(Float, nullable=True)
+    realized_pnl = Column(Float, default=0) # PnL realized by this specific order execution
+    
+    # Advanced Order Params (Added for Simulation/Limit/Stop)
+    stop_price = Column(Float, nullable=True)
+    trigger_price = Column(Float, nullable=True)
+    trigger_condition = Column(String, nullable=True) # 'ABOVE', 'BELOW'
+    reduce_only = Column(Boolean, default=False)
+    post_only = Column(Boolean, default=False)
+    time_in_force = Column(String, default='GTC')
     
     # Exchange identifiers
     exchange_order_id = Column(String, nullable=True)  # ID from Hyperliquid/Ostium
@@ -98,6 +123,7 @@ class Position(Base):
     user_address = Column(String, index=True, nullable=False)
     exchange = Column(String, nullable=False)
     symbol = Column(String, nullable=False)
+    position_id = Column(String, nullable=True, index=True) # On-chain ID (bytes32 hex)
     
     # Position details
     side = Column(String, nullable=False)  # 'long' | 'short'
@@ -117,8 +143,12 @@ class Position(Base):
     tp = Column(String, nullable=True) # "Take Profit" price/value
     sl = Column(String, nullable=True) # "Stop Loss" price/value
     
+    # Status
+    status = Column(String, default='OPEN') # 'OPEN', 'CLOSED'
+    
     # Timestamps
     opened_at = Column(DateTime, default=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, onupdate=datetime.utcnow, nullable=True)
     
     # Composite unique constraint
@@ -140,6 +170,8 @@ class LeaderboardSnapshot(Base):
     pnl = Column(Float, default=0)
     roi = Column(Float, default=0)  # Percentage
     volume = Column(Float, default=0)
+    trade_count = Column(Integer, default=0)
+    win_rate = Column(Float, default=0)  # Percentage
     
     # Agent info (optional - NULL if manual trading)
     agent_model = Column(String, nullable=True)
@@ -167,6 +199,8 @@ class ModelLeaderboardSnapshot(Base):
     pnl = Column(Float, default=0)  # Combined PNL
     roi = Column(Float, default=0)  # Average ROI
     volume = Column(Float, default=0)  # Combined volume
+    trade_count = Column(Integer, default=0)
+    win_rate = Column(Float, default=0)  # Average Win Rate
     
     rank = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -196,23 +230,7 @@ class PortfolioSnapshot(Base):
         Index('idx_portfolio_user_time', 'user_address', 'timestamp'),
     )
 
-class SessionKey(Base):
-    """Session keys for AI agent autonomous trading"""
-    __tablename__ = "session_keys"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_address = Column(String, nullable=False, index=True)
-    session_address = Column(String, nullable=False, unique=True, index=True)
-    encrypted_private_key = Column(String, nullable=False) # Encrypted or plain for now (User Rule: Demo mode ok)
-    
-    # Permissions
-    expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    is_active = Column(Boolean, default=True)
-    
-    __table_args__ = (
-        Index('idx_user_session', 'user_address', 'session_address'),
-    )
+
 
 class OnchainTransaction(Base):
     """Track on-chain transaction status"""
@@ -271,3 +289,41 @@ class DailyUsageSnapshot(Base):
     __table_args__ = (
         Index('idx_daily_usage_user', 'date', 'user_address', unique=True),
     )
+
+class SessionKey(Base):
+    """Session keys for AI agent trading authorization"""
+    __tablename__ = "session_keys"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, index=True, nullable=False)
+    session_address = Column(String, nullable=False, unique=True)  # Public address of session key
+    encrypted_private_key = Column(Text, nullable=False)  # Encrypted or plain private key (demo mode)
+    
+    is_active = Column(Boolean, default=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    revoked_at = Column(DateTime, nullable=True)
+    
+    __table_args__ = (
+        Index('idx_session_user_active', 'user_address', 'is_active'),
+        Index('idx_session_address', 'session_address'),
+        {'extend_existing': True}
+    )
+
+class FundingHistory(Base):
+    """History of Deposits and Withdrawals"""
+    __tablename__ = "funding_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, index=True, nullable=False)
+    type = Column(String, nullable=False)  # 'Deposit' | 'Withdraw'
+    asset = Column(String, nullable=False) # 'USDC', 'ETH'
+    amount = Column(Float, nullable=False)
+    tx_hash = Column(String, nullable=False, unique=True)
+    status = Column(String, default='Completed') # 'Completed', 'Pending', 'Failed'
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index('idx_funding_user_time', 'user_address', 'timestamp'),
+    )
+

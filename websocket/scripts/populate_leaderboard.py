@@ -5,14 +5,21 @@ import os
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.connection import async_session
+from database.connection import AsyncSessionLocal
 from services.leaderboard_service import LeaderboardService
 
 async def main():
     print("Connecting to database...")
-    async with async_session() as db:
+    async with AsyncSessionLocal() as db:
         print("Initializing Leaderboard Service...")
         service = LeaderboardService(db)
+        
+        print("Clearing today's snapshots...")
+        from sqlalchemy import text
+        from datetime import date
+        await db.execute(text("DELETE FROM leaderboard_snapshots WHERE snapshot_date = :d"), {"d": date.today()})
+        await db.execute(text("DELETE FROM model_leaderboard_snapshots WHERE snapshot_date = :d"), {"d": date.today()})
+        await db.commit()
         
         print("Triggering Leaderboard Snapshot Calculation...")
         try:

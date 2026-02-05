@@ -48,18 +48,17 @@ class HyperliquidConnector(BaseConnector):
         
         self.status = ConnectorStatus.HEALTHY
     
-    async def fetch(self, symbol: str, **kwargs) -> Dict[str, Any]:
+    async def fetch(self, symbol: str, data_type: str = "price", **kwargs) -> Dict[str, Any]:
         """
         Fetch current market data for symbol via HTTP.
         
         Args:
             symbol: Trading symbol (e.g., "BTC")
-            **kwargs: data_type ("price" | "orderbook" | "trades" | "funding")
-        
-        Returns:
-            Normalized data dict
+            data_type: "price" | "orderbook" | "trades" | "funding" (default: "price")
+            **kwargs: Additional args
         """
-        data_type = kwargs.get("data_type", "price")
+        # data_type is now an explicit argument with default
+        # kwargs can still capture other things
         
         try:
             if data_type == "price" or data_type == "funding" or data_type == "volume":

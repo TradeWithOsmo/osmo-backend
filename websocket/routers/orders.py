@@ -10,7 +10,7 @@ from typing import Optional, List
 from services.order_service import OrderService
 from middleware.security import security_middleware
 
-router = APIRouter(prefix="/api/orders", tags=["orders"])
+router = APIRouter(tags=["orders"])
 order_service = OrderService()
 
 
@@ -28,6 +28,42 @@ class PlaceOrderRequest(BaseModel):
     reduce_only: bool = False
     post_only: bool = False
     time_in_force: Optional[str] = 'GTC'  # 'GTC', 'IOC', 'FOK'
+    trigger_condition: Optional[str] = None  # 'ABOVE', 'BELOW'
+
+class ReportOrderRequest(BaseModel):
+    user_address: str
+    symbol: str
+    side: str  # 'buy' | 'sell'
+    order_type: str  # 'market' | 'limit' | 'stop_limit'
+    amount_usd: float
+    leverage: int = 1
+    tx_hash: str
+    price: Optional[float] = None
+    stop_price: Optional[float] = None
+    exchange: str = 'onchain'
+
+
+@router.post("/report")
+async def report_order(request_data: ReportOrderRequest, req: Request):
+    """Report a successful on-chain order placement for immediate tracking"""
+    try:
+        await security_middleware.verify_user(req, request_data.user_address)
+        
+        result = await order_service.report_onchain_order(
+            user_address=request_data.user_address,
+            symbol=request_data.symbol,
+            side=request_data.side,
+            order_type=request_data.order_type,
+            amount_usd=request_data.amount_usd,
+            leverage=request_data.leverage,
+            tx_hash=request_data.tx_hash,
+            price=request_data.price,
+            stop_price=request_data.stop_price,
+            exchange=request_data.exchange
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/place")
@@ -49,7 +85,8 @@ async def place_order(request_data: PlaceOrderRequest, req: Request):
             exchange=request_data.exchange,
             reduce_only=request_data.reduce_only,
             post_only=request_data.post_only,
-            time_in_force=request_data.time_in_force
+            time_in_force=request_data.time_in_force,
+            trigger_condition=request_data.trigger_condition
         )
         return {"success": True, **result}
     except HTTPException:
@@ -92,8 +129,8 @@ async def get_positions(user_address: str, req: Request = None):
     try:
         await security_middleware.verify_user(req, user_address)
         
-        positions = await order_service.get_user_positions(user_address)
-        return {"success": True, "positions": positions}
+        result = await order_service.get_user_positions(user_address)
+        return {"success": True, **result}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -121,5 +158,56 @@ async def update_tpsl(request_data: UpdateTPSLRequest, req: Request):
         return {"success": True, **result}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# --- Trade Actions (Detailed Simulation) ---
+from services.trade_action_service import trade_action_service
+
+class ClosePositionRequest(BaseModel):
+    user_address: str
+    symbol: str
+    price: Optional[float] = None
+    size_pct: float = 1.0 # 0.0 - 1.0
+
+class ReversePositionRequest(BaseModel):
+    user_address: str
+    symbol: str
+
+@router.post("/close")
+async def close_position(request_data: ClosePositionRequest, req: Request):
+    """Close a position (Market or Limit if price provided)"""
+    try:
+        await security_middleware.verify_user(req, request_data.user_address)
+        result = await trade_action_service.close_position(
+            request_data.user_address, 
+            request_data.symbol, 
+            request_data.price,
+            request_data.size_pct
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/close/all")
+async def close_all_positions(user_address: str, req: Request):
+    """Close ALL open positions"""
+    try:
+        await security_middleware.verify_user(req, user_address)
+        results = await trade_action_service.close_all_positions(user_address)
+        return {"success": True, "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/reverse")
+async def reverse_position(request_data: ReversePositionRequest, req: Request):
+    """Reverse a position"""
+    try:
+        await security_middleware.verify_user(req, request_data.user_address)
+        result = await trade_action_service.reverse_position(
+            request_data.user_address,
+            request_data.symbol
+        )
+        return {"success": True, **result}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

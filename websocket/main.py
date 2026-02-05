@@ -36,6 +36,7 @@ from connectors.hyperliquid.category_map import get_category  # Import category 
 
 # Import orders API
 from routers.orders import router as orders_router
+from services.price_pusher import price_pusher
 
 # Configure logging
 logging.basicConfig(
@@ -598,8 +599,30 @@ async def lifespan(app: FastAPI):
             logger.error(f"⚠️ Failed to start Subgraph Poller: {e}")
             
         logger.info(f"✅ Ostium poller started (interval: {settings.OSTIUM_POLL_INTERVAL}s)")
+        
+        # Start Price Pusher (Sync to on-chain OrderRouter) - DISABLED (Using JIT Push in OnchainConnector)
+        # asyncio.create_task(price_pusher.start(latest_prices, connected_clients))
+        # logger.info("✅ Price Pusher started")
     except Exception as e:
         logger.error(f"❌ Failed to start Ostium poller: {e}")
+
+    # Start Indexer Service (Hybrid Architecture)
+    try:
+        print("DEBUG: Loading indexer_service...")
+        from services.indexer_service import indexer_service
+        print("DEBUG: Starting indexer_service task...")
+        asyncio.create_task(indexer_service.start())
+        logger.info("✅ Indexer Service started (Listening to On-Chain Events)")
+        
+        # Start Simulation Matching Engine
+        print("DEBUG: Loading matching_engine...")
+        from services.matching_engine import simulation_matching_engine
+        print("DEBUG: Starting matching_engine task...")
+        asyncio.create_task(simulation_matching_engine.start())
+        logger.info("✅ Simulation Matching Engine started")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to start Indexer/Matching Services: {e}")
 
     # Initialize Connector System
     try:
@@ -620,8 +643,9 @@ async def lifespan(app: FastAPI):
                 await session.execute(text("TRUNCATE TABLE trades RESTART IDENTITY CASCADE"))
                 # Also truncate new trading tables if they exist
                 try:
-                    await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
-                    await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
+                    pass 
+                    # await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
+                    # await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
                 except Exception:
                     pass
                 await session.commit()
@@ -643,8 +667,9 @@ async def lifespan(app: FastAPI):
             await session.execute(text("TRUNCATE TABLE candles RESTART IDENTITY CASCADE"))
             await session.execute(text("TRUNCATE TABLE trades RESTART IDENTITY CASCADE"))
             try:
-                await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
+                pass
+                # await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
+                # await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
             except Exception:
                 pass
             await session.commit()
@@ -1020,13 +1045,64 @@ async def bridge_websocket(websocket: WebSocket, address: str):
 
 @app.websocket("/ws/notifications/{address}")
 async def notification_websocket(websocket: WebSocket, address: str):
-    """Subscribe to user notifications (Stub)"""
+    """Subscribe to user-specific notifications (Trade fills, PnL updates, etc.)"""
     await websocket.accept()
+    address = address.lower()
+    
+    # Send initial state
     try:
+        from services.order_service import OrderService
+        order_service = OrderService()
+        state = await order_service.get_user_positions(address)
+        await websocket.send_json({
+            "type": "initial_state",
+            "data": state
+        })
+    except Exception as e:
+        logger.error(f"Error sending periodic state to {address}: {e}")
+
+    # Subscribe to Redis for this user
+    pubsub = redis_manager._redis.pubsub()
+    channel = f"user_notifications:{address}"
+    await pubsub.subscribe(channel)
+    
+    logger.info(f"🔔 User {address} connected to real-time notifications")
+    
+    try:
+        # Background task for this specific connection to listen to Redis
+        async def listen_redis():
+            try:
+                async for message in pubsub.listen():
+                    if message['type'] == 'message':
+                        try:
+                            # Already JSON string from LedgerService
+                            # or Dict if published as dict
+                            data = message['data']
+                            if isinstance(data, bytes):
+                                data = data.decode('utf-8')
+                            
+                            await websocket.send_text(data if isinstance(data, str) else json.dumps(data))
+                        except Exception as e:
+                            logger.error(f"Error relaying notification to {address}: {e}")
+            except Exception as e:
+                logger.error(f"Redis listener crashed for {address}: {e}")
+        
+        # Start redis listener as task
+        redis_task = asyncio.create_task(listen_redis())
+        
+        # Keep connection alive
         while True:
+            # Wait for client heartbeat or ignore incoming
             await websocket.receive_text()
+            
     except WebSocketDisconnect:
-        pass
+        logger.info(f"📴 Notification client disconnected: {address}")
+    except Exception as e:
+        logger.error(f"Error in notification socket for {address}: {e}")
+    finally:
+        await pubsub.unsubscribe(channel)
+        if 'redis_task' in locals():
+            redis_task.cancel()
 
 
 # Graceful shutdown handler

@@ -1,1 +1,250 @@
-{"abi":[{"type":"constructor","inputs":[{"name":"initialOwner","type":"address","internalType":"address"}],"stateMutability":"nonpayable"},{"type":"function","name":"checkDailyVolume","inputs":[{"name":"user","type":"address","internalType":"address"},{"name":"volume","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"dailyVolumeLimit","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"maxLeverageSanity","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"minOrderUsd","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"owner","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"renounceOwnership","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"setDailyVolumeLimit","inputs":[{"name":"newLimit","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"setMaxLeverageSanity","inputs":[{"name":"newMax","type":"uint8","internalType":"uint8"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"setMinOrderUsd","inputs":[{"name":"newMin","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"transferOwnership","inputs":[{"name":"newOwner","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"userDailyVolume","inputs":[{"name":"","type":"address","internalType":"address"},{"name":"","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"validateOrder","inputs":[{"name":"user","type":"address","internalType":"address"},{"name":"symbol","type":"string","internalType":"string"},{"name":"amountUsd","type":"uint256","internalType":"uint256"},{"name":"leverage","type":"uint8","internalType":"uint8"}],"outputs":[],"stateMutability":"view"},{"type":"event","name":"OwnershipTransferred","inputs":[{"name":"previousOwner","type":"address","indexed":true,"internalType":"address"},{"name":"newOwner","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},{"type":"error","name":"BelowMinimumOrder","inputs":[]},{"type":"error","name":"DailyVolumeExceeded","inputs":[]},{"type":"error","name":"LeverageTooHigh","inputs":[]},{"type":"error","name":"OwnableInvalidOwner","inputs":[{"name":"owner","type":"address","internalType":"address"}]},{"type":"error","name":"OwnableUnauthorizedAccount","inputs":[{"name":"account","type":"address","internalType":"address"}]}],"bytecode":{"object":"0x60806040523461002f576100196100146100f4565b61022d565b610021610034565b610c506104198239610c5090f35b61003a565b60405190565b5f80fd5b601f801991011690565b634e487b7160e01b5f52604160045260245ffd5b906100669061003e565b810190811060018060401b0382111761007e57604052565b610048565b9061009661008f610034565b928361005c565b565b5f80fd5b60018060a01b031690565b6100b09061009c565b90565b6100bc816100a7565b036100c357565b5f80fd5b905051906100d4826100b3565b565b906020828203126100ef576100ec915f016100c7565b90565b610098565b6101126110698038038061010781610083565b9283398101906100d6565b90565b90565b90565b90565b61013261012d61013792610115565b61011b565b610118565b90565b5f1b90565b9061014b5f199161013a565b9181191691161790565b61016961016461016e92610118565b61011b565b610118565b90565b90565b9061018961018461019092610155565b610171565b825461013f565b9055565b90565b60ff1690565b6101b16101ac6101b692610194565b61011b565b610197565b90565b906101c560ff9161013a565b9181191691161790565b6101e36101de6101e892610197565b61011b565b610197565b90565b90565b906102036101fe61020a926101cf565b6101eb565b82546101b9565b9055565b90565b61022561022061022a9261020e565b61011b565b610118565b90565b610236906102bf565b61024c6102456298968061011e565b6001610174565b610260610259606461019d565b60026101ee565b61027361026c5f610211565b6003610174565b565b61028961028461028e9261020e565b61011b565b61009c565b90565b61029a90610275565b90565b6102a6906100a7565b9052565b91906102bd905f6020850194019061029d565b565b806102da6102d46102cf5f610291565b6100a7565b916100a7565b146102ea576102e8906103b9565b565b61030d6102f65f610291565b5f918291631e4fbdf760e01b8352600483016102aa565b0390fd5b5f1c90565b60018060a01b031690565b61032d61033291610311565b610316565b90565b61033f9054610321565b90565b9061035360018060a01b039161013a565b9181191691161790565b61037161036c6103769261009c565b61011b565b61009c565b90565b6103829061035d565b90565b61038e90610379565b90565b90565b906103a96103a46103b092610385565b610391565b8254610342565b9055565b5f0190565b6103c25f610335565b6103cc825f610394565b906104006103fa7f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e093610385565b91610385565b91610409610034565b80610413816103b4565b0390a356fe60806040526004361015610013575b6106c5565b61001d5f356100dc565b80630217626c146100d7578063336f3635146100d2578063480334d4146100cd57806356d6e19d146100c857806360e13451146100c35780636e05c7b2146100be578063715018a6146100b95780638da5cb5b146100b4578063c886a46c146100af578063cdb1f07b146100aa578063e87c0cee146100a55763f2fde38b0361000e57610692565b61063f565b6105f9565b610519565b6104a3565b61044e565b610418565b610343565b6102ad565b610279565b6101df565b610160565b60e01c90565b60405190565b5f80fd5b5f80fd5b5f9103126100fa57565b6100ec565b1c90565b90565b61011690600861011b93026100ff565b610103565b90565b906101299154610106565b90565b61013860035f9061011e565b90565b90565b6101479061013b565b9052565b919061015e905f6020850194019061013e565b565b34610190576101703660046100f0565b61018c61017b61012c565b6101836100e2565b9182918261014b565b0390f35b6100e8565b5f80fd5b6101a28161013b565b036101a957565b5f80fd5b905035906101ba82610199565b565b906020828203126101d5576101d2915f016101ad565b90565b6100ec565b5f0190565b3461020d576101f76101f23660046101bc565b610727565b6101ff6100e2565b80610209816101da565b0390f35b6100e8565b60018060a01b031690565b61022690610212565b90565b6102328161021d565b0361023957565b5f80fd5b9050359061024a82610229565b565b91906040838203126102745780610268610271925f860161023d565b936020016101ad565b90565b6100ec565b346102a85761029261028c36600461024c565b90610805565b61029a6100e2565b806102a4816101da565b0390f35b6100e8565b346102db576102c56102c03660046101bc565b6108ed565b6102cd6100e2565b806102d7816101da565b0390f35b6100e8565b60ff1690565b6102f69060086102fb93026100ff565b6102e0565b90565b9061030991546102e6565b90565b61031860025f906102fe565b90565b60ff1690565b61032a9061031b565b9052565b9190610341905f60208501940190610321565b565b34610373576103533660046100f0565b61036f61035e61030c565b6103666100e2565b9182918261032e565b0390f35b6100e8565b90565b61038f61038a61039492610212565b610378565b610212565b90565b6103a09061037b565b90565b6103ac90610397565b90565b906103b9906103a3565b5f5260205260405f2090565b6103d96103d46103de9261013b565b610378565b61013b565b90565b906103eb906103c5565b5f5260205260405f2090565b6104106104159261040b6004935f946103af565b6103e1565b61011e565b90565b346104495761044561043461042e36600461024c565b906103f7565b61043c6100e2565b9182918261014b565b0390f35b6100e8565b3461047c5761045e3660046100f0565b610466610945565b61046e6100e2565b80610478816101da565b0390f35b6100e8565b61048a9061021d565b9052565b91906104a1905f60208501940190610481565b565b346104d3576104b33660046100f0565b6104cf6104be61097f565b6104c66100e2565b9182918261048e565b0390f35b6100e8565b6104e18161031b565b036104e857565b5f80fd5b905035906104f9826104d8565b565b9060208282031261051457610511915f016104ec565b90565b6100ec565b346105475761053161052c3660046104fb565b610a09565b6105396100e2565b80610543816101da565b0390f35b6100e8565b5f80fd5b5f80fd5b5f80fd5b909182601f830112156105925781359167ffffffffffffffff831161058d57602001926001830284011161058857565b610554565b610550565b61054c565b916080838303126105f4576105ae825f850161023d565b9260208101359167ffffffffffffffff83116105ef576105d3846105ec948401610558565b9390946105e381604086016101ad565b936060016104ec565b90565b610195565b6100ec565b3461062b5761061561060c366004610597565b93929092610a35565b61061d6100e2565b80610627816101da565b0390f35b6100e8565b61063c60015f9061011e565b90565b3461066f5761064f3660046100f0565b61066b61065a610630565b6106626100e2565b9182918261014b565b0390f35b6100e8565b9060208282031261068d5761068a915f0161023d565b90565b6100ec565b346106c0576106aa6106a5366004610674565b610b17565b6106b26100e2565b806106bc816101da565b0390f35b6100e8565b5f80fd5b6106da906106d5610b22565b61071a565b565b5f1b90565b906106ed5f19916106dc565b9181191691161790565b90565b9061070f61070a610716926103c5565b6106f7565b82546106e1565b9055565b6107259060036106fa565b565b610730906106c9565b565b5f1c90565b61074361074891610732565b610103565b90565b6107559054610737565b90565b90565b61076f61076a61077492610758565b610378565b61013b565b90565b90565b61078e61078961079392610777565b610378565b61013b565b90565b634e487b7160e01b5f52601260045260245ffd5b634e487b7160e01b5f52601160045260245ffd5b6107ca6107d09161013b565b9161013b565b9081156107db570490565b610796565b6107ef6107f59193929361013b565b9261013b565b820180921161080057565b6107aa565b61080f600361074b565b61082161081b5f61075b565b9161013b565b146108c95761083c426108366201518061077a565b906107be565b61085a61085561084e600485906103af565b83906103e1565b61074b565b906108668285906107e0565b61088161087b610876600361074b565b61013b565b9161013b565b116108ad576108a16108996108ab956108a6946107e0565b9360046103af565b6103e1565b6106fa565b565b5f63346bed1360e01b8152806108c5600482016101da565b0390fd5b5050565b6108de906108d9610b22565b6108e0565b565b6108eb9060016106fa565b565b6108f6906108cd565b565b610900610b22565b610908610932565b565b61091e61091961092392610758565b610378565b610212565b90565b61092f9061090a565b90565b61094361093e5f610926565b610bae565b565b61094d6108f8565b565b5f90565b60018060a01b031690565b61096a61096f91610732565b610953565b90565b61097c905461095e565b90565b61098761094f565b506109915f610972565b90565b6109a5906109a0610b22565b6109fc565b565b906109b360ff916106dc565b9181191691161790565b6109d16109cc6109d69261031b565b610378565b61031b565b90565b90565b906109f16109ec6109f8926109bd565b6109d9565b82546109a7565b9055565b610a079060026109dc565b565b610a1290610994565b565b610a20610a2591610732565b6102e0565b90565b610a329054610a14565b90565b505050610a53610a4d610a48600161074b565b61013b565b9161013b565b10610a9657610a73610a6d610a686002610a28565b61031b565b9161031b565b11610a7a57565b5f630a4f5a0760e01b815280610a92600482016101da565b0390fd5b5f63e05349f960e01b815280610aae600482016101da565b0390fd5b610ac390610abe610b22565b610ac5565b565b80610ae0610ada610ad55f610926565b61021d565b9161021d565b14610af057610aee90610bae565b565b610b13610afc5f610926565b5f918291631e4fbdf760e01b83526004830161048e565b0390fd5b610b2090610ab2565b565b610b2a61097f565b610b43610b3d610b38610c0d565b61021d565b9161021d565b03610b4a57565b610b6c610b55610c0d565b5f91829163118cdaa760e01b83526004830161048e565b0390fd5b90610b8160018060a01b03916106dc565b9181191691161790565b90565b90610ba3610b9e610baa926103a3565b610b8b565b8254610b70565b9055565b610bb75f610972565b610bc1825f610b8e565b90610bf5610bef7f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0936103a3565b916103a3565b91610bfe6100e2565b80610c08816101da565b0390a3565b610c1561094f565b50339056fea264697066735822122072096c09f6cb8600ea2fcd7da4e45335732dab72ec58cfde6e2e528712d506ad64736f6c63430008210033","sourceMap":"336:2622:51:-:0;;;;;;;;;:::i;:::-;;:::i;:::-;;;:::i;:::-;;;;;;;;;;:::i;:::-;;;;:::o;:::-;;;;;;;;;;;;:::o;:::-;;;;;;;;;;;;;;;;;:::i;:::-;;;;;;;;;;;;;;;;;;:::o;:::-;;:::i;:::-;;;;;:::i;:::-;;;;:::i;:::-;:::o;:::-;;;;;;;;;;;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;;;:::o;:::-;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;;;;;;;:::i;:::-;;:::o;:::-;;:::i;:::-;;;;;;;;;;:::i;:::-;;;;;;;;:::i;:::-;;:::o;:::-;;:::o;:::-;;:::o;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;:::o;:::-;;;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;:::o;:::-;;;;;;;:::i;:::-;;:::i;:::-;;;;:::i;:::-;;;:::o;:::-;;:::o;:::-;;;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;:::o;:::-;;;;;;;:::i;:::-;;:::i;:::-;;;;:::i;:::-;;;:::o;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;938:223::-;;;;:::i;:::-;1004:22;;1018:8;1004:22;:::i;:::-;;;:::i;:::-;1051:23;;1071:3;1051:23;:::i;:::-;;;:::i;:::-;1111:20;;1130:1;1111:20;:::i;:::-;;;:::i;:::-;938:223::o;336:2622::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;;:::o;:::-;;;;;;;;;;;;;:::i;:::-;:::o;1225:187:21:-;1273:12;:26;;1289:10;1297:1;1289:10;:::i;:::-;1273:26;:::i;:::-;;;:::i;:::-;;1269:95;;1392:12;;;:::i;:::-;1225:187::o;1269:95::-;1322:31;1342:10;1350:1;1342:10;:::i;:::-;1322:31;;;;;;;;;;;;;:::i;:::-;;;;336:2622:51;;;;:::o;:::-;;;;;;;;:::o;:::-;;;;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;:::i;:::-;;:::o;:::-;;;;;;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;:::o;:::-;;;;;;;:::i;:::-;;:::i;:::-;;;;:::i;:::-;;;:::o;:::-;;;;:::o;2912:187:21:-;3004:6;;;:::i;:::-;3020:17;3029:8;3020:17;;:::i;:::-;3083:8;3052:40;;;;;:::i;:::-;;;:::i;:::-;;;;:::i;:::-;;;;;:::i;:::-;;;;2912:187::o","linkReferences":{}},"deployedBytecode":{"object":"0x60806040526004361015610013575b6106c5565b61001d5f356100dc565b80630217626c146100d7578063336f3635146100d2578063480334d4146100cd57806356d6e19d146100c857806360e13451146100c35780636e05c7b2146100be578063715018a6146100b95780638da5cb5b146100b4578063c886a46c146100af578063cdb1f07b146100aa578063e87c0cee146100a55763f2fde38b0361000e57610692565b61063f565b6105f9565b610519565b6104a3565b61044e565b610418565b610343565b6102ad565b610279565b6101df565b610160565b60e01c90565b60405190565b5f80fd5b5f80fd5b5f9103126100fa57565b6100ec565b1c90565b90565b61011690600861011b93026100ff565b610103565b90565b906101299154610106565b90565b61013860035f9061011e565b90565b90565b6101479061013b565b9052565b919061015e905f6020850194019061013e565b565b34610190576101703660046100f0565b61018c61017b61012c565b6101836100e2565b9182918261014b565b0390f35b6100e8565b5f80fd5b6101a28161013b565b036101a957565b5f80fd5b905035906101ba82610199565b565b906020828203126101d5576101d2915f016101ad565b90565b6100ec565b5f0190565b3461020d576101f76101f23660046101bc565b610727565b6101ff6100e2565b80610209816101da565b0390f35b6100e8565b60018060a01b031690565b61022690610212565b90565b6102328161021d565b0361023957565b5f80fd5b9050359061024a82610229565b565b91906040838203126102745780610268610271925f860161023d565b936020016101ad565b90565b6100ec565b346102a85761029261028c36600461024c565b90610805565b61029a6100e2565b806102a4816101da565b0390f35b6100e8565b346102db576102c56102c03660046101bc565b6108ed565b6102cd6100e2565b806102d7816101da565b0390f35b6100e8565b60ff1690565b6102f69060086102fb93026100ff565b6102e0565b90565b9061030991546102e6565b90565b61031860025f906102fe565b90565b60ff1690565b61032a9061031b565b9052565b9190610341905f60208501940190610321565b565b34610373576103533660046100f0565b61036f61035e61030c565b6103666100e2565b9182918261032e565b0390f35b6100e8565b90565b61038f61038a61039492610212565b610378565b610212565b90565b6103a09061037b565b90565b6103ac90610397565b90565b906103b9906103a3565b5f5260205260405f2090565b6103d96103d46103de9261013b565b610378565b61013b565b90565b906103eb906103c5565b5f5260205260405f2090565b6104106104159261040b6004935f946103af565b6103e1565b61011e565b90565b346104495761044561043461042e36600461024c565b906103f7565b61043c6100e2565b9182918261014b565b0390f35b6100e8565b3461047c5761045e3660046100f0565b610466610945565b61046e6100e2565b80610478816101da565b0390f35b6100e8565b61048a9061021d565b9052565b91906104a1905f60208501940190610481565b565b346104d3576104b33660046100f0565b6104cf6104be61097f565b6104c66100e2565b9182918261048e565b0390f35b6100e8565b6104e18161031b565b036104e857565b5f80fd5b905035906104f9826104d8565b565b9060208282031261051457610511915f016104ec565b90565b6100ec565b346105475761053161052c3660046104fb565b610a09565b6105396100e2565b80610543816101da565b0390f35b6100e8565b5f80fd5b5f80fd5b5f80fd5b909182601f830112156105925781359167ffffffffffffffff831161058d57602001926001830284011161058857565b610554565b610550565b61054c565b916080838303126105f4576105ae825f850161023d565b9260208101359167ffffffffffffffff83116105ef576105d3846105ec948401610558565b9390946105e381604086016101ad565b936060016104ec565b90565b610195565b6100ec565b3461062b5761061561060c366004610597565b93929092610a35565b61061d6100e2565b80610627816101da565b0390f35b6100e8565b61063c60015f9061011e565b90565b3461066f5761064f3660046100f0565b61066b61065a610630565b6106626100e2565b9182918261014b565b0390f35b6100e8565b9060208282031261068d5761068a915f0161023d565b90565b6100ec565b346106c0576106aa6106a5366004610674565b610b17565b6106b26100e2565b806106bc816101da565b0390f35b6100e8565b5f80fd5b6106da906106d5610b22565b61071a565b565b5f1b90565b906106ed5f19916106dc565b9181191691161790565b90565b9061070f61070a610716926103c5565b6106f7565b82546106e1565b9055565b6107259060036106fa565b565b610730906106c9565b565b5f1c90565b61074361074891610732565b610103565b90565b6107559054610737565b90565b90565b61076f61076a61077492610758565b610378565b61013b565b90565b90565b61078e61078961079392610777565b610378565b61013b565b90565b634e487b7160e01b5f52601260045260245ffd5b634e487b7160e01b5f52601160045260245ffd5b6107ca6107d09161013b565b9161013b565b9081156107db570490565b610796565b6107ef6107f59193929361013b565b9261013b565b820180921161080057565b6107aa565b61080f600361074b565b61082161081b5f61075b565b9161013b565b146108c95761083c426108366201518061077a565b906107be565b61085a61085561084e600485906103af565b83906103e1565b61074b565b906108668285906107e0565b61088161087b610876600361074b565b61013b565b9161013b565b116108ad576108a16108996108ab956108a6946107e0565b9360046103af565b6103e1565b6106fa565b565b5f63346bed1360e01b8152806108c5600482016101da565b0390fd5b5050565b6108de906108d9610b22565b6108e0565b565b6108eb9060016106fa565b565b6108f6906108cd565b565b610900610b22565b610908610932565b565b61091e61091961092392610758565b610378565b610212565b90565b61092f9061090a565b90565b61094361093e5f610926565b610bae565b565b61094d6108f8565b565b5f90565b60018060a01b031690565b61096a61096f91610732565b610953565b90565b61097c905461095e565b90565b61098761094f565b506109915f610972565b90565b6109a5906109a0610b22565b6109fc565b565b906109b360ff916106dc565b9181191691161790565b6109d16109cc6109d69261031b565b610378565b61031b565b90565b90565b906109f16109ec6109f8926109bd565b6109d9565b82546109a7565b9055565b610a079060026109dc565b565b610a1290610994565b565b610a20610a2591610732565b6102e0565b90565b610a329054610a14565b90565b505050610a53610a4d610a48600161074b565b61013b565b9161013b565b10610a9657610a73610a6d610a686002610a28565b61031b565b9161031b565b11610a7a57565b5f630a4f5a0760e01b815280610a92600482016101da565b0390fd5b5f63e05349f960e01b815280610aae600482016101da565b0390fd5b610ac390610abe610b22565b610ac5565b565b80610ae0610ada610ad55f610926565b61021d565b9161021d565b14610af057610aee90610bae565b565b610b13610afc5f610926565b5f918291631e4fbdf760e01b83526004830161048e565b0390fd5b610b2090610ab2565b565b610b2a61097f565b610b43610b3d610b38610c0d565b61021d565b9161021d565b03610b4a57565b610b6c610b55610c0d565b5f91829163118cdaa760e01b83526004830161048e565b0390fd5b90610b8160018060a01b03916106dc565b9181191691161790565b90565b90610ba3610b9e610baa926103a3565b610b8b565b8254610b70565b9055565b610bb75f610972565b610bc1825f610b8e565b90610bf5610bef7f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0936103a3565b916103a3565b91610bfe6100e2565b80610c08816101da565b0390a3565b610c1561094f565b50339056fea264697066735822122072096c09f6cb8600ea2fcd7da4e45335732dab72ec58cfde6e2e528712d506ad64736f6c63430008210033","sourceMap":"336:2622:51:-:0;;;;;;;;;-1:-1:-1;336:2622:51;:::i;:::-;;;;;:::i;:::-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;;;:::o;:::-;;;;:::o;:::-;;;;;;;;;;;;;;;:::o;:::-;;:::i;:::-;;;:::o;:::-;;:::o;:::-;;;;;;;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::o;667:31::-;;;;;;:::i;:::-;;:::o;336:2622::-;;:::o;:::-;;;;:::i;:::-;;;:::o;:::-;;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;:::i;:::-;;;;:::i;:::-;;;:::i;:::-;;;;;;:::i;:::-;;;;;;:::i;:::-;;;;;;;;:::i;:::-;;;;:::o;:::-;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;;;;;;;:::i;:::-;;:::o;:::-;;:::i;:::-;;;;:::o;:::-;;;;;;;;;:::i;:::-;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;:::-;;;;;;;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;;;:::o;:::-;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;;;;;;;;;;;:::i;:::-;;;;;:::i;:::-;;:::o;:::-;;:::i;:::-;;;;;;;;;:::i;:::-;;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;:::-;;;;;;;;;:::i;:::-;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;:::-;;;;:::o;:::-;;;;;;;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::o;561:30::-;;;;;;:::i;:::-;;:::o;336:2622::-;;;;:::o;:::-;;;;:::i;:::-;;;:::o;:::-;;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;:::i;:::-;;;;:::i;:::-;;;:::i;:::-;;;;;;:::i;:::-;;;;;;:::i;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;:::o;:::-;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;:::i;:::-;;;;;;;;;:::o;771:70::-;;;;;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;336:2622::-;;;;;;;;;;:::i;:::-;;;:::i;:::-;;;:::i;:::-;;;;;;:::i;:::-;;;;;;:::i;:::-;;;;;;;;:::i;:::-;;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;:::-;;;;:::i;:::-;;;:::o;:::-;;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;:::i;:::-;;;;:::i;:::-;;;:::i;:::-;;;;;;:::i;:::-;;;;;;:::i;:::-;;;;:::i;:::-;;;;:::o;:::-;;;;;;;;;;;;:::i;:::-;:::o;:::-;;;;;;;;;;;;;;:::i;:::-;;:::o;:::-;;:::i;:::-;;;;;;;;;:::i;:::-;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;:::-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;:::o;:::-;;:::i;:::-;;:::i;:::-;;:::i;:::-;;;;;;;;;;;;;;;:::i;:::-;;;;;;;;;;;;;;;;;;;:::i;:::-;;;;;;;;;;:::i;:::-;;;;;:::i;:::-;;:::o;:::-;;:::i;:::-;;:::i;:::-;;;;;;;;;:::i;:::-;;;;;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;446:26::-;;;;;;:::i;:::-;;:::o;336:2622::-;;;;;;;;:::i;:::-;;;;:::i;:::-;;;:::i;:::-;;;;;;:::i;:::-;;;;;;:::i;:::-;;;;;;;;;;;;;;:::i;:::-;;:::o;:::-;;:::i;:::-;;;;;;;;;:::i;:::-;;:::i;:::-;;;:::i;:::-;;;;;:::i;:::-;;;;;;:::i;:::-;;;;1500:62:21;1554:1;1500:62;;;:::i;:::-;1554:1;:::i;:::-;1500:62::o;336:2622:51:-;;;;:::o;:::-;;;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;:::o;:::-;;;;;;;:::i;:::-;;:::i;:::-;;;;:::i;:::-;;;:::o;2846:110::-;2922:27;2846:110;2922:27;;:::i;:::-;2846:110::o;:::-;;;;:::i;:::-;:::o;336:2622::-;;;;:::o;:::-;;;;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;:::i;:::-;;:::o;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;:::i;:::-;;;:::i;:::-;;;;;;;;:::o;:::-;;:::i;:::-;;;;;;;;:::i;:::-;;;:::i;:::-;;;;;;;;:::o;:::-;;:::i;1846:434::-;1925:16;;;:::i;:::-;:21;;1945:1;1925:21;:::i;:::-;;;:::i;:::-;;1921:34;;1998:24;:15;:24;2016:6;1998:24;:::i;:::-;;;:::i;:::-;2054:33;;:21;:15;2070:4;2054:21;;:::i;:::-;2076:10;2054:33;;:::i;:::-;;:::i;:::-;2102:11;:20;:11;2116:6;2102:20;;:::i;:::-;:39;;2125:16;;;:::i;:::-;2102:39;:::i;:::-;;;:::i;:::-;;2098:109;;2217:21;2253:20;2217:56;2253:11;2217:33;2253:11;:20;:::i;:::-;2217:15;;:21;:::i;:::-;:33;:::i;:::-;:56;:::i;:::-;1846:434::o;2098:109::-;2164:32;;;;;;;;;;;;:::i;:::-;;;;1921:34;1948:7;;:::o;1500:62:21:-;1554:1;1500:62;;;:::i;:::-;1554:1;:::i;:::-;1500:62::o;2405:96:51:-;2474:20;2405:96;2474:20;;:::i;:::-;2405:96::o;:::-;;;;:::i;:::-;:::o;1500:62:21:-;;;:::i;:::-;1554:1;;:::i;:::-;1500:62::o;336:2622:51:-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;:::i;:::-;;:::o;2293:101:21:-;2376:10;;2384:1;2376:10;:::i;:::-;;:::i;:::-;2293:101::o;:::-;;;:::i;:::-;:::o;336:2622:51:-;;;:::o;:::-;;;;;;;;:::o;:::-;;;;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;:::i;:::-;;:::o;1638:85:21:-;1684:7;;:::i;:::-;1710:6;;;;:::i;:::-;1703:13;:::o;1500:62::-;1554:1;1500:62;;;:::i;:::-;1554:1;:::i;:::-;1500:62::o;336:2622:51:-;;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;;;;;:::i;:::-;;:::i;:::-;;:::i;:::-;;:::o;:::-;;:::o;:::-;;;;;;;:::i;:::-;;:::i;:::-;;;;:::i;:::-;;;:::o;2623:106::-;2696:26;2623:106;2696:26;;:::i;:::-;2623:106::o;:::-;;;;:::i;:::-;:::o;336:2622::-;;;;;:::i;:::-;;:::i;:::-;;:::o;:::-;;;;;:::i;:::-;;:::o;1215:577::-;;;;1413:23;;1425:11;;;:::i;:::-;1413:23;:::i;:::-;;;:::i;:::-;;1409:91;;1547:28;;1558:17;;;:::i;:::-;1547:28;:::i;:::-;;;:::i;:::-;;1543:94;;1215:577::o;1543:94::-;1598:28;;;;;;;;;;;;:::i;:::-;;;;1409:91;1459:30;;;;;;;;;;;;:::i;:::-;;;;1500:62:21;1554:1;1500:62;;;:::i;:::-;1554:1;:::i;:::-;1500:62::o;2543:215::-;2627:8;:22;;2639:10;2647:1;2639:10;:::i;:::-;2627:22;:::i;:::-;;;:::i;:::-;;2623:91;;2742:8;;;:::i;:::-;2543:215::o;2623:91::-;2672:31;2692:10;2700:1;2692:10;:::i;:::-;2672:31;;;;;;;;;;;;;:::i;:::-;;;;2543:215;;;;:::i;:::-;:::o;1796:162::-;1855:7;;:::i;:::-;:23;;1866:12;;:::i;:::-;1855:23;:::i;:::-;;;:::i;:::-;;1851:101;;1796:162::o;1851:101::-;1901:40;1928:12;;:::i;:::-;1901:40;;;;;;;;;;;;;:::i;:::-;;;;336:2622:51;;;;;;;;;;:::i;:::-;;;;;;;;;:::o;:::-;;:::o;:::-;;;;;;;:::i;:::-;;:::i;:::-;;;;:::i;:::-;;;:::o;2912:187:21:-;3004:6;;;:::i;:::-;3020:17;3029:8;3020:17;;:::i;:::-;3083:8;3052:40;;;;;:::i;:::-;;;:::i;:::-;;;;:::i;:::-;;;;;:::i;:::-;;;;2912:187::o;656:96:31:-;709:7;;:::i;:::-;735:10;;728:17;:::o","linkReferences":{}},"methodIdentifiers":{"checkDailyVolume(address,uint256)":"480334d4","dailyVolumeLimit()":"0217626c","maxLeverageSanity()":"60e13451","minOrderUsd()":"e87c0cee","owner()":"8da5cb5b","renounceOwnership()":"715018a6","setDailyVolumeLimit(uint256)":"336f3635","setMaxLeverageSanity(uint8)":"c886a46c","setMinOrderUsd(uint256)":"56d6e19d","transferOwnership(address)":"f2fde38b","userDailyVolume(address,uint256)":"6e05c7b2","validateOrder(address,string,uint256,uint8)":"cdb1f07b"},"rawMetadata":"{\"compiler\":{\"version\":\"0.8.33+commit.64118f21\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"initialOwner\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"BelowMinimumOrder\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DailyVolumeExceeded\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"LeverageTooHigh\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"}],\"name\":\"OwnableInvalidOwner\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"}],\"name\":\"OwnableUnauthorizedAccount\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"previousOwner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"volume\",\"type\":\"uint256\"}],\"name\":\"checkDailyVolume\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"dailyVolumeLimit\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"maxLeverageSanity\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"minOrderUsd\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"renounceOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"newLimit\",\"type\":\"uint256\"}],\"name\":\"setDailyVolumeLimit\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint8\",\"name\":\"newMax\",\"type\":\"uint8\"}],\"name\":\"setMaxLeverageSanity\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"newMin\",\"type\":\"uint256\"}],\"name\":\"setMinOrderUsd\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"userDailyVolume\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"internalType\":\"string\",\"name\":\"symbol\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"amountUsd\",\"type\":\"uint256\"},{\"internalType\":\"uint8\",\"name\":\"leverage\",\"type\":\"uint8\"}],\"name\":\"validateOrder\",\"outputs\":[],\"stateMutability\":\"view\",\"type\":\"function\"}],\"devdoc\":{\"details\":\"Sanity checks before orders are sent to exchanges.\",\"errors\":{\"OwnableInvalidOwner(address)\":[{\"details\":\"The owner is not a valid owner account. (eg. `address(0)`)\"}],\"OwnableUnauthorizedAccount(address)\":[{\"details\":\"The caller account is not authorized to perform an operation.\"}]},\"kind\":\"dev\",\"methods\":{\"checkDailyVolume(address,uint256)\":{\"params\":{\"user\":\"The user address.\",\"volume\":\"The additional volume to add.\"}},\"constructor\":{\"params\":{\"initialOwner\":\"The owner address.\"}},\"owner()\":{\"details\":\"Returns the address of the current owner.\"},\"renounceOwnership()\":{\"details\":\"Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner.\"},\"setDailyVolumeLimit(uint256)\":{\"params\":{\"newLimit\":\"The new limit (0 = disabled).\"}},\"setMaxLeverageSanity(uint8)\":{\"params\":{\"newMax\":\"The new maximum leverage.\"}},\"setMinOrderUsd(uint256)\":{\"params\":{\"newMin\":\"The new minimum in USD (scaled by 1e6).\"}},\"transferOwnership(address)\":{\"details\":\"Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner.\"},\"validateOrder(address,string,uint256,uint8)\":{\"params\":{\"amountUsd\":\"The order amount in USD.\",\"leverage\":\"The leverage multiplier.\",\"symbol\":\"The trading symbol.\",\"user\":\"The user address.\"}}},\"title\":\"RiskManager\",\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{\"checkDailyVolume(address,uint256)\":{\"notice\":\"Check and update daily volume for a user.\"},\"constructor\":{\"notice\":\"Constructor.\"},\"dailyVolumeLimit()\":{\"notice\":\"Daily volume limit per user (optional, 0 = disabled)\"},\"maxLeverageSanity()\":{\"notice\":\"Maximum leverage sanity check (actual limit enforced by exchange)\"},\"minOrderUsd()\":{\"notice\":\"Minimum order size in USD (scaled by 1e6)\"},\"setDailyVolumeLimit(uint256)\":{\"notice\":\"Update daily volume limit.\"},\"setMaxLeverageSanity(uint8)\":{\"notice\":\"Update maximum leverage sanity check.\"},\"setMinOrderUsd(uint256)\":{\"notice\":\"Update minimum order size.\"},\"userDailyVolume(address,uint256)\":{\"notice\":\"User daily volume tracking: user => day => volume\"},\"validateOrder(address,string,uint256,uint8)\":{\"notice\":\"Validate an order before placement.\"}},\"notice\":\"Validates orders and enforces risk limits.\",\"version\":1}},\"settings\":{\"compilationTarget\":{\"src/modules/risk/RiskManager.sol\":\"RiskManager\"},\"evmVersion\":\"osaka\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\"},\"optimizer\":{\"enabled\":false,\"runs\":200},\"remappings\":[\":@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/\",\":erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/\",\":forge-std/=lib/forge-std/src/\",\":halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/\",\":openzeppelin-contracts/=lib/openzeppelin-contracts/\"],\"viaIR\":true},\"sources\":{\"lib/openzeppelin-contracts/contracts/access/Ownable.sol\":{\"keccak256\":\"0xff6d0bb2e285473e5311d9d3caacb525ae3538a80758c10649a4d61029b017bb\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://8ed324d3920bb545059d66ab97d43e43ee85fd3bd52e03e401f020afb0b120f6\",\"dweb:/ipfs/QmfEckWLmZkDDcoWrkEvMWhms66xwTLff9DDhegYpvHo1a\"]},\"lib/openzeppelin-contracts/contracts/utils/Context.sol\":{\"keccak256\":\"0x493033a8d1b176a037b2cc6a04dad01a5c157722049bbecf632ca876224dd4b2\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://6a708e8a5bdb1011c2c381c9a5cfd8a9a956d7d0a9dc1bd8bcdaf52f76ef2f12\",\"dweb:/ipfs/Qmax9WHBnVsZP46ZxEMNRQpLQnrdE4dK8LehML1Py8FowF\"]},\"src/libraries/OsmoErrors.sol\":{\"keccak256\":\"0xef0786967c41be186a66031948d243e18fb9651eb76f251867055ca30c5bc2c2\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://8fd59f7033be67cfe67aa59c6caee1bd1e3b6d08a76e364dcb8846f9acfca1c8\",\"dweb:/ipfs/QmTAC64qWZUb32v56QvGtKHBRgkyD4fYLUXzt7LoWLhi7g\"]},\"src/modules/risk/RiskManager.sol\":{\"keccak256\":\"0x5421d29cdc0105764bb6b9207f3537a87985f264444e77d7e4d777b40b34a25f\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://84d0e8af36b15b3f791df69935316cd7d9d6800a2f2c386d9311f48da737bed6\",\"dweb:/ipfs/QmSRHH1h5wGwLBx8ydS26d7kVswuPv2Q94MCBrr89QenkA\"]},\"src/modules/risk/interfaces/IRiskManager.sol\":{\"keccak256\":\"0xeb88d5b37c851a9ac27acb428b3cccda3bc4b0ffbfe2879b5e1711d4d43f5890\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://50449e4cd9fe7c0c0fc3ac3d1f9fba57c4416d628107a10fa95ed36565c0b0e3\",\"dweb:/ipfs/QmSLb3kjsaPaXnDy2SGeTETgbZXCrtKMLE75ppnMKUMtLp\"]}},\"version\":1}","metadata":{"compiler":{"version":"0.8.33+commit.64118f21"},"language":"Solidity","output":{"abi":[{"inputs":[{"internalType":"address","name":"initialOwner","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"type":"error","name":"BelowMinimumOrder"},{"inputs":[],"type":"error","name":"DailyVolumeExceeded"},{"inputs":[],"type":"error","name":"LeverageTooHigh"},{"inputs":[{"internalType":"address","name":"owner","type":"address"}],"type":"error","name":"OwnableInvalidOwner"},{"inputs":[{"internalType":"address","name":"account","type":"address"}],"type":"error","name":"OwnableUnauthorizedAccount"},{"inputs":[{"internalType":"address","name":"previousOwner","type":"address","indexed":true},{"internalType":"address","name":"newOwner","type":"address","indexed":true}],"type":"event","name":"OwnershipTransferred","anonymous":false},{"inputs":[{"internalType":"address","name":"user","type":"address"},{"internalType":"uint256","name":"volume","type":"uint256"}],"stateMutability":"nonpayable","type":"function","name":"checkDailyVolume"},{"inputs":[],"stateMutability":"view","type":"function","name":"dailyVolumeLimit","outputs":[{"internalType":"uint256","name":"","type":"uint256"}]},{"inputs":[],"stateMutability":"view","type":"function","name":"maxLeverageSanity","outputs":[{"internalType":"uint8","name":"","type":"uint8"}]},{"inputs":[],"stateMutability":"view","type":"function","name":"minOrderUsd","outputs":[{"internalType":"uint256","name":"","type":"uint256"}]},{"inputs":[],"stateMutability":"view","type":"function","name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}]},{"inputs":[],"stateMutability":"nonpayable","type":"function","name":"renounceOwnership"},{"inputs":[{"internalType":"uint256","name":"newLimit","type":"uint256"}],"stateMutability":"nonpayable","type":"function","name":"setDailyVolumeLimit"},{"inputs":[{"internalType":"uint8","name":"newMax","type":"uint8"}],"stateMutability":"nonpayable","type":"function","name":"setMaxLeverageSanity"},{"inputs":[{"internalType":"uint256","name":"newMin","type":"uint256"}],"stateMutability":"nonpayable","type":"function","name":"setMinOrderUsd"},{"inputs":[{"internalType":"address","name":"newOwner","type":"address"}],"stateMutability":"nonpayable","type":"function","name":"transferOwnership"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function","name":"userDailyVolume","outputs":[{"internalType":"uint256","name":"","type":"uint256"}]},{"inputs":[{"internalType":"address","name":"user","type":"address"},{"internalType":"string","name":"symbol","type":"string"},{"internalType":"uint256","name":"amountUsd","type":"uint256"},{"internalType":"uint8","name":"leverage","type":"uint8"}],"stateMutability":"view","type":"function","name":"validateOrder"}],"devdoc":{"kind":"dev","methods":{"checkDailyVolume(address,uint256)":{"params":{"user":"The user address.","volume":"The additional volume to add."}},"constructor":{"params":{"initialOwner":"The owner address."}},"owner()":{"details":"Returns the address of the current owner."},"renounceOwnership()":{"details":"Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."},"setDailyVolumeLimit(uint256)":{"params":{"newLimit":"The new limit (0 = disabled)."}},"setMaxLeverageSanity(uint8)":{"params":{"newMax":"The new maximum leverage."}},"setMinOrderUsd(uint256)":{"params":{"newMin":"The new minimum in USD (scaled by 1e6)."}},"transferOwnership(address)":{"details":"Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."},"validateOrder(address,string,uint256,uint8)":{"params":{"amountUsd":"The order amount in USD.","leverage":"The leverage multiplier.","symbol":"The trading symbol.","user":"The user address."}}},"version":1},"userdoc":{"kind":"user","methods":{"checkDailyVolume(address,uint256)":{"notice":"Check and update daily volume for a user."},"constructor":{"notice":"Constructor."},"dailyVolumeLimit()":{"notice":"Daily volume limit per user (optional, 0 = disabled)"},"maxLeverageSanity()":{"notice":"Maximum leverage sanity check (actual limit enforced by exchange)"},"minOrderUsd()":{"notice":"Minimum order size in USD (scaled by 1e6)"},"setDailyVolumeLimit(uint256)":{"notice":"Update daily volume limit."},"setMaxLeverageSanity(uint8)":{"notice":"Update maximum leverage sanity check."},"setMinOrderUsd(uint256)":{"notice":"Update minimum order size."},"userDailyVolume(address,uint256)":{"notice":"User daily volume tracking: user => day => volume"},"validateOrder(address,string,uint256,uint8)":{"notice":"Validate an order before placement."}},"version":1}},"settings":{"remappings":["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/","erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/","forge-std/=lib/forge-std/src/","halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/","openzeppelin-contracts/=lib/openzeppelin-contracts/"],"optimizer":{"enabled":false,"runs":200},"metadata":{"bytecodeHash":"ipfs"},"compilationTarget":{"src/modules/risk/RiskManager.sol":"RiskManager"},"evmVersion":"osaka","libraries":{},"viaIR":true},"sources":{"lib/openzeppelin-contracts/contracts/access/Ownable.sol":{"keccak256":"0xff6d0bb2e285473e5311d9d3caacb525ae3538a80758c10649a4d61029b017bb","urls":["bzz-raw://8ed324d3920bb545059d66ab97d43e43ee85fd3bd52e03e401f020afb0b120f6","dweb:/ipfs/QmfEckWLmZkDDcoWrkEvMWhms66xwTLff9DDhegYpvHo1a"],"license":"MIT"},"lib/openzeppelin-contracts/contracts/utils/Context.sol":{"keccak256":"0x493033a8d1b176a037b2cc6a04dad01a5c157722049bbecf632ca876224dd4b2","urls":["bzz-raw://6a708e8a5bdb1011c2c381c9a5cfd8a9a956d7d0a9dc1bd8bcdaf52f76ef2f12","dweb:/ipfs/Qmax9WHBnVsZP46ZxEMNRQpLQnrdE4dK8LehML1Py8FowF"],"license":"MIT"},"src/libraries/OsmoErrors.sol":{"keccak256":"0xef0786967c41be186a66031948d243e18fb9651eb76f251867055ca30c5bc2c2","urls":["bzz-raw://8fd59f7033be67cfe67aa59c6caee1bd1e3b6d08a76e364dcb8846f9acfca1c8","dweb:/ipfs/QmTAC64qWZUb32v56QvGtKHBRgkyD4fYLUXzt7LoWLhi7g"],"license":"MIT"},"src/modules/risk/RiskManager.sol":{"keccak256":"0x5421d29cdc0105764bb6b9207f3537a87985f264444e77d7e4d777b40b34a25f","urls":["bzz-raw://84d0e8af36b15b3f791df69935316cd7d9d6800a2f2c386d9311f48da737bed6","dweb:/ipfs/QmSRHH1h5wGwLBx8ydS26d7kVswuPv2Q94MCBrr89QenkA"],"license":"MIT"},"src/modules/risk/interfaces/IRiskManager.sol":{"keccak256":"0xeb88d5b37c851a9ac27acb428b3cccda3bc4b0ffbfe2879b5e1711d4d43f5890","urls":["bzz-raw://50449e4cd9fe7c0c0fc3ac3d1f9fba57c4416d628107a10fa95ed36565c0b0e3","dweb:/ipfs/QmSLb3kjsaPaXnDy2SGeTETgbZXCrtKMLE75ppnMKUMtLp"],"license":"MIT"}},"version":1},"id":51}
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "initialOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "checkDailyVolume",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "volume",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "dailyVolumeLimit",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxLeverageSanity",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "minOrderUsd",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "renounceOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDailyVolumeLimit",
+    "inputs": [
+      {
+        "name": "newLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxLeverageSanity",
+    "inputs": [
+      {
+        "name": "newMax",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMinOrderUsd",
+    "inputs": [
+      {
+        "name": "newMin",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "transferOwnership",
+    "inputs": [
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "userDailyVolume",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "validateOrder",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "symbol",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "amountUsd",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "leverage",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "BelowMinimumOrder",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DailyVolumeExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LeverageTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OwnableInvalidOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  }
+]

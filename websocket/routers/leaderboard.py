@@ -9,7 +9,7 @@ from datetime import date
 from database.connection import get_db
 from services.leaderboard_service import LeaderboardService
 
-router = APIRouter(prefix="/api/leaderboard", tags=["leaderboard"])
+router = APIRouter(tags=["leaderboard"])
 
 @router.get("/traders")
 async def get_trader_leaderboard(

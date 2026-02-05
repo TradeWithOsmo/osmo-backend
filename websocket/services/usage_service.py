@@ -128,5 +128,45 @@ class UsageService:
             logger.error(f"Error getting chart data: {e}")
             return []
 
+    async def get_last_used_models(self, user_address: str, timeframe: str = 'all', limit: int = 50) -> List[Dict[str, Any]]:
+        """Get last used models with aggregated metrics by timeframe"""
+        if not self.db: return []
+
+        try:
+            query = select(
+                AIUsageLog.model,
+                func.count(AIUsageLog.id).label("request_count"),
+                func.sum(AIUsageLog.input_tokens + AIUsageLog.output_tokens).label("total_tokens"),
+                func.sum(AIUsageLog.cost).label("total_cost"),
+                func.max(AIUsageLog.timestamp).label("last_used")
+            ).filter(AIUsageLog.user_address == user_address)
+
+            # Timeframe filter
+            if timeframe == '24h':
+                query = query.filter(AIUsageLog.timestamp >= datetime.utcnow() - timedelta(hours=24))
+            elif timeframe == '7d':
+                query = query.filter(AIUsageLog.timestamp >= datetime.utcnow() - timedelta(days=7))
+            elif timeframe == '30d':
+                query = query.filter(AIUsageLog.timestamp >= datetime.utcnow() - timedelta(days=30))
+
+            query = query.group_by(AIUsageLog.model).order_by(desc("last_used")).limit(limit)
+            
+            result = await self.db.execute(query)
+            rows = result.fetchall()
+
+            return [
+                {
+                    "model": row.model,
+                    "request_count": row.request_count,
+                    "total_tokens": row.total_tokens,
+                    "total_cost": row.total_cost,
+                    "last_used": row.last_used.strftime("%Y-%m-%d %H:%M")
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Error getting last used models: {e}")
+            return []
+
 # Singleton instance
 usage_service = UsageService()

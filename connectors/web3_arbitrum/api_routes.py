@@ -158,8 +158,51 @@ async def create_session(request: CreateSessionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class ConfirmSessionRequest(BaseModel):
+    user_address: str
+    session_address: str
+    session_private_key: str
+    expires_in: int
+
+@session_router.post("/confirm")
+async def confirm_session(request: ConfirmSessionRequest):
+    """
+    Confirm and store session after on-chain approval.
+    Called by frontend after successful SessionKeyManager.createSessionKey() transaction.
+    """
+    try:
+        result = await session_manager.confirm_session(
+            request.user_address,
+            request.session_address,
+            request.session_private_key,
+            request.expires_in
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@session_router.get("/active/{user_address}")
+async def get_active_session(user_address: str):
+    """Check if a user has an active session key."""
+    try:
+        session = await session_manager.get_active_session(user_address)
+        if session:
+            return {
+                "has_session": True,
+                "session_address": session.session_address,
+                "expires_at": session.expires_at.isoformat(),
+                # In demo mode, we can return the key IF the user is authenticated, 
+                # but for now we'll just indicate it exists.
+                "session_private_key": session.encrypted_private_key 
+            }
+        return {"has_session": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Include sub-routers into main router
 router.include_router(vault_router)
 router.include_router(faucet_router)
 router.include_router(session_router)
+

@@ -51,6 +51,7 @@ def normalize_all_mids(data: Dict[str, str]) -> Dict[str, Any]:
         normalized[symbol] = {
             "symbol": symbol,
             "price": normalize_price(price),
+            "markPrice": normalize_price(price), # Consistent field for frontend
             "timestamp": timestamp,
             "source": "hyperliquid",
             "is_stale": False

@@ -2,18 +2,19 @@
     "arbitrum_sepolia": {
         "chainId": 421614,
         "contracts": {
-            "OsmoCore": "0xd84937AAa3007296c95705ce379Ba8f4f7111d45",
-            "TradingVault": "0xe6f612353ba036b167c782A8AD384AF66ab4B1d5",
-            "AIVault": "0x4CF11512FD0d2A86A0E95Cf48C76682893A39dA7",
-            "OrderRouter": "0xFd8b09f95E4B2dd9dA7B5c22CC0eBb0186B14358",
-            "SessionKeyManager": "0x97cDc270fB00F13E84a05CCde8E15586B92C8501",
-            "Faucet": "0x921daADeaC569aDEB234e2Ca4bfcA7104A6efD2f",
-            "PriceFeed": "0x7a7a7ba203EC2B5FEdE76A6fFa310801023BDE17",
-            "SymbolRegistry": "0x4191056E217f8cE2F1583aDAA5B02C9590d741A5",
-            "RiskManager": "0x6d6568D5980ba002f78b0fD90F5828cAB346135A",
-            "OstiumAdapter": "0xAc3dd1854e7C72690803B1cbf68B15F1bc78a647",
-            "FeeManager": "0xEA0c5D87624d33B73AA67BC6449214557a56d9c5",
-            "USDC": "0x891BAcc68c2cf6609AFD9FD2A0CA5E28AF037128"
+            "OsmoHub": "0x82726104cd8c2f0f9f657781d94b46d4d1ea973e",
+            "TradingVault": "0x32fa262eccdb35e28db5cdd08b1a32637eeccf40",
+            "AIVault": "0xc02a936c7e2c3c5b97c149cd7c08b1e67882ac43",
+            "OrderRouter": "0x64bd2d82ead30734a86cb02aade17ca407e8b733",
+            "PositionManager": "0xe21eab41dce6a0a4c4b3265aeb27905805354b09",
+            "SessionKeyManager": "0xf39178173906f6fa46497e32b11358fd0ddbd37a",
+            "Faucet": "0x4f6ad6da032663bf27ad5a16148d737e423c1e3a",
+            "PriceFeed": "0xc39aa334a1d96dda2013f7b319de7c384c915856",
+            "SymbolRegistry": "0x654e102e0cdc2fc4ec08f160119a0d9f018381d8",
+            "RiskManager": "0x7d47941be33e0f5dcebb418a987b851010516347",
+            "OstiumAdapter": "0xf33b9079d14d5156c147feb89798a3b3ae393718",
+            "FeeManager": "0xb2a484fae3cbc74b0459c27d11f78101b33e2fcd",
+            "USDC": "0x857a1f7982d2e6911e8a2fd618f02dda87918769"
         }
     }
 }

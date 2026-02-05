@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from services.usage_service import usage_service
+from services.openrouter_service import openrouter_service
 
 router = APIRouter()
 
@@ -65,4 +66,19 @@ async def get_chart(user_address: str, timeframe: str = "30D"):
     if timeframe == "ALL": days = 365
     
     data = await usage_service.get_chart_data(user_address, days)
+    return data
+
+@router.get("/models")
+async def get_models():
+    """Get real-time model pricing from OpenRouter"""
+    models = await openrouter_service.get_models()
+    return models
+
+@router.get("/last-used/{user_address}")
+async def get_last_used(
+    user_address: str,
+    timeframe: str = Query("all", enum=["24h", "7d", "30d", "all"])
+):
+    """Get list of last used models for a specific user"""
+    data = await usage_service.get_last_used_models(user_address, timeframe)
     return data

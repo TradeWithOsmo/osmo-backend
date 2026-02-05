@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     JWT_SECRET: Optional[str] = None
     JWT_EXPIRY_HOURS: int = 1
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:8000"
+    RATE_LIMIT_PER_MINUTE: int = 300
     PRIVY_APP_ID: Optional[str] = None
     PRIVY_VERIFICATION_KEY: Optional[str] = None
     
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
     TRADING_VAULT_ADDRESS: Optional[str] = None
     AI_VAULT_ADDRESS: Optional[str] = None
     ORDER_ROUTER_ADDRESS: Optional[str] = None
+    POSITION_MANAGER_ADDRESS: Optional[str] = None
     SESSION_KEY_MANAGER_ADDRESS: Optional[str] = None
     PRICE_FEED_ADDRESS: Optional[str] = None
     SYMBOL_REGISTRY_ADDRESS: Optional[str] = None
@@ -96,6 +98,7 @@ class Settings(BaseSettings):
     AI_AGENT_API_URL: str = "http://localhost:8001"
     AI_WEBHOOK_SECRET: Optional[str] = None
     AI_RATE_LIMIT: int = 100
+    OPENROUTER_API_KEY: Optional[str] = None
     
     @property
     def is_testnet(self) -> bool:
@@ -106,7 +109,9 @@ class Settings(BaseSettings):
         return self.NETWORK_MODE == "mainnet"
     
     class Config:
-        env_file = ".env"
+        import os
+        from pathlib import Path
+        env_file = os.path.join(Path(__file__).parent, ".env")
         case_sensitive = True
         extra = "ignore"
 

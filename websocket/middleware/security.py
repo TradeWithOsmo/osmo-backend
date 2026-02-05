@@ -7,7 +7,7 @@ Rate limiting and request validation for trading API.
 from fastapi import Request, HTTPException
 from typing import Dict, List
 import time
-
+from config import settings
 
 class SecurityMiddleware:
     """
@@ -20,7 +20,7 @@ class SecurityMiddleware:
     def __init__(self):
         self.rate_limits: Dict[str, List[float]] = {}  # user_address -> [timestamps]
         self.rate_limit_window = 60  # 60 seconds
-        self.max_requests_per_window = 30  # 30 requests per minute
+        self.max_requests_per_window = settings.RATE_LIMIT_PER_MINUTE
     
     async def verify_user(self, request: Request, user_address: str) -> bool:
         """

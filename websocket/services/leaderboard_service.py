@@ -2,7 +2,7 @@
 Leaderboard Service - Calculate and store trader/agent rankings
 """
 from datetime import datetime, timedelta, date
-from sqlalchemy import func, and_, or_, select
+from sqlalchemy import func, and_, or_, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
 import logging
@@ -41,7 +41,7 @@ class LeaderboardService:
             func.count(Order.id).label('trade_count'),
             func.max(Order.agent_model).label('agent_model')
         ).where(
-            Order.status == 'filled'
+            Order.status.in_(['filled', 'FILLED'])
         )
         
         if cutoff_time:
@@ -66,6 +66,19 @@ class LeaderboardService:
             unrealized_pnl = sum(p.unrealized_pnl for p in positions)
             realized_pnl = await self._calculate_realized_pnl(user_address, cutoff_time)
             
+            # Win rate calculation
+            win_count_stmt = select(func.count(Order.id)).where(
+                Order.user_address == user_address,
+                Order.status.in_(['filled', 'FILLED']),
+                Order.realized_pnl > 0
+            )
+            if cutoff_time:
+                win_count_stmt = win_count_stmt.where(Order.filled_at >= cutoff_time)
+            
+            win_count_result = await self.db.execute(win_count_stmt)
+            win_count = win_count_result.scalar() or 0
+            win_rate = (win_count / row.trade_count * 100) if row.trade_count > 0 else 0
+            
             total_pnl = unrealized_pnl + realized_pnl
             roi = (total_pnl / account_value * 100) if account_value > 0 else 0
             
@@ -76,7 +89,8 @@ class LeaderboardService:
                 'roi': roi,
                 'volume': float(row.volume or 0),
                 'agent_model': row.agent_model,  # Will be None if manual trader
-                'trade_count': row.trade_count
+                'trade_count': row.trade_count,
+                'win_rate': win_rate
             })
         
         # Sort by PNL descending
@@ -103,7 +117,7 @@ class LeaderboardService:
             func.count(func.distinct(Order.user_address)).label('total_users'),
             func.sum(Order.notional_usd).label('volume'),
         ).where(
-            Order.status == 'filled',
+            Order.status.in_(['filled', 'FILLED']),
             Order.is_agent_trade == True,
             Order.agent_model.isnot(None)
         )
@@ -124,7 +138,7 @@ class LeaderboardService:
             users_stmt = select(Order.user_address).where(
                 Order.agent_model == agent_model,
                 Order.is_agent_trade == True,
-                Order.status == 'filled'
+                Order.status.in_(['filled', 'FILLED'])
             ).distinct()
             
             if cutoff_time:
@@ -151,13 +165,32 @@ class LeaderboardService:
             
             roi = (total_pnl / total_account_value * 100) if total_account_value > 0 else 0
             
+            # Model-wide stats
+            stmt_stats = select(
+                func.count(Order.id).label('total_trades'),
+                func.count(Order.id).filter(Order.realized_pnl > 0).label('wins')
+            ).where(
+                Order.agent_model == agent_model,
+                Order.is_agent_trade == True,
+                Order.status.in_(['filled', 'FILLED'])
+            )
+            if cutoff_time:
+                stmt_stats = stmt_stats.where(Order.filled_at >= cutoff_time)
+            
+            stats_result = await self.db.execute(stmt_stats)
+            stats = stats_result.one()
+            
+            win_rate = (stats.wins / stats.total_trades * 100) if stats.total_trades > 0 else 0
+            
             models_data.append({
                 'agent_model': agent_model,
                 'total_users': row.total_users,
                 'account_value': total_account_value,
                 'pnl': total_pnl,
                 'roi': roi,
-                'volume': float(row.volume or 0)
+                'volume': float(row.volume or 0),
+                'trade_count': stats.total_trades,
+                'win_rate': win_rate
             })
         
         # Sort by PNL descending
@@ -193,6 +226,8 @@ class LeaderboardService:
                     pnl=trader['pnl'],
                     roi=trader['roi'],
                     volume=trader['volume'],
+                    trade_count=trader['trade_count'],
+                    win_rate=trader['win_rate'],
                     agent_model=trader['agent_model'],
                     rank=trader['rank']
                 )
@@ -212,6 +247,8 @@ class LeaderboardService:
                     pnl=model['pnl'],
                     roi=model['roi'],
                     volume=model['volume'],
+                    trade_count=model['trade_count'],
+                    win_rate=model['win_rate'],
                     rank=model['rank']
                 )
                 await self.db.merge(snapshot)
@@ -262,6 +299,8 @@ class LeaderboardService:
                     'pnl': s.pnl,
                     'roi': s.roi,
                     'volume': s.volume,
+                    'tradeCount': s.trade_count,
+                    'winRate': s.win_rate,
                     'agentModel': s.agent_model
                 }
                 for s in snapshots
@@ -310,7 +349,9 @@ class LeaderboardService:
                     'accountValue': s.account_value,
                     'pnl': s.pnl,
                     'roi': s.roi,
-                    'volume': s.volume
+                    'volume': s.volume,
+                    'tradeCount': s.trade_count,
+                    'winRate': s.win_rate
                 }
                 for s in snapshots
             ],
@@ -334,14 +375,14 @@ class LeaderboardService:
         # Query filled orders to estimate realized PNL
         stmt = select(
             func.sum(
-                func.case(
+                case(
                     (Order.side == 'sell', Order.notional_usd),
                     else_=-Order.notional_usd
                 )
             )
         ).where(
             Order.user_address == user_address,
-            Order.status == 'filled'
+            Order.status.in_(['filled', 'FILLED'])
         )
         
         if cutoff_time:

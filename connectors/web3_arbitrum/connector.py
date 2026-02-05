@@ -8,9 +8,12 @@ from web3.middleware import ExtraDataToPOAMiddleware
 from eth_account import Account
 
 try:
-    from websocket.config import settings
+    from backend.websocket.config import settings
 except ImportError:
-    from config import settings
+    try:
+        from websocket.config import settings
+    except ImportError:
+        from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +83,14 @@ class ArbitrumWeb3Connector:
             return self.contracts[contract_name]
             
         # Get address from settings
-        # Mapping for special cases if needed, otherwise direct 
-        env_var_name = f"{contract_name.upper()}_ADDRESS"
+        # Convert CamelCase to SNAKE_CASE (e.g. TradingVault -> TRADING_VAULT)
+        import re
+        parts = re.findall(r'[A-Z]?[a-z0-9]+', contract_name)
+        # Note: sometimes findall might miss capital letters at start if not careful
+        # Better:
+        snake_name = re.sub(r'(?<!^)(?=[A-Z])', '_', contract_name).upper()
+        
+        env_var_name = f"{snake_name}_ADDRESS"
         address = getattr(settings, env_var_name, None)
         
         if not address:
@@ -97,8 +106,11 @@ class ArbitrumWeb3Connector:
                 
             with open(abi_path) as f:
                 abi_data = json.load(f)
-                # Handle Foundry artifact structure
-                abi = abi_data.get('abi', abi_data)
+                # Handle Foundry artifact structure or raw ABI list
+                if isinstance(abi_data, dict):
+                    abi = abi_data.get('abi', abi_data)
+                else:
+                    abi = abi_data
                 
             contract = self.w3.eth.contract(
                 address=Web3.to_checksum_address(address),
