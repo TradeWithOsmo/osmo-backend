@@ -69,16 +69,71 @@ async def get_chart(user_address: str, timeframe: str = "30D"):
     return data
 
 @router.get("/models")
-async def get_models():
-    """Get real-time model pricing from OpenRouter"""
-    models = await openrouter_service.get_models()
+async def get_models(provider: Optional[str] = None, search: Optional[str] = None):
+    """Get real-time model pricing from OpenRouter merged with usage stats"""
+    if provider:
+        models = await openrouter_service.get_models_by_provider(provider)
+    else:
+        models = await openrouter_service.get_models(search=search)
+        
+    # Inject real weekly usage data
+    weekly_usage = await usage_service.get_global_weekly_usage()
+    for model in models:
+        model["weekly_tokens"] = weekly_usage.get(model["id"], 0)
+        
     return models
 
+@router.get("/providers")
+async def get_providers():
+    """Get list of available model providers"""
+    return await openrouter_service.get_providers()
+
 @router.get("/last-used/{user_address}")
-async def get_last_used(
-    user_address: str,
-    timeframe: str = Query("all", enum=["24h", "7d", "30d", "all"])
-):
+async def get_last_used(user_address: str, timeframe: str = "all"):
     """Get list of last used models for a specific user"""
     data = await usage_service.get_last_used_models(user_address, timeframe)
     return data
+
+class EnabledModelsRequest(BaseModel):
+    models: List[str]
+
+@router.get("/models/enabled/default")
+async def get_default_enabled_models():
+    """Get list of default enabled models"""
+    return await usage_service.get_default_enabled_models()
+
+@router.get("/models/enabled/{user_address}")
+async def get_enabled_models(user_address: str):
+    """Get list of enabled models for a user"""
+    return await usage_service.get_enabled_models(user_address)
+
+@router.post("/models/enabled/{user_address}")
+async def save_enabled_models(user_address: str, request: EnabledModelsRequest):
+    """Save list of enabled models for a user"""
+    success = await usage_service.save_enabled_models(user_address, request.models)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save models")
+    return {"status": "success"}
+
+# --- Agent Enablement Endpoints ---
+
+class EnabledAgentsRequest(BaseModel):
+    agents: List[str]
+
+@router.get("/agents/enabled/default")
+async def get_default_enabled_agents():
+    """Get list of default enabled agents"""
+    return await usage_service.get_default_enabled_agents()
+
+@router.get("/agents/enabled/{user_address}")
+async def get_enabled_agents(user_address: str):
+    """Get list of enabled agents for a user"""
+    return await usage_service.get_enabled_agents(user_address)
+
+@router.post("/agents/enabled/{user_address}")
+async def save_enabled_agents(user_address: str, request: EnabledAgentsRequest):
+    """Save list of enabled agents for a user"""
+    success = await usage_service.save_enabled_agents(user_address, request.agents)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save agents")
+    return {"status": "success"}

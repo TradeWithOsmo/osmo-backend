@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     AI_WEBHOOK_SECRET: Optional[str] = None
     AI_RATE_LIMIT: int = 100
     OPENROUTER_API_KEY: Optional[str] = None
+    GROQ_API_KEY: Optional[str] = None
     
     @property
     def is_testnet(self) -> bool:

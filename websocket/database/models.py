@@ -327,3 +327,83 @@ class FundingHistory(Base):
         Index('idx_funding_user_time', 'user_address', 'timestamp'),
     )
 
+
+class UserEnabledModels(Base):
+    """User preferences for enabled AI models"""
+    __tablename__ = "user_enabled_models"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, index=True, nullable=False, unique=True)
+    model_list = Column(Text, nullable=False) # JSON list of enabled model IDs
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class UserEnabledAgents(Base):
+    """User preferences for enabled agents specifically for Multi-Agent mode"""
+    __tablename__ = "user_enabled_agents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, index=True, nullable=False, unique=True)
+    agent_list = Column(Text, nullable=False) # JSON list of enabled agent (model) IDs
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ChatWorkspace(Base):
+    """Container for organizing chat sessions"""
+    __tablename__ = "chat_workspaces"
+
+    id = Column(String, primary_key=True) # UUID or client-side ID
+    user_address = Column(String, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    icon = Column(String, nullable=True)
+    is_expanded = Column(Boolean, default=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_workspace_user', 'user_address', 'created_at'),
+    )
+
+class ChatSession(Base):
+    """A collection of chat messages forming a conversation"""
+    __tablename__ = "chat_sessions"
+
+    id = Column(String, primary_key=True) # UUID or frontend session ID
+    user_address = Column(String, index=True, nullable=False)
+    workspace_id = Column(String, index=True, nullable=True) # NULL means 'Inbox'
+    title = Column(String, nullable=True)
+    model_id = Column(String, nullable=True) # Last used model
+    
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_session_user', 'user_address', 'updated_at'),
+    )
+
+class ChatMessage(Base):
+    """Individual messages within a chat session"""
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, index=True, nullable=False)
+    user_address = Column(String, index=True, nullable=False)
+    
+    role = Column(String, nullable=False) # 'user', 'assistant'
+    content = Column(Text, nullable=False)
+    model_id = Column(String, nullable=True) # Model used for this specific message
+    
+    # Metadata for usage tracking linkage
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    cost = Column(Float, default=0.0)
+    
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index('idx_message_session', 'session_id', 'timestamp'),
+    )

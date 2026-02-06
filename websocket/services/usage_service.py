@@ -3,7 +3,9 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timedelta
 from sqlalchemy import select, func, desc
 
-from database.models import AIUsageLog, DailyUsageSnapshot
+from database.models import AIUsageLog, DailyUsageSnapshot, UserEnabledModels, UserEnabledAgents
+from database.connection import AsyncSessionLocal
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +169,162 @@ class UsageService:
         except Exception as e:
             logger.error(f"Error getting last used models: {e}")
             return []
+
+    async def get_global_weekly_usage(self) -> Dict[str, int]:
+        """Get total tokens used per model globally in the last 7 days"""
+        if not self.db: return {}
+        try:
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            query = select(
+                AIUsageLog.model,
+                func.sum(AIUsageLog.input_tokens + AIUsageLog.output_tokens).label("total_tokens")
+            ).filter(AIUsageLog.timestamp >= seven_days_ago).group_by(AIUsageLog.model)
+            
+            result = await self.db.execute(query)
+            rows = result.fetchall()
+            return {row.model: int(row.total_tokens or 0) for row in rows}
+        except Exception as e:
+            logger.error(f"Error getting global weekly usage: {e}")
+            return {}
+
+    async def get_enabled_models(self, user_address: str) -> List[str]:
+        """Get list of enabled models for a user"""
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserEnabledModels).filter(UserEnabledModels.user_address == user_address)
+                )
+                record = result.scalars().first()
+                
+                if record and record.model_list:
+                    return json.loads(record.model_list)
+                
+                # Default fallback
+                return []
+        except Exception as e:
+            logger.error(f"Error getting enabled models: {e}")
+            return []
+
+    async def save_enabled_models(self, user_address: str, models: List[str]) -> bool:
+        """Save list of enabled models for a user"""
+        try:
+            async with AsyncSessionLocal() as session:
+                # Check if exists
+                result = await session.execute(
+                    select(UserEnabledModels).filter(UserEnabledModels.user_address == user_address)
+                )
+                record = result.scalars().first()
+                
+                models_json = json.dumps(models)
+                
+                if record:
+                    record.model_list = models_json
+                else:
+                    record = UserEnabledModels(
+                        user_address=user_address,
+                        model_list=models_json
+                    )
+                    session.add(record)
+                
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving enabled models: {e}")
+            return False
+
+    async def get_default_enabled_models(self) -> List[str]:
+        """Get the global default enabled models"""
+        DEFAULT_MODELS = [
+            'anthropic/claude-4.5-sonnet',
+            'deepseek/deepseek-chat-v3.1',
+            'google/gemini-3-pro',
+            'openai/gpt-5.1',
+            'x-ai/grok-4',
+            'x-ai/grok-420',
+            'moonshot/kimi-k2-thinking',
+            'qwen/qwen-3-max',
+            'groq/openai/gpt-oss-120b'
+        ]
+        
+        try:
+            async with AsyncSessionLocal() as session:
+                # Use a specific keyword for default settings
+                result = await session.execute(
+                    select(UserEnabledModels).filter(UserEnabledModels.user_address == "global_default")
+                )
+                record = result.scalars().first()
+                
+                if record and record.model_list:
+                    return json.loads(record.model_list)
+                
+                return DEFAULT_MODELS
+        except Exception as e:
+            logger.error(f"Error getting default enabled models: {e}")
+            return DEFAULT_MODELS
+
+    async def get_enabled_agents(self, user_address: str) -> List[str]:
+        """Get list of enabled agents for a user"""
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserEnabledAgents).filter(UserEnabledAgents.user_address == user_address)
+                )
+                record = result.scalars().first()
+                
+                if record and record.agent_list:
+                    return json.loads(record.agent_list)
+                
+                return []
+        except Exception as e:
+            logger.error(f"Error getting enabled agents: {e}")
+            return []
+
+    async def save_enabled_agents(self, user_address: str, agents: List[str]) -> bool:
+        """Save list of enabled agents for a user"""
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserEnabledAgents).filter(UserEnabledAgents.user_address == user_address)
+                )
+                record = result.scalars().first()
+                
+                agents_json = json.dumps(agents)
+                
+                if record:
+                    record.agent_list = agents_json
+                else:
+                    record = UserEnabledAgents(
+                        user_address=user_address,
+                        agent_list=agents_json
+                    )
+                    session.add(record)
+                
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving enabled agents: {e}")
+            return False
+
+    async def get_default_enabled_agents(self) -> List[str]:
+        """Get the global default enabled agents"""
+        # User requested: "nah pas di enable dia akan masuk kesitu semua tanpa pengelompokan provider just agent"
+        # For now, let's keep it empty or same as models if we want a default
+        DEFAULT_AGENTS = []
+        
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserEnabledAgents).filter(UserEnabledAgents.user_address == "global_default")
+                )
+                record = result.scalars().first()
+                
+                if record and record.agent_list:
+                    return json.loads(record.agent_list)
+                
+                return DEFAULT_AGENTS
+        except Exception as e:
+            logger.error(f"Error getting default enabled agents: {e}")
+            return DEFAULT_AGENTS
 
 # Singleton instance
 usage_service = UsageService()
