@@ -63,6 +63,7 @@ class OstiumConnector(BaseConnector):
             Normalized data dict
         """
         data_type = kwargs.get("data_type", "price")
+        normalized_symbol = (symbol or "").upper().replace("-", "").replace("/", "")
         
         try:
             if data_type == "price":
@@ -79,9 +80,9 @@ class OstiumConnector(BaseConnector):
                 for item in raw_data:
                     # Construct symbol from "from" + "to"
                     item_symbol = item.get("from", "") + item.get("to", "")
-                    if item_symbol == symbol:
+                    if item_symbol == normalized_symbol:
                         symbol_data = {
-                            "symbol": symbol,
+                            "symbol": normalized_symbol,
                             "price": str(item.get("mid", 0)),
                             "bid": item.get("bid", 0),
                             "ask": item.get("ask", 0),
@@ -90,7 +91,7 @@ class OstiumConnector(BaseConnector):
                         break
                 
                 if not symbol_data:
-                    raise ValueError(f"Symbol {symbol} not found in Ostium response")
+                    raise ValueError(f"Symbol {normalized_symbol} not found in Ostium response")
                 
                 return self.normalize(symbol_data, "price")
             
@@ -103,8 +104,19 @@ class OstiumConnector(BaseConnector):
             elif data_type == "funding":
                 # Ostium doesn't provide funding rates
                 # Return placeholder
-                raw_data = {"symbol": symbol, "fundingRate": 0, "nextFundingTime": 0}
+                raw_data = {"symbol": normalized_symbol, "fundingRate": 0, "nextFundingTime": 0}
                 return self.normalize(raw_data, "funding")
+            
+            elif data_type == "candles":
+                # Ostium connector currently has no candles API in this adapter.
+                return {
+                    "source": "ostium",
+                    "symbol": normalized_symbol,
+                    "data_type": "candles",
+                    "timestamp": 0,
+                    "data": [],
+                    "error": "Candle data is not available from Ostium connector yet.",
+                }
             
             else:
                 raise ValueError(f"Unknown data_type: {data_type}")

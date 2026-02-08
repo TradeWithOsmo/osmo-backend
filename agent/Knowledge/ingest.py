@@ -20,7 +20,7 @@ load_dotenv(override=True)
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-COLLECTION_NAME = "osmo_knowledge"
+COLLECTION_NAME = os.getenv("QDRANT_KB_COLLECTION", "osmo_knowledge_base")
 CONTENT_CATS_DIR = Path(__file__).parent / "ContectCats"
 
 if not OPENROUTER_API_KEY:

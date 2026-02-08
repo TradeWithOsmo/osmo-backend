@@ -24,6 +24,8 @@ class PlaceOrderRequest(BaseModel):
     leverage: int = 1
     price: Optional[float] = None
     stop_price: Optional[float] = None
+    tp: Optional[float] = None
+    sl: Optional[float] = None
     exchange: Optional[str] = None  # Auto-detect if not provided
     reduce_only: bool = False
     post_only: bool = False
@@ -40,6 +42,8 @@ class ReportOrderRequest(BaseModel):
     tx_hash: str
     price: Optional[float] = None
     stop_price: Optional[float] = None
+    tp: Optional[float] = None
+    sl: Optional[float] = None
     exchange: str = 'onchain'
 
 
@@ -59,6 +63,8 @@ async def report_order(request_data: ReportOrderRequest, req: Request):
             tx_hash=request_data.tx_hash,
             price=request_data.price,
             stop_price=request_data.stop_price,
+            tp=request_data.tp,
+            sl=request_data.sl,
             exchange=request_data.exchange
         )
         return {"success": True, **result}
@@ -82,6 +88,8 @@ async def place_order(request_data: PlaceOrderRequest, req: Request):
             leverage=request_data.leverage,
             price=request_data.price,
             stop_price=request_data.stop_price,
+            tp=request_data.tp,
+            sl=request_data.sl,
             exchange=request_data.exchange,
             reduce_only=request_data.reduce_only,
             post_only=request_data.post_only,
@@ -131,6 +139,8 @@ async def get_positions(user_address: str, req: Request = None):
         
         result = await order_service.get_user_positions(user_address)
         return {"success": True, **result}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -154,6 +164,36 @@ async def update_tpsl(request_data: UpdateTPSLRequest, req: Request):
             tp=request_data.tp,
             sl=request_data.sl,
             exchange=request_data.exchange
+        )
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class UpdateAllTPSLRequest(BaseModel):
+    user_address: str
+    tp: Optional[str] = None
+    sl: Optional[str] = None
+    tp_pct: Optional[float] = None
+    sl_pct: Optional[float] = None
+    exchange: Optional[str] = None
+
+
+@router.post("/positions/tpsl/all")
+async def update_all_tpsl(request_data: UpdateAllTPSLRequest, req: Request):
+    """Bulk update TP/SL for all open positions"""
+    try:
+        await security_middleware.verify_user(req, request_data.user_address)
+
+        result = await order_service.update_all_positions_tpsl(
+            user_address=request_data.user_address,
+            tp=request_data.tp,
+            sl=request_data.sl,
+            tp_pct=request_data.tp_pct,
+            sl_pct=request_data.sl_pct,
+            exchange=request_data.exchange,
         )
         return {"success": True, **result}
     except HTTPException:

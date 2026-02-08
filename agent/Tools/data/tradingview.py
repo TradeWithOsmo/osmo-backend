@@ -6,7 +6,10 @@ Allows the agent to 'see' what indicators the user has on their chart.
 
 import httpx
 from typing import Dict, Any, List
-from backend.agent.Config.tools_config import DATA_SOURCES
+try:
+    from agent.Config.tools_config import DATA_SOURCES
+except Exception:
+    from backend.agent.Config.tools_config import DATA_SOURCES
 
 CONNECTORS_API = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
 

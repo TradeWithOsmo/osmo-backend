@@ -4,6 +4,7 @@ services:
   backend:
     build: .
     container_name: osmo-backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     volumes:
       - .:/app
       - ../connectors:/app/connectors
@@ -18,6 +19,12 @@ services:
       - SAVE_TO_DB=${SAVE_TO_DB:-False}
       - DATABASE_URL=postgresql://osmo_user:osmo_password@db:5432/osmo_db
       - REDIS_URL=redis://osmo-redis:6379/0
+      - QDRANT_HOST=${QDRANT_HOST:-osmo-qdrant}
+      - QDRANT_PORT=${QDRANT_PORT:-6333}
+      - QDRANT_KB_COLLECTION=${QDRANT_KB_COLLECTION:-osmo_knowledge_base_384}
+      - KB_EMBEDDING_PROVIDER=${KB_EMBEDDING_PROVIDER:-local}
+      - KB_EMBEDDING_MODEL=${KB_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      - KB_EMBEDDING_DIMS=${KB_EMBEDDING_DIMS:-384}
     depends_on:
       - db
       - redis
@@ -109,13 +116,27 @@ services:
     environment:
       - QDRANT_HOST=osmo-qdrant
       - QDRANT_PORT=6333
+      - QDRANT_KB_COLLECTION=${QDRANT_KB_COLLECTION:-osmo_knowledge_base}
+      - KB_EMBEDDING_PROVIDER=${KB_EMBEDDING_PROVIDER:-local}
+      - KB_EMBEDDING_DIMS=${KB_EMBEDDING_DIMS:-384}
+      - KB_EMBEDDING_MODEL=${KB_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - INGEST_EMBED_MAX_CHARS=${INGEST_EMBED_MAX_CHARS:-6000}
+      - INGEST_EMBED_MAX_TOKENS=${INGEST_EMBED_MAX_TOKENS:-2000}
+      - INGEST_EMBED_SPLIT_CHARS=${INGEST_EMBED_SPLIT_CHARS:-1800}
+      - INGEST_EMBED_SPLIT_OVERLAP=${INGEST_EMBED_SPLIT_OVERLAP:-200}
+      - INGEST_MIN_CONFIDENCE=${INGEST_MIN_CONFIDENCE:-0.8}
+      - INGEST_ALLOWED_TYPES=${INGEST_ALLOWED_TYPES:-article}
+      - INGEST_UPSERT_BATCH_SIZE=${INGEST_UPSERT_BATCH_SIZE:-100}
+      - INGEST_DEDUP_DB_PATH=${INGEST_DEDUP_DB_PATH:-/app/.ingest_dedup.sqlite3}
       # Inngest Configuration
       - INNGEST_BASE_URL=http://osmo-inngest:8288
       - INNGEST_EVENT_KEY=local
-      # If flask autoreload is needed:
-      - FLASK_DEBUG=1
+      # Keep ingestion worker stable (disable auto-reloader by default).
+      - FLASK_DEBUG=${FLASK_DEBUG:-0}
     volumes:
       - ../inngest-py:/app
       - ../agent/Knowledge/ContectCats:/app/ContectCats

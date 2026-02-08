@@ -13,7 +13,8 @@ from .market import (
     get_orderbook, 
     get_funding_rate, 
     get_ticker_stats,
-    get_chainlink_price
+    get_chainlink_price,
+    get_high_low_levels,
 )
 
 from .analysis import (
@@ -47,10 +48,15 @@ from .knowledge import (
     search_knowledge_base
 )
 
+from .trade import (
+    adjust_position_tpsl,
+    adjust_all_positions_tpsl,
+)
+
 __all__ = [
     # Market
     'get_price', 'get_candles', 'get_orderbook', 'get_funding_rate', 
-    'get_ticker_stats', 'get_chainlink_price',
+    'get_ticker_stats', 'get_chainlink_price', 'get_high_low_levels',
     # Analysis
     'get_technical_analysis', 'get_patterns', 'get_indicators', 'get_technical_summary',
     # Analytics
@@ -59,6 +65,8 @@ __all__ = [
     'search_news', 'search_sentiment',
     # Frontend
     'get_active_indicators',
+    # Trade actions
+    'adjust_position_tpsl', 'adjust_all_positions_tpsl',
     # Memory
     'add_memory', 'search_memory', 'get_recent_history',
     # Knowledge

@@ -12,6 +12,8 @@ import asyncio
 class DataCategory(Enum):
     """Data categories"""
     MARKET = "market"
+    FUNDING = "funding"
+    ORDERBOOK = "orderbook"
     INDICATORS = "indicators"
     USER = "user"
     ANALYTICS = "analytics"
@@ -82,13 +84,15 @@ class ConnectorManager:
         # Route to appropriate connector
         connector_id = self._route_connector(category, asset_type)
         connector = self.get_connector(connector_id)
-        
+
         if not connector:
             raise ValueError(f"Connector not found: {connector_id}")
-        
+
+        data_type = kwargs.pop("data_type", None) or self._category_to_data_type(category)
+
         # Fetch data
         try:
-            data = await connector.fetch(symbol, **kwargs)
+            data = await connector.fetch(symbol, data_type=data_type, **kwargs)
             
             # Cache the result
             if use_cache and self.redis:
@@ -145,7 +149,7 @@ class ConnectorManager:
         - Web search → Grok 2 / Perplexity
         """
         if category == DataCategory.MEMORY:
-            return "memory"
+            return "mem0"
         
         if category == DataCategory.WEB_SEARCH:
             return "web_search"
@@ -155,6 +159,13 @@ class ConnectorManager:
         
         if category == DataCategory.ANALYTICS:
             return "dune"  # Whale tracking
+        
+        if category == DataCategory.ORDERBOOK:
+            # Orderbook is available on Hyperliquid only.
+            return "hyperliquid"
+        
+        if category == DataCategory.FUNDING:
+            return "hyperliquid" if asset_type == AssetType.CRYPTO else "ostium"
         
         # Market data routing based on asset type
         if category in [DataCategory.MARKET, DataCategory.CANDLES]:
@@ -239,3 +250,20 @@ class ConnectorManager:
         for connector_id, connector in self.connectors.items():
             statuses[connector_id] = connector.get_status()
         return statuses
+
+    def _category_to_data_type(self, category: DataCategory) -> str:
+        if category == DataCategory.MARKET:
+            return "price"
+        if category == DataCategory.FUNDING:
+            return "funding"
+        if category == DataCategory.ORDERBOOK:
+            return "orderbook"
+        if category == DataCategory.CANDLES:
+            return "candles"
+        if category == DataCategory.INDICATORS:
+            return "indicators"
+        if category == DataCategory.ANALYTICS:
+            return "analytics"
+        if category == DataCategory.WEB_SEARCH:
+            return "search"
+        return category.value

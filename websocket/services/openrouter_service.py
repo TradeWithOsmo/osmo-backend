@@ -73,6 +73,7 @@ class OpenRouterService:
                             "name": mock["name"],
                             "input_cost": mock["input_cost"],
                             "output_cost": mock["output_cost"],
+                            "includes_markup": False,
                             "context_length": mock["context"],
                             "description": f"Next-gen reasoning model from {mock['id'].split('/')[0].capitalize()}",
                             "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
@@ -85,6 +86,7 @@ class OpenRouterService:
                             "name": groq_m["name"],
                             "input_cost": groq_m["input_cost"],
                             "output_cost": groq_m["output_cost"],
+                            "includes_markup": False,
                             "context_length": groq_m["context"],
                             "description": "High-speed inference model via Groq LPU (Free Tier)",
                             "capabilities": {"tool_use": True, "reasoning": "reasoning" in groq_m["name"].lower(), "rag": True}
@@ -131,6 +133,7 @@ class OpenRouterService:
                             "name": name,
                             "input_cost": input_cost,
                             "output_cost": output_cost,
+                            "includes_markup": True,
                             "context_length": context_length,
                             "description": m.get("description", ""),
                             "capabilities": {

@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     AI_RATE_LIMIT: int = 100
     OPENROUTER_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
+    GROQ_SECONDARY_API_KEY: Optional[str] = None
+    GROQ_TERTIARY_API_KEY: Optional[str] = None
+    GROQ_QUATERNARY_API_KEY: Optional[str] = None
+    AI_MARKUP_PERCENT: float = 5.0
+    AI_BILLING_ONCHAIN_ENABLED: bool = True
+    GROQ_DEFAULT_INPUT_COST_PER_1M: float = 0.0
+    GROQ_DEFAULT_OUTPUT_COST_PER_1M: float = 0.0
+    GROQ_MODEL_PRICING_USD_PER_1M: str = ""
     
     @property
     def is_testnet(self) -> bool:

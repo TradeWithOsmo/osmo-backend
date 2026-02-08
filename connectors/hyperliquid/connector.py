@@ -139,6 +139,26 @@ class HyperliquidConnector(BaseConnector):
                 candles = await self.http_client.get_candles(symbol, interval="1m")
                 raw_data = {"trades": candles[:10] if candles else []}
                 return self.normalize(raw_data, "trades")
+
+            elif data_type == "candles":
+                timeframe = str(kwargs.get("timeframe", "1H")).lower()
+                interval_map = {
+                    "1m": "1m",
+                    "3m": "1m",
+                    "5m": "5m",
+                    "15m": "15m",
+                    "30m": "15m",
+                    "1h": "1h",
+                    "4h": "4h",
+                    "1d": "1d",
+                    "1w": "1d",
+                }
+                interval = interval_map.get(timeframe, "1h")
+                candles = await self.http_client.get_candles(symbol, interval=interval)
+                limit = int(kwargs.get("limit", 100) or 100)
+                if limit > 0:
+                    candles = candles[-limit:]
+                return self.normalize({"coin": symbol, "candles": candles}, "candles")
             
             else:
                 raise ValueError(f"Unknown data_type: {data_type}")
@@ -321,6 +341,10 @@ class HyperliquidConnector(BaseConnector):
                 "volume_24h": float(raw_data.get("volume_24h", 0)),
                 "volume_base": float(raw_data.get("volume_base", 0))
              }
+        
+        elif data_type == "candles":
+            normalized["symbol"] = raw_data.get("coin", "UNKNOWN")
+            normalized["data"] = raw_data.get("candles", [])
         
         return normalized
 

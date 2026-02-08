@@ -6,6 +6,7 @@ Handles AI Chat interactions and model discovery.
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse
 import json
+from dataclasses import asdict
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from auth.dependencies import get_current_user
@@ -14,10 +15,97 @@ from sqlalchemy.orm import Session
 from services.portfolio_service import PortfolioService
 from agent.Core.agent_brain import AgentBrain
 from agent.Config.models_config import get_available_models, get_model_config
+try:
+    from agent.Orchestrator.trace_store import runtime_trace_store
+except Exception:
+    from backend.agent.Orchestrator.trace_store import runtime_trace_store
+try:
+    from agent.Orchestrator.reasoning_orchestrator import ReasoningOrchestrator
+except Exception:
+    from backend.agent.Orchestrator.reasoning_orchestrator import ReasoningOrchestrator
 
 router = APIRouter(
     tags=["Agent"]
 )
+
+def _is_plan_mode_enabled(tool_states: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(tool_states, dict):
+        return False
+    raw = tool_states.get("plan_mode")
+    if raw is None:
+        return False
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "off", "no"}
+    return bool(raw)
+
+
+@router.post("/plan/preview")
+async def agent_plan_preview(
+    model_id: Optional[str] = Body(None),
+    message: str = Body(...),
+    history: Optional[List[Dict[str, str]]] = Body(None),
+    tool_states: Optional[Dict[str, Any]] = Body(None),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Build a lightweight plan preview.
+    Used by frontend to show Codex-style action plan before send.
+    """
+    _ = user
+    safe_tool_states = dict(tool_states or {})
+    safe_tool_states.setdefault("planner_source", "ai")
+    safe_tool_states.setdefault("planner_fallback", "none")
+    if model_id:
+        safe_tool_states.setdefault("planner_model_id", model_id)
+
+    if not _is_plan_mode_enabled(safe_tool_states):
+        return {
+            "status": "success",
+            "plan": None,
+            "render": {
+                "title": "AI Plan",
+                "intent": "analysis",
+                "steps": [],
+                "warnings": [],
+                "blocks": [],
+            },
+        }
+
+    orchestrator = ReasoningOrchestrator()
+    plan = orchestrator.build_plan(user_message=message, history=history, tool_states=safe_tool_states)
+
+    steps: List[Dict[str, Any]] = []
+    if plan.context.symbol:
+        steps.append({"id": "ctx_symbol", "label": f"Understand market context for {plan.context.symbol}"})
+    if plan.context.timeframe:
+        steps.append({"id": "ctx_timeframe", "label": f"Scope analysis timeframe: {plan.context.timeframe}"})
+    for idx, call in enumerate(plan.tool_calls, start=1):
+        steps.append(
+            {
+                "id": f"tool_{idx}",
+                "label": f"Use `{call.name}`",
+                "reason": call.reason,
+                "args": call.args,
+            }
+        )
+    steps.append(
+        {
+            "id": "validate",
+            "label": "Validate risk and produce concise final recommendation",
+        }
+    )
+
+    return {
+        "status": "success",
+        "plan": asdict(plan),
+        "render": {
+            "title": "AI Plan",
+            "intent": plan.intent,
+            "steps": steps,
+            "warnings": plan.warnings,
+            "blocks": plan.blocks,
+        },
+    }
 
 @router.get("/models")
 async def list_models(
@@ -58,7 +146,8 @@ async def agent_chat(
     from services.openrouter_service import openrouter_service
     from services.usage_service import usage_service
     from services.chat_service import chat_service
-    
+    from services.ai_billing_service import ai_billing_service
+
     # 0. Handle "new-chat" placeholder (force generate new ID)
     if not session_id or session_id == "new-chat":
         import uuid
@@ -74,7 +163,8 @@ async def agent_chat(
             "id": model_id,
             "name": config.get("name"),
             "input_cost": config.get("input_fee", 1.0),
-            "output_cost": config.get("output_fee", 2.0)
+            "output_cost": config.get("output_fee", 2.0),
+            "includes_markup": False
         }
     
     # 2. Check if model is enabled
@@ -105,15 +195,21 @@ async def agent_chat(
 
     # 4. Process with AgentBrain
     try:
-        input_fee = model_info.get("input_cost", 1.0)
-        output_fee = model_info.get("output_cost" , 2.0)
-
-        brain = AgentBrain(model_id=model_id, reasoning_effort=reasoning_effort, tool_states=tool_states)
+        runtime_tool_states = dict(tool_states or {})
+        runtime_tool_states["agent_engine"] = "deepagents"
+        runtime_tool_states["agent_engine_strict"] = True
+        brain = AgentBrain(
+            model_id=model_id,
+            reasoning_effort=reasoning_effort,
+            tool_states=runtime_tool_states,
+            user_context={"user_address": user_address, "session_id": session_id},
+        )
         result = await brain.chat(user_message=message, history=history, attachments=attachments)
         
         response_content = result.get("content", "")
         usage = result.get("usage", {})
         thoughts = result.get("thoughts", [])
+        runtime = result.get("runtime", {})
         
         # Calculate cost based on actual usage or fallbacks
         in_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
@@ -123,10 +219,14 @@ async def agent_chat(
         in_tokens = int(in_tokens)
         out_tokens = int(out_tokens)
         
-        # Mock cost calculation
-        total_cost = (in_tokens / 1_000_000 * input_fee) + (out_tokens / 1_000_000 * output_fee)
-        if total_cost == 0 and (in_tokens > 0 or out_tokens > 0):
-            total_cost = 0.001 # Minimum floor for real usage
+        billing = await ai_billing_service.bill_usage(
+            user_address=user_address,
+            model_id=model_id,
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            model_info=model_info
+        )
+        total_cost = float(billing.get("total_cost_usd", 0.0))
 
         # 5. Save AI Response
         await chat_service.save_message(
@@ -149,6 +249,16 @@ async def agent_chat(
             cost=total_cost,
             session_id=session_id
         )
+
+        runtime_trace_store.add(
+            user_address=user_address,
+            session_id=session_id,
+            trace={
+                "model_id": model_id,
+                "message": message,
+                "runtime": runtime,
+            },
+        )
         
         return {
             "status": "success",
@@ -156,7 +266,9 @@ async def agent_chat(
             "session_id": session_id,
             "response": response_content,
             "usage": usage,
-            "thoughts": thoughts
+            "thoughts": thoughts,
+            "runtime": runtime,
+            "billing": billing
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Agent Error: {str(e)}")
@@ -181,6 +293,7 @@ async def agent_chat_stream(
     from services.openrouter_service import openrouter_service
     from services.usage_service import usage_service
     from services.chat_service import chat_service
+    from services.ai_billing_service import ai_billing_service
 
     if not session_id or session_id == "new-chat":
         import uuid
@@ -195,7 +308,8 @@ async def agent_chat_stream(
             "id": model_id,
             "name": config.get("name"),
             "input_cost": config.get("input_fee", 1.0),
-            "output_cost": config.get("output_fee", 2.0)
+            "output_cost": config.get("output_fee", 2.0),
+            "includes_markup": False
         }
 
     is_mock = user_address.startswith("0x") and user.get("name") == "Test User"
@@ -225,19 +339,27 @@ async def agent_chat_stream(
         try:
             yield sse({"type": "meta", "session_id": session_id, "model": model_id})
 
-            input_fee = model_info.get("input_cost", 1.0)
-            output_fee = model_info.get("output_cost", 2.0)
-
-            brain = AgentBrain(model_id=model_id, reasoning_effort=reasoning_effort, tool_states=tool_states)
+            runtime_tool_states = dict(tool_states or {})
+            runtime_tool_states["agent_engine"] = "deepagents"
+            runtime_tool_states["agent_engine_strict"] = True
+            brain = AgentBrain(
+                model_id=model_id,
+                reasoning_effort=reasoning_effort,
+                tool_states=runtime_tool_states,
+                user_context={"user_address": user_address, "session_id": session_id},
+            )
             full_content = ""
             thoughts: List[str] = []
             usage: Dict[str, Any] = {}
+            runtime: Dict[str, Any] = {}
 
             async for event in brain.stream(user_message=message, history=history, attachments=attachments):
                 if event.get("type") == "delta":
                     full_content += event.get("content", "")
                 elif event.get("type") == "thoughts":
                     thoughts = event.get("thoughts", [])
+                elif event.get("type") == "runtime":
+                    runtime = event.get("runtime", {}) or {}
                 elif event.get("type") == "done":
                     usage = event.get("usage", {}) or {}
 
@@ -246,9 +368,14 @@ async def agent_chat_stream(
             in_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
             out_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
 
-            total_cost = (in_tokens / 1_000_000 * input_fee) + (out_tokens / 1_000_000 * output_fee)
-            if total_cost == 0 and (in_tokens > 0 or out_tokens > 0):
-                total_cost = 0.001
+            billing = await ai_billing_service.bill_usage(
+                user_address=user_address,
+                model_id=model_id,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+                model_info=model_info
+            )
+            total_cost = float(billing.get("total_cost_usd", 0.0))
 
             await chat_service.save_message(
                 user_address=user_address,
@@ -269,6 +396,17 @@ async def agent_chat_stream(
                 cost=total_cost,
                 session_id=session_id
             )
+
+            runtime_trace_store.add(
+                user_address=user_address,
+                session_id=session_id,
+                trace={
+                    "model_id": model_id,
+                    "message": message,
+                    "runtime": runtime,
+                },
+            )
+            yield sse({"type": "billing", "billing": billing})
 
         except Exception as e:
             yield sse({"type": "error", "message": f"AI Agent Error: {str(e)}"})
@@ -294,6 +432,20 @@ async def get_chat_history(
     from services.chat_service import chat_service
     # Optional: Validate ownership here if needed
     return await chat_service.get_session_history(session_id)
+
+@router.get("/runtime-trace/{session_id}")
+async def get_runtime_trace(
+    session_id: str,
+    limit: int = 20,
+    user: dict = Depends(get_current_user)
+):
+    """Get recent runtime traces (plan/tool outputs) for a chat session."""
+    user_address = user.get("sub")
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "traces": runtime_trace_store.list(user_address=user_address, session_id=session_id, limit=limit),
+    }
 
 @router.patch("/session/{session_id}")
 async def update_session_title(

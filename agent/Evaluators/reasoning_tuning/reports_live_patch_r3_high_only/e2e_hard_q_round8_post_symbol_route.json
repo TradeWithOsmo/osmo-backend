@@ -1,0 +1,115 @@
+{
+  "quality_score": 10,
+  "tool_total": 4,
+  "tool_ok": 4,
+  "tool_fail": 0,
+  "phase_total": 13,
+  "tool_call_phases": 4,
+  "tool_observe_phases": 4,
+  "strict_pattern_ok": true,
+  "has_symbols": true,
+  "has_confidence": true,
+  "has_data_gap": true,
+  "has_risk": true,
+  "round": "round8_post_symbol_route",
+  "timestamp": "2026-02-08T17:18:32.834640+00:00",
+  "model": "groq/openai/gpt-oss-120b",
+  "question": "You are trading perps only. Build a 24h and 7d probability tree for BTC-USD, SOL-USD, and USD/CHF. Use live evidence (price + technicals 1H/4H/1D), plus funding+orderbook for crypto, plus recent news/sentiment. Then produce a conditional hedge plan with strict risk caps, explicit data gaps, and confidence per symbol. If evidence conflicts, state invalidation logic without forcing precise levels.",
+  "content_preview": "Model response timed out before full synthesis. Returning partial evidence snapshot only.\n\nEvidence collected:\n- BTC-USD: price=70754.5\n- SOL-USD: price=86.7615\n- USD-CHF: price=0.78\n\nPer-symbol fallback:\n- BTC-USD: price=70754.5; confidence=30/100 (partial evidence only); data gaps=multi-timeframe technicals/orderflow/news.\n- SOL-USD: price=86.7615; confidence=30/100 (partial evidence only); data gaps=multi-timeframe technicals/orderflow/news.\n- USD-CHF: price=0.78; confidence=30/100 (partial evidence only); data gaps=multi-timeframe technicals/orderflow/news.\n\nData gaps: Full scenario tree not completed. Avoid precise entry/SL/TP until re-run confirms latest signals.\nRisk: keep position risk <= 1.5% and wait for confirmation.",
+  "thoughts_preview": [
+    "Model timed out during synthesis.",
+    "Returned evidence-safe fallback with explicit data gaps."
+  ],
+  "phase_preview": [
+    {
+      "name": "engine_start",
+      "engine": "deepagents"
+    },
+    {
+      "name": "tool_registry_ready",
+      "tool_count": 13
+    },
+    {
+      "name": "bootstrap_prefetch_skipped",
+      "reason": "disabled"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_orderbook",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_orderbook",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "engine_timeout",
+      "engine": "deepagents",
+      "timeout_sec": 180.0
+    },
+    {
+      "name": "engine_done",
+      "engine": "deepagents",
+      "tool_results": 4
+    }
+  ],
+  "failed_tools": [],
+  "tool_names": [
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_orderbook"
+  ],
+  "status": "ok"
+}

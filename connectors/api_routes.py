@@ -74,9 +74,38 @@ class CommandRequest(BaseModel):
     params: Dict[str, Any]
 
 
+class CommandResultRequest(BaseModel):
+    command_id: str
+    status: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class MemoryAddRequest(BaseModel):
+    user_id: str
+    text: str
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class MemorySearchRequest(BaseModel):
+    user_id: str
+    query: str
+    limit: int = 5
+
+
+def _get_mem0_connector(manager):
+    connector = manager.get_connector("mem0")
+    if connector is None:
+        connector = manager.get_connector("memory")
+    return connector
+
+
 @router.post("/tradingview/commands")
 async def send_tradingview_command(
     cmd: CommandRequest,
+    wait_for_completion: bool = Query(False),
+    timeout_sec: float = Query(6.0, ge=0.5, le=60.0),
+    poll_interval_sec: float = Query(0.2, ge=0.05, le=2.0),
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """
@@ -85,8 +114,40 @@ async def send_tradingview_command(
     try:
         from connectors.tradingview import TradingViewConnector
         connector = TradingViewConnector({"redis_client": redis_client})
-        await connector.queue_command(cmd.symbol, {"action": cmd.action, "params": cmd.params})
-        return {"status": "queued", "command": cmd.dict()}
+        queued = await connector.queue_command(cmd.symbol, {"action": cmd.action, "params": cmd.params})
+        if not queued:
+            raise HTTPException(status_code=400, detail="Invalid tradingview command payload")
+
+        if not wait_for_completion:
+            return {"status": "queued", "command": queued}
+
+        result = await connector.wait_for_command_result(
+            command_id=queued.get("command_id"),
+            timeout_sec=timeout_sec,
+            poll_interval_sec=poll_interval_sec,
+        )
+        command_status = str(result.get("status") or "").strip().lower()
+        if command_status in {"success", "ok", "done", "completed"}:
+            return {"status": "completed", "command": queued, "result": result}
+        if command_status == "timeout":
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "message": "TradingView command timed out waiting for frontend execution",
+                    "command": queued,
+                    "result": result,
+                },
+            )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "TradingView command execution failed",
+                "command": queued,
+                "result": result,
+            },
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -104,6 +165,29 @@ async def get_tradingview_commands(
         connector = TradingViewConnector({"redis_client": redis_client})
         commands = await connector.get_pending_commands(symbol)
         return commands
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tradingview/commands/result")
+async def report_tradingview_command_result(
+    payload: CommandResultRequest,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """
+    Receive command execution result from TradingView frontend.
+    """
+    try:
+        from connectors.tradingview import TradingViewConnector
+
+        connector = TradingViewConnector({"redis_client": redis_client})
+        stored = await connector.store_command_result(
+            command_id=payload.command_id,
+            status=payload.status,
+            result=payload.result,
+            error=payload.error,
+        )
+        return {"status": "acknowledged", "result": stored}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -261,16 +345,19 @@ async def get_price(
 @router.get("/funding/{symbol}")
 async def get_funding_rate(
     symbol: str,
+    asset_type: str = "crypto",
     manager = Depends(get_manager)
 ):
     """
     Get funding rate data.
     """
     try:
-        from connectors.manager import DataCategory
+        from connectors.manager import DataCategory, AssetType
+        a_type = AssetType.CRYPTO if asset_type == "crypto" else AssetType.RWA
         result = await manager.fetch_data(
             category=DataCategory.FUNDING,
-            symbol=symbol
+            symbol=symbol,
+            asset_type=a_type,
         )
         return result
     except Exception as e:
@@ -282,16 +369,21 @@ async def get_funding_rate(
 @router.get("/orderbook/{symbol}")
 async def get_orderbook(
     symbol: str,
+    asset_type: str = "crypto",
     manager = Depends(get_manager)
 ):
     """
     Get L2 Orderbook data.
     """
     try:
-        from connectors.manager import DataCategory
+        from connectors.manager import DataCategory, AssetType
+        if asset_type != "crypto":
+            raise HTTPException(status_code=400, detail="Orderbook is available for crypto markets only.")
+        a_type = AssetType.CRYPTO
         result = await manager.fetch_data(
             category=DataCategory.ORDERBOOK,
-            symbol=symbol
+            symbol=symbol,
+            asset_type=a_type,
         )
         return result
     except Exception as e:
@@ -329,10 +421,110 @@ async def get_candles(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/memory/add")
+async def add_memory(
+    request: MemoryAddRequest,
+    manager=Depends(get_manager)
+):
+    """
+    Add memory entry for a user via mem0 connector.
+    """
+    try:
+        connector = _get_mem0_connector(manager)
+        if not connector:
+            raise HTTPException(status_code=404, detail="mem0 connector not active")
+
+        result = await connector.add_memory(
+            user_id=request.user_id,
+            messages=[{"role": "user", "content": request.text}],
+            metadata=request.metadata or {},
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {
+            "stored": False,
+            "error": f"Memory add route error: {e}",
+            "user_id": request.user_id,
+        }
+
+
+@router.post("/memory/search")
+async def search_memory(
+    request: MemorySearchRequest,
+    manager=Depends(get_manager)
+):
+    """
+    Search memory entries for a user via mem0 connector.
+    """
+    try:
+        connector = _get_mem0_connector(manager)
+        if not connector:
+            raise HTTPException(status_code=404, detail="mem0 connector not active")
+
+        limit = max(1, min(int(request.limit or 5), 20))
+        return await connector.fetch(request.user_id, query=request.query, limit=limit)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {
+            "source": "mem0",
+            "data_type": "search",
+            "timestamp": None,
+            "data": {
+                "user_id": request.user_id,
+                "query": request.query,
+                "results": [],
+                "error": f"Memory search route error: {e}",
+            },
+        }
+
+
+@router.get("/memory/all")
+async def get_all_memory(
+    user_id: str = Query(...),
+    manager=Depends(get_manager)
+):
+    """
+    Get all memory entries for a user via mem0 connector.
+    """
+    try:
+        connector = _get_mem0_connector(manager)
+        if not connector:
+            raise HTTPException(status_code=404, detail="mem0 connector not active")
+        if not hasattr(connector, "get_all_memories"):
+            raise HTTPException(status_code=501, detail="mem0 connector does not support get_all_memories")
+        return await connector.get_all_memories(user_id=user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {
+            "user_id": user_id,
+            "memories": [],
+            "error": f"Memory list route error: {e}",
+        }
+
+
+@router.get("/memory/status")
+async def get_memory_status(
+    manager=Depends(get_manager)
+):
+    """
+    Get mem0 connector status.
+    """
+    connector = _get_mem0_connector(manager)
+    if not connector:
+        raise HTTPException(status_code=404, detail="mem0 connector not active")
+    return connector.get_status()
+
+
 @router.get("/web_search/search")
 async def search_web(
     query: str,
     source: str = "news",
+    mode: str = "quality",
     manager = Depends(get_manager)
 ):
     """
@@ -344,13 +536,26 @@ async def search_web(
         if not connector:
             raise HTTPException(status_code=404, detail="Web search connector not active")
 
-        result = await connector.fetch("UNKNOWN", query=query, source=source)
+        result = await connector.fetch("UNKNOWN", query=query, source=source, mode=mode)
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        # Keep endpoint stable for agent tools: return structured error payload
+        # instead of bubbling provider failures as HTTP 500.
+        return {
+            "source": "web_search",
+            "symbol": None,
+            "data_type": f"{source}_search",
+            "timestamp": None,
+            "data": {
+                "error": f"Web search route error: {e}",
+                "query": query,
+                "source": source,
+                "mode": mode,
+            },
+        }
 
 @router.get("/dune/whale_trades/{symbol}")
 async def get_whale_trades(

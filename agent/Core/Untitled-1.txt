@@ -1,0 +1,552 @@
+- 
+
+                                 Light
+
+
+- 
+
+                                 Dim
+
+
+- 
+
+                                 Dark
+
+
+- 
+
+
+- 
+                            [Site Settings](https://sepolia.arbiscan.io/settings)
+
+[Site Settings](https://sepolia.arbiscan.io/settings)
+- [Arbitrum One Mainnet](https://arbiscan.io)
+- [Arbitrum Nova Mainnet](https://nova.arbiscan.io)
+- 
+- [Arbitrum Sepolia Testnet](https://sepolia.arbiscan.io)
+[Arbitrum One Mainnet](https://arbiscan.io)
+[Arbitrum Nova Mainnet](https://nova.arbiscan.io)
+[Arbitrum Sepolia Testnet](https://sepolia.arbiscan.io)
+- 
+                            [Home](https://sepolia.arbiscan.io/)
+
+- 
+                            [Blockchain](javascript:;)
+
+
+
+                                    [Transactions](https://sepolia.arbiscan.io/txs)
+
+
+
+                                    [Latest L1→L2 Transactions](https://sepolia.arbiscan.io/txsDeposits)
+
+
+
+                                    [Latest L2→L1 Transactions](https://sepolia.arbiscan.io/txsExit)
+
+
+
+                                    [Contract Internal Transactions](https://sepolia.arbiscan.io/txsInternal)
+
+
+
+                                    [AA Transactions Beta](https://sepolia.arbiscan.io/txsAA)
+
+
+
+                                    [EIP-7702 Authorizations Beta](https://sepolia.arbiscan.io/txnAuthList)
+
+
+
+
+
+
+                                    [View Blocks](https://sepolia.arbiscan.io/blocks)
+
+
+
+                                    [View Batches](https://sepolia.arbiscan.io/batches)
+
+
+
+
+
+
+                                    [Top Accounts](https://sepolia.arbiscan.io/accounts)
+
+
+
+                                    [Verified Contracts](https://sepolia.arbiscan.io/contractsVerified)
+
+
+
+
+- 
+                                    [Transactions](https://sepolia.arbiscan.io/txs)
+
+- 
+                                    [Latest L1→L2 Transactions](https://sepolia.arbiscan.io/txsDeposits)
+
+- 
+                                    [Latest L2→L1 Transactions](https://sepolia.arbiscan.io/txsExit)
+
+- 
+                                    [Contract Internal Transactions](https://sepolia.arbiscan.io/txsInternal)
+
+- 
+                                    [AA Transactions Beta](https://sepolia.arbiscan.io/txsAA)
+
+- 
+                                    [EIP-7702 Authorizations Beta](https://sepolia.arbiscan.io/txnAuthList)
+
+- 
+
+
+- 
+                                    [View Blocks](https://sepolia.arbiscan.io/blocks)
+
+- 
+                                    [View Batches](https://sepolia.arbiscan.io/batches)
+
+- 
+
+
+- 
+                                    [Top Accounts](https://sepolia.arbiscan.io/accounts)
+
+- 
+                                    [Verified Contracts](https://sepolia.arbiscan.io/contractsVerified)
+
+- 
+                            [Tokens](javascript:;)
+
+
+
+                                    [View ERC-20 Transfers](https://sepolia.arbiscan.io/tokentxns)
+
+
+
+
+- 
+                                    [View ERC-20 Transfers](https://sepolia.arbiscan.io/tokentxns)
+
+- 
+                            [NFTs](javascript:;)
+
+
+
+                                    [Latest Transfers](https://sepolia.arbiscan.io/nft-transfers)
+
+
+
+                                    [Latest Mints](https://sepolia.arbiscan.io/nft-latest-mints)
+
+
+
+
+- 
+                                    [Latest Transfers](https://sepolia.arbiscan.io/nft-transfers)
+
+- 
+                                    [Latest Mints](https://sepolia.arbiscan.io/nft-latest-mints)
+
+- 
+                            [More](javascript:;)
+
+
+
+
+                                        Converters
+
+
+
+                                                [Unit Converter](https://sepolia.arbiscan.io/unitconverter)
+
+
+
+                                                [Base64 Converter](https://sepolia.arbiscan.io/base64converter)
+
+
+                                                [Block & Date Converter](https://sepolia.arbiscan.io/blockdateconverter)
+
+
+                                                [UTF-8 Converter](https://sepolia.arbiscan.io/utf8converter)
+
+
+                                                [Method ID Converter](https://sepolia.arbiscan.io/methodidconverter)
+
+
+
+
+
+                                        Developers
+
+
+
+                                                [API Documentation](https://docs.etherscan.io/etherscan-v2)
+
+
+
+                                                [Verify Contract](https://sepolia.arbiscan.io/verifyContract)
+
+[Contract Diff Checker](https://sepolia.arbiscan.io/contractdiffchecker)
+
+
+
+                                                [Similar Contract Search](https://sepolia.arbiscan.io/find-similar-contracts)
+
+
+
+                                                [Vyper Online Compiler](https://sepolia.arbiscan.io/vyper)
+
+
+
+                                                [Bytecode to Opcode](https://sepolia.arbiscan.io/opcode-tool)
+
+
+
+                                                [Broadcast Transaction](https://sepolia.arbiscan.io/pushTx)
+
+
+
+
+
+
+                                        Tools & Services
+
+
+
+                                                [CSV Export](https://sepolia.arbiscan.io/exportData)
+
+
+
+
+                                                [Input Data Decoder Beta](https://sepolia.arbiscan.io/inputdatadecoder)
+
+
+
+
+                                                [Account Balance Checker](https://sepolia.arbiscan.io/balancecheck-tool)
+
+
+
+                                                [Token Supply Checker](https://sepolia.arbiscan.io/tokencheck-tool)
+
+
+
+                                                [Token Standard Checker](https://sepolia.arbiscan.io/tokentracker)
+
+
+
+
+
+
+
+
+- 
+                                                [Unit Converter](https://sepolia.arbiscan.io/unitconverter)
+
+- 
+                                                [Base64 Converter](https://sepolia.arbiscan.io/base64converter)
+
+- 
+                                                [Block & Date Converter](https://sepolia.arbiscan.io/blockdateconverter)
+
+- 
+                                                [UTF-8 Converter](https://sepolia.arbiscan.io/utf8converter)
+
+- 
+                                                [Method ID Converter](https://sepolia.arbiscan.io/methodidconverter)
+
+- 
+                                                [API Documentation](https://docs.etherscan.io/etherscan-v2)
+
+- 
+                                                [Verify Contract](https://sepolia.arbiscan.io/verifyContract)
+
+- 
+                                                [Contract Diff Checker](https://sepolia.arbiscan.io/contractdiffchecker)
+
+- 
+                                                [Similar Contract Search](https://sepolia.arbiscan.io/find-similar-contracts)
+
+- 
+                                                [Vyper Online Compiler](https://sepolia.arbiscan.io/vyper)
+
+- 
+                                                [Bytecode to Opcode](https://sepolia.arbiscan.io/opcode-tool)
+
+- 
+                                                [Broadcast Transaction](https://sepolia.arbiscan.io/pushTx)
+
+- 
+                                                [CSV Export](https://sepolia.arbiscan.io/exportData)
+
+- 
+                                                [Input Data Decoder Beta](https://sepolia.arbiscan.io/inputdatadecoder)
+
+- 
+                                                [Account Balance Checker](https://sepolia.arbiscan.io/balancecheck-tool)
+
+- 
+                                                [Token Supply Checker](https://sepolia.arbiscan.io/tokencheck-tool)
+
+- 
+                                                [Token Standard Checker](https://sepolia.arbiscan.io/tokentracker)
+
+- 
+                            [Explorers](https://sepolia.arbiscan.io/tx/7401821a2997e00b8b5dfbc2efc8fdc85c71f733929ebe3a41031ef081960662)
+
+
+                                [Arbitrum One Mainnet](https://arbiscan.io)[Arbitrum Nova Mainnet](https://nova.arbiscan.io)
+                                [Arbitrum Sepolia Testnet](https://sepolia.arbiscan.io)
+
+
+- [Arbitrum One Mainnet](https://arbiscan.io)
+- [Arbitrum Nova Mainnet](https://nova.arbiscan.io)
+- 
+- [Arbitrum Sepolia Testnet](https://sepolia.arbiscan.io)
+- 
+                            [Appearance & Settings](https://sepolia.arbiscan.io/tx/7401821a2997e00b8b5dfbc2efc8fdc85c71f733929ebe3a41031ef081960662)
+
+
+
+                                         Light
+
+
+
+
+                                         Dim
+
+
+
+
+                                         Dark
+
+
+
+
+
+
+                                    [Site Settings](https://sepolia.arbiscan.io/settings)
+
+
+
+- 
+
+                                         Light
+
+
+- 
+
+                                         Dim
+
+
+- 
+
+                                         Dark
+
+
+- 
+
+
+- 
+                                    [Site Settings](https://sepolia.arbiscan.io/settings)
+
+[Home](https://sepolia.arbiscan.io/)
+[Blockchain](javascript:;)
+-
+
+[Transactions](https://sepolia.arbiscan.io/txs)
+
+- 
+                                    [Latest L1→L2 Transactions](https://sepolia.arbiscan.io/txsDeposits)
+
+- 
+                                    [Latest L2→L1 Transactions](https://sepolia.arbiscan.io/txsExit)
+
+- 
+                                    [Contract Internal Transactions](https://sepolia.arbiscan.io/txsInternal)
+
+- 
+                                    [AA Transactions Beta](https://sepolia.arbiscan.io/txsAA)
+
+- 
+                                    [EIP-7702 Authorizations Beta](https://sepolia.arbiscan.io/txnAuthList)
+
+- 
+
+
+- 
+                                    [View Blocks](https://sepolia.arbiscan.io/blocks)
+
+- 
+                                    [View Batches](https://sepolia.arbiscan.io/batches)
+
+- 
+
+
+- 
+                                    [Top Accounts](https://sepolia.arbiscan.io/accounts)
+
+- 
+                                    [Verified Contracts](https://sepolia.arbiscan.io/contractsVerified)
+
+[Transactions](https://sepolia.arbiscan.io/txs)
+[Latest L1→L2 Transactions](https://sepolia.arbiscan.io/txsDeposits)
+[Latest L2→L1 Transactions](https://sepolia.arbiscan.io/txsExit)
+[Contract Internal Transactions](https://sepolia.arbiscan.io/txsInternal)
+[AA Transactions Beta](https://sepolia.arbiscan.io/txsAA)
+[EIP-7702 Authorizations Beta](https://sepolia.arbiscan.io/txnAuthList)
+[View Blocks](https://sepolia.arbiscan.io/blocks)
+[View Batches](https://sepolia.arbiscan.io/batches)
+[Top Accounts](https://sepolia.arbiscan.io/accounts)
+[Verified Contracts](https://sepolia.arbiscan.io/contractsVerified)
+[Tokens](javascript:;)
+- 
+                                    [View ERC-20 Transfers](https://sepolia.arbiscan.io/tokentxns)
+
+[View ERC-20 Transfers](https://sepolia.arbiscan.io/tokentxns)
+[NFTs](javascript:;)
+- 
+                                    [Latest Transfers](https://sepolia.arbiscan.io/nft-transfers)
+
+- 
+                                    [Latest Mints](https://sepolia.arbiscan.io/nft-latest-mints)
+
+[Latest Transfers](https://sepolia.arbiscan.io/nft-transfers)
+[Latest Mints](https://sepolia.arbiscan.io/nft-latest-mints)
+[More](javascript:;)
+
+###### Converters
+- 
+                                                [Unit Converter](https://sepolia.arbiscan.io/unitconverter)
+
+- 
+                                                [Base64 Converter](https://sepolia.arbiscan.io/base64converter)
+
+- 
+                                                [Block & Date Converter](https://sepolia.arbiscan.io/blockdateconverter)
+
+- 
+                                                [UTF-8 Converter](https://sepolia.arbiscan.io/utf8converter)
+
+- 
+                                                [Method ID Converter](https://sepolia.arbiscan.io/methodidconverter)
+
+[Unit Converter](https://sepolia.arbiscan.io/unitconverter)
+[Base64 Converter](https://sepolia.arbiscan.io/base64converter)
+[Block & Date Converter](https://sepolia.arbiscan.io/blockdateconverter)
+[UTF-8 Converter](https://sepolia.arbiscan.io/utf8converter)
+[Method ID Converter](https://sepolia.arbiscan.io/methodidconverter)
+
+###### Developers
+- 
+                                                [API Documentation](https://docs.etherscan.io/etherscan-v2)
+
+- 
+                                                [Verify Contract](https://sepolia.arbiscan.io/verifyContract)
+
+- 
+                                                [Contract Diff Checker](https://sepolia.arbiscan.io/contractdiffchecker)
+
+- 
+                                                [Similar Contract Search](https://sepolia.arbiscan.io/find-similar-contracts)
+
+- 
+                                                [Vyper Online Compiler](https://sepolia.arbiscan.io/vyper)
+
+- 
+                                                [Bytecode to Opcode](https://sepolia.arbiscan.io/opcode-tool)
+
+- 
+                                                [Broadcast Transaction](https://sepolia.arbiscan.io/pushTx)
+
+[API Documentation](https://docs.etherscan.io/etherscan-v2)
+[Verify Contract](https://sepolia.arbiscan.io/verifyContract)
+[Contract Diff Checker](https://sepolia.arbiscan.io/contractdiffchecker)
+[Similar Contract Search](https://sepolia.arbiscan.io/find-similar-contracts)
+[Vyper Online Compiler](https://sepolia.arbiscan.io/vyper)
+[Bytecode to Opcode](https://sepolia.arbiscan.io/opcode-tool)
+[Broadcast Transaction](https://sepolia.arbiscan.io/pushTx)
+
+###### Tools & Services
+-
+
+[CSV Export](https://sepolia.arbiscan.io/exportData)
+
+- 
+                                                [Input Data Decoder Beta](https://sepolia.arbiscan.io/inputdatadecoder)
+
+- 
+                                                [Account Balance Checker](https://sepolia.arbiscan.io/balancecheck-tool)
+
+- 
+                                                [Token Supply Checker](https://sepolia.arbiscan.io/tokencheck-tool)
+
+- 
+                                                [Token Standard Checker](https://sepolia.arbiscan.io/tokentracker)
+
+[CSV Export](https://sepolia.arbiscan.io/exportData)
+[Input Data Decoder Beta](https://sepolia.arbiscan.io/inputdatadecoder)
+[Account Balance Checker](https://sepolia.arbiscan.io/balancecheck-tool)
+[Token Supply Checker](https://sepolia.arbiscan.io/tokencheck-tool)
+[Token Standard Checker](https://sepolia.arbiscan.io/tokentracker)
+[Explorers](https://sepolia.arbiscan.io/tx/7401821a2997e00b8b5dfbc2efc8fdc85c71f733929ebe3a41031ef081960662)
+- [Arbitrum One Mainnet](https://arbiscan.io)
+- [Arbitrum Nova Mainnet](https://nova.arbiscan.io)
+- 
+- [Arbitrum Sepolia Testnet](https://sepolia.arbiscan.io)
+[Arbitrum One Mainnet](https://arbiscan.io)
+[Arbitrum Nova Mainnet](https://nova.arbiscan.io)
+[Arbitrum Sepolia Testnet](https://sepolia.arbiscan.io)
+[Appearance & Settings](https://sepolia.arbiscan.io/tx/7401821a2997e00b8b5dfbc2efc8fdc85c71f733929ebe3a41031ef081960662)
+- 
+
+                                         Light
+
+
+- 
+
+                                         Dim
+
+
+- 
+
+                                         Dark
+
+
+- 
+
+
+- 
+                                    [Site Settings](https://sepolia.arbiscan.io/settings)
+
+[Site Settings](https://sepolia.arbiscan.io/settings)
+
+## Oops! An invalid Txn hash has been entered:
+
+7401821a2997e00b8b5dfbc2efc8fdc85c71f733929ebe3a41031ef081960662
+
+###### Transaction Receipt Event Logs
+A transaction is a cryptographically signed instruction that changes the blockchain state. Block explorers track the details of all transactions in the network. Learn more about transactions in our [Knowledge Base](https://info-arbiscan.io/what-is-a-transaction/).
+
+###### Before You Copy
+
+# Transaction Private Note
+
+Please DO NOT store any passwords or private keys here. A private note (up to 100 characters) can be saved and is useful for transaction tracking.
+[View All Transactions Private Notes](https://sepolia.arbiscan.io/mynotes_tx)
+
+##### My Address - Private Name Tag or Note
+My Name Tag:
+Private Note:
+[View all Private Name Tags](https://sepolia.arbiscan.io/mynotes_address)
+[Back to Top](https://sepolia.arbiscan.io/tx/7401821a2997e00b8b5dfbc2efc8fdc85c71f733929ebe3a41031ef081960662)
+Arbitrum Sepolia © 2026 (ARB-Sepolia) | ⛏ Built by Team [Etherscan](https://etherscan.io)
+[Terms](https://sepolia.arbiscan.io//terms)
+[Privacy](https://sepolia.arbiscan.io//privacyPolicy)
+[Network Status](https://arbiscan.freshstatus.io)
+Donations: [0x71c765...d8976f](https://sepolia.arbiscan.io/address/0x71c7656ec7ab88b098defb751b7401b5f6d8976f)
+This website [uses cookies to improve your experience](https://sepolia.arbiscan.io/terms#cookiestatement). By continuing to use this website, you agree to its [Terms](https://sepolia.arbiscan.io/terms) and [Privacy Policy](https://sepolia.arbiscan.io/privacyPolicy).

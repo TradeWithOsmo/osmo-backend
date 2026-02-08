@@ -178,21 +178,47 @@ class ConnectorRegistry:
     async def _register_mem0(self) -> None:
         """Register mem0 Memory connector (self-hosted)"""
         try:
+            mem0_llm_provider = os.getenv("MEM0_LLM_PROVIDER", "openai").strip().lower()
+            mem0_embedder_provider = os.getenv("MEM0_EMBEDDER_PROVIDER", "openai").strip().lower()
             config = {
                 "enabled": os.getenv("MEM0_ENABLED", "false").lower() == "true",
-                "openai_api_key": os.getenv("OPENAI_API_KEY")
+                "openai_api_key": os.getenv("OPENAI_API_KEY"),
+                "google_api_key": os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"),
+                "mem0_llm_provider": mem0_llm_provider,
+                "mem0_llm_model": os.getenv(
+                    "MEM0_LLM_MODEL",
+                    "gemini-2.0-flash" if mem0_llm_provider == "gemini" else "gpt-4o-mini",
+                ),
+                "mem0_embedder_provider": mem0_embedder_provider,
+                "mem0_embedder_model": os.getenv(
+                    "MEM0_EMBEDDER_MODEL",
+                    "models/text-embedding-004" if mem0_embedder_provider == "gemini" else "text-embedding-3-small",
+                ),
+                "mem0_embedding_dims": int(
+                    os.getenv(
+                        "MEM0_EMBEDDING_DIMS",
+                        "768" if mem0_embedder_provider == "gemini" else "1536",
+                    )
+                ),
             }
-            
-            if config["enabled"] and not config["openai_api_key"]:
-                logger.warning("⚠ MEM0_ENABLED but OPENAI_API_KEY not configured")
-            
+
+            if config["enabled"]:
+                if config["mem0_llm_provider"] == "gemini" and not config["google_api_key"]:
+                    logger.warning("MEM0 enabled with Gemini LLM but GOOGLE_API_KEY/GEMINI_API_KEY missing")
+                if config["mem0_embedder_provider"] == "gemini" and not config["google_api_key"]:
+                    logger.warning("MEM0 enabled with Gemini embedder but GOOGLE_API_KEY/GEMINI_API_KEY missing")
+                if config["mem0_llm_provider"] != "gemini" and not config["openai_api_key"]:
+                    logger.warning("MEM0 enabled with OpenAI LLM but OPENAI_API_KEY missing")
+                if config["mem0_embedder_provider"] != "gemini" and not config["openai_api_key"]:
+                    logger.warning("MEM0 enabled with OpenAI embedder but OPENAI_API_KEY missing")
+
             from connectors.mem0 import Mem0Connector
             connector = Mem0Connector(config)
             self.manager.register_connector("mem0", connector)
-            
-            logger.info(f"✓ mem0 connector registered ({'enabled' if config['enabled'] else 'disabled'})")
+
+            logger.info(f"mem0 connector registered ({'enabled' if config['enabled'] else 'disabled'})")
         except Exception as e:
-            logger.error(f"✗ mem0 registration failed: {e}")
+            logger.error(f"mem0 registration failed: {e}")
 
     async def _register_qdrant(self) -> None:
         """Register Qdrant connector (Knowledge Base)"""
@@ -201,7 +227,8 @@ class ConnectorRegistry:
                 "enabled": os.getenv("QDRANT_ENABLED", "false").lower() == "true",
                 "host": os.getenv("QDRANT_HOST", "memory"),
                 "port": int(os.getenv("QDRANT_PORT", "6333")),
-                "collection_name": os.getenv("QDRANT_KB_COLLECTION", "osmo_knowledge_base")
+                "collection_name": os.getenv("QDRANT_KB_COLLECTION", "osmo_knowledge_base"),
+                "embedding_dims": int(os.getenv("KB_EMBEDDING_DIMS", "768")),
             }
             
             from connectors.qdrant import QdrantConnector
@@ -267,3 +294,4 @@ connector_registry = ConnectorRegistry()
 def get_connector_manager() -> ConnectorManager:
     """FastAPI dependency to get connector manager"""
     return connector_registry.get_manager()
+

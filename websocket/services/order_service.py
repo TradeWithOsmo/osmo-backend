@@ -4,7 +4,7 @@ Order Service - Business Logic Layer
 Orchestrates order placement, validation, and routing across exchanges.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import uuid
 from datetime import datetime
 import sys
@@ -20,6 +20,16 @@ class OrderService:
     Core business logic for order management.
     Exchange-agnostic orchestration layer.
     """
+
+    @staticmethod
+    def _normalize_tpsl_value(value: Optional[Any]) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            if float(value).is_integer():
+                return str(int(value))
+            return str(float(value))
+        return str(value).strip()
     
     async def place_order(
         self,
@@ -31,6 +41,8 @@ class OrderService:
         leverage: int = 1,
         price: float = None,
         stop_price: float = None,
+        tp: float = None,
+        sl: float = None,
         exchange: str = None,
         reduce_only: bool = False,
         post_only: bool = False,
@@ -61,6 +73,9 @@ class OrderService:
         # 1. Auto-detect exchange if not specified
         if not exchange:
             exchange = self._detect_exchange(symbol)
+
+        tp_value = self._normalize_tpsl_value(tp)
+        sl_value = self._normalize_tpsl_value(sl)
         
         if exchange == 'simulation':
              # Simulation doesn't need a connector
@@ -162,7 +177,9 @@ class OrderService:
                     entry_price=current_price,
                     leverage=leverage,
                     margin_used=margin_used,
-                    order_id=order_id
+                    order_id=order_id,
+                    tp=tp_value,
+                    sl=sl_value,
                 )
                 
                 # Mock Response
@@ -247,6 +264,15 @@ class OrderService:
                     )
                     session.add(order)
                     await session.commit()
+
+            if tp_value is not None or sl_value is not None:
+                await self.update_position_tpsl(
+                    user_address=user_address,
+                    symbol=symbol,
+                    tp=tp_value,
+                    sl=sl_value,
+                    exchange=exchange,
+                )
             
             return {
                 "order_id": order_id,
@@ -301,10 +327,24 @@ class OrderService:
                     leverage=leverage,
                     tx_hash=order.exchange_order_id,
                     price=price,
+                    tp=tp_value,
+                    sl=sl_value,
                     exchange=exchange
                 )
             except Exception as e:
                 print(f"[OrderService] Warning: Failed to update optimistic shadow position: {e}")
+
+        if tp_value is not None or sl_value is not None:
+            try:
+                await self.update_position_tpsl(
+                    user_address=user_address,
+                    symbol=symbol,
+                    tp=tp_value,
+                    sl=sl_value,
+                    exchange=exchange,
+                )
+            except Exception as e:
+                print(f"[OrderService] Warning: Failed to persist TP/SL on {exchange}: {e}")
 
         return {
             "order_id": order_id,
@@ -326,6 +366,8 @@ class OrderService:
         tx_hash: str = None,
         price: float = None,
         stop_price: float = None,
+        tp: Optional[Any] = None,
+        sl: Optional[Any] = None,
         exchange: str = 'onchain'
     ) -> Dict[str, Any]:
         """
@@ -333,6 +375,8 @@ class OrderService:
         Creates a 'shadow' order and position for immediate tracking.
         """
         order_id = str(uuid.uuid4())
+        tp_value = self._normalize_tpsl_value(tp)
+        sl_value = self._normalize_tpsl_value(sl)
         
         async with AsyncSessionLocal() as session:
             # 0. Fetch current price if not provided (for market orders)
@@ -393,6 +437,8 @@ class OrderService:
                     entry_price=price or 0, # Best guess if price wasn't provided (market)
                     leverage=leverage,
                     margin_used=amount_usd / leverage if leverage > 0 else amount_usd,
+                    tp=tp_value,
+                    sl=sl_value,
                     opened_at=datetime.utcnow(),
                     status='OPEN'  # Important: Force open for shadow position
                 )
@@ -453,6 +499,10 @@ class OrderService:
                                 position.margin_used = position.margin_used * (1 - (size_tokens / position.size))
 
                 position.updated_at = datetime.utcnow()
+                if tp_value is not None:
+                    position.tp = tp_value
+                if sl_value is not None:
+                    position.sl = sl_value
                 
             await session.commit()
             
@@ -882,11 +932,14 @@ class OrderService:
         self,
         user_address: str,
         symbol: str,
-        tp: str = None,
-        sl: str = None,
+        tp: Optional[Any] = None,
+        sl: Optional[Any] = None,
         exchange: str = None
     ) -> Dict[str, Any]:
         """Update TP/SL for a position"""
+
+        tp_value = self._normalize_tpsl_value(tp)
+        sl_value = self._normalize_tpsl_value(sl)
         
         if not exchange:
             exchange = self._detect_exchange(symbol)
@@ -920,22 +973,155 @@ class OrderService:
                     entry_price=0,
                     leverage=1,
                     margin_used=0,
-                    tp=tp,
-                    sl=sl
+                    tp=tp_value,
+                    sl=sl_value
                 )
                 session.add(position)
             else:
-                position.tp = tp
-                position.sl = sl
+                if tp_value is not None:
+                    position.tp = tp_value
+                if sl_value is not None:
+                    position.sl = sl_value
                 position.updated_at = datetime.utcnow()
             
             await session.commit()
             
             return {
                 "symbol": symbol,
-                "tp": tp,
-                "sl": sl,
+                "tp": position.tp,
+                "sl": position.sl,
                 "status": "updated"
             }
+
+    def _normalize_position_side(self, side: Optional[str]) -> Optional[str]:
+        raw = str(side or "").strip().lower()
+        if raw in {"long", "buy"}:
+            return "long"
+        if raw in {"short", "sell"}:
+            return "short"
+        return None
+
+    def _compute_tpsl_from_entry_pct(
+        self,
+        *,
+        side: Optional[str],
+        entry_price: Optional[float],
+        tp_pct: Optional[float],
+        sl_pct: Optional[float],
+    ) -> Dict[str, Optional[str]]:
+        normalized_side = self._normalize_position_side(side)
+        try:
+            entry = float(entry_price or 0)
+        except Exception:
+            entry = 0.0
+        if entry <= 0 or normalized_side is None:
+            return {"tp": None, "sl": None}
+
+        tp_value: Optional[str] = None
+        sl_value: Optional[str] = None
+
+        if tp_pct is not None:
+            ratio = max(0.0, float(tp_pct)) / 100.0
+            tp_price = entry * (1.0 + ratio) if normalized_side == "long" else entry * (1.0 - ratio)
+            tp_value = self._normalize_tpsl_value(tp_price)
+
+        if sl_pct is not None:
+            ratio = max(0.0, float(sl_pct)) / 100.0
+            sl_price = entry * (1.0 - ratio) if normalized_side == "long" else entry * (1.0 + ratio)
+            sl_value = self._normalize_tpsl_value(sl_price)
+
+        return {"tp": tp_value, "sl": sl_value}
+
+    async def update_all_positions_tpsl(
+        self,
+        user_address: str,
+        tp: Optional[Any] = None,
+        sl: Optional[Any] = None,
+        tp_pct: Optional[float] = None,
+        sl_pct: Optional[float] = None,
+        exchange: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Bulk TP/SL update for all open positions.
+
+        Modes:
+        - Absolute replace via tp/sl
+        - Entry-relative via tp_pct/sl_pct (percent from each position entry)
+        """
+        tp_value = self._normalize_tpsl_value(tp)
+        sl_value = self._normalize_tpsl_value(sl)
+        if tp_value is None and sl_value is None and tp_pct is None and sl_pct is None:
+            raise ValueError("Provide tp/sl or tp_pct/sl_pct to adjust positions")
+
+        positions_packet = await self.get_user_positions(user_address=user_address)
+        positions = positions_packet.get("positions", []) if isinstance(positions_packet, dict) else []
+
+        updated: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        errors: List[Dict[str, Any]] = []
+
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+
+            symbol = str(pos.get("symbol") or "").strip()
+            pos_exchange = str(pos.get("exchange") or "").strip() or None
+            if not symbol:
+                continue
+            if exchange and pos_exchange and str(exchange).lower() != pos_exchange.lower():
+                continue
+
+            next_tp = tp_value
+            next_sl = sl_value
+            if tp_pct is not None or sl_pct is not None:
+                computed = self._compute_tpsl_from_entry_pct(
+                    side=pos.get("side"),
+                    entry_price=pos.get("entry_price") or pos.get("mark_price"),
+                    tp_pct=tp_pct,
+                    sl_pct=sl_pct,
+                )
+                if tp_pct is not None:
+                    next_tp = computed.get("tp")
+                if sl_pct is not None:
+                    next_sl = computed.get("sl")
+
+            if next_tp is None and next_sl is None:
+                skipped.append(
+                    {
+                        "symbol": symbol,
+                        "exchange": pos_exchange,
+                        "reason": "No valid TP/SL computed for this position",
+                    }
+                )
+                continue
+
+            try:
+                result = await self.update_position_tpsl(
+                    user_address=user_address,
+                    symbol=symbol,
+                    tp=next_tp,
+                    sl=next_sl,
+                    exchange=pos_exchange,
+                )
+                updated.append(
+                    {
+                        "symbol": symbol,
+                        "exchange": pos_exchange,
+                        "tp": result.get("tp"),
+                        "sl": result.get("sl"),
+                    }
+                )
+            except Exception as exc:
+                errors.append({"symbol": symbol, "exchange": pos_exchange, "error": str(exc)})
+
+        return {
+            "status": "updated",
+            "updated_count": len(updated),
+            "skipped_count": len(skipped),
+            "error_count": len(errors),
+            "updated": updated,
+            "skipped": skipped,
+            "errors": errors,
+        }
 
 order_service = OrderService()

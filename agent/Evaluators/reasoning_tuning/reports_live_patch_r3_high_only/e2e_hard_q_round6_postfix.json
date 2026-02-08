@@ -1,0 +1,246 @@
+{
+  "quality_score": 9,
+  "tool_total": 10,
+  "tool_ok": 0,
+  "tool_fail": 10,
+  "phase_total": 29,
+  "tool_call_phases": 10,
+  "tool_observe_phases": 10,
+  "strict_pattern_ok": true,
+  "has_symbols": true,
+  "has_confidence": true,
+  "has_data_gap": true,
+  "has_risk": true,
+  "round": "round6_postfix",
+  "timestamp": "2026-02-08T17:05:44.078975+00:00",
+  "model": "groq/openai/gpt-oss-120b",
+  "question": "You are trading perps only. Build a 24h and 7d probability tree for BTC-USD, SOL-USD, and USD/CHF. Use live evidence (price + technicals 1H/4H/1D), plus funding+orderbook for crypto, plus recent news/sentiment. Then produce a conditional hedge plan with strict risk caps, explicit data gaps, and confidence per symbol. If evidence conflicts, state invalidation logic without forcing precise levels.",
+  "content_preview": "Model response timed out before full synthesis. Returning partial evidence snapshot only.\n\nEvidence collected:\n- get_price: failed (unknown error)\n- get_price: failed (unknown error)\n- get_price: failed (unknown error)\n- get_price: failed (unknown error)\n- get_price: failed (unknown error)\n- get_price: failed (unknown error)\n- get_funding_rate: failed (unknown error)\n- get_funding_rate: failed (unknown error)\n\nPer-symbol fallback:\n- BTC-USD: confidence=20/100 (no complete synthesis); data gaps=price/technicals/orderflow/news depending on market.\n- SOL-USD: confidence=20/100 (no complete synthesis); data gaps=price/technicals/orderflow/news depending on market.\n- USD-CHF: confidence=20/100 (no complete synthesis); data gaps=price/technicals/orderflow/news depending on market.\n\nData gaps: Full scenario tree not completed. Avoid precise entry/SL/TP until re-run confirms latest signals.\nRisk: keep position risk <= 1.5% and wait for confirmation.",
+  "thoughts_preview": [
+    "Model timed out during synthesis.",
+    "Returned evidence-safe fallback with explicit data gaps."
+  ],
+  "phase_preview": [
+    {
+      "name": "engine_start",
+      "engine": "deepagents"
+    },
+    {
+      "name": "tool_registry_ready",
+      "tool_count": 13
+    },
+    {
+      "name": "bootstrap_prefetch_skipped",
+      "reason": "disabled"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_cache_hit",
+      "tool": "get_price",
+      "stage": "observe",
+      "ok": false
+    },
+    {
+      "name": "tool_cache_hit",
+      "tool": "get_price",
+      "stage": "observe",
+      "ok": false
+    },
+    {
+      "name": "tool_cache_hit",
+      "tool": "get_price",
+      "stage": "observe",
+      "ok": false
+    },
+    {
+      "name": "tool_cache_hit",
+      "tool": "get_price",
+      "stage": "observe",
+      "ok": false
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_funding_rate",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_funding_rate",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_funding_rate",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_funding_rate",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": ""
+    },
+    {
+      "name": "engine_timeout",
+      "engine": "deepagents",
+      "timeout_sec": 180.0
+    },
+    {
+      "name": "engine_done",
+      "engine": "deepagents",
+      "tool_results": 10
+    }
+  ],
+  "failed_tools": [
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_funding_rate",
+    "get_funding_rate",
+    "get_price",
+    "get_price"
+  ],
+  "tool_names": [
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_price",
+    "get_funding_rate",
+    "get_funding_rate",
+    "get_price",
+    "get_price"
+  ],
+  "status": "ok"
+}

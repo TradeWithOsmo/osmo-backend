@@ -1,0 +1,23 @@
+{
+  "R001": "Risk policy baseline: if confidence is below 0.60, avoid execution and return no_trade.",
+  "R002": "Execution policy: maximum default tool calls per simple task is 1 unless complexity requires more.",
+  "R003": "Routing policy: symbols must be normalized to the format BASE-USD.",
+  "R004": "Timeframe aliases: 30m means 30 minutes, 1H means one hour, 4H means four hours.",
+  "R005": "Order types: market, limit, stop_limit.",
+  "R006": "Calibration guideline: confidence should match evidence quality, avoid overconfidence.",
+  "R007": "Error analysis checklist: identify missing constraints, unsupported assumptions, and edge cases.",
+  "R008": "Iterative refinement guideline: draft, self-check, revise, then finalize.",
+  "R009": "Tool economy guideline: propose tools only when they materially affect correctness.",
+  "R010": "Context extraction guideline: list entities, constraints, objective before concluding.",
+  "R011": "Boolean normalization: output true or false in lowercase.",
+  "R012": "Action vocabulary: buy for long bias, sell for short bias, no_trade when constraints fail.",
+  "R013": "When two numbers differ by exactly 2 and the larger is 5, the smaller is 3.",
+  "R014": "If all A are B and all B are C, then all A are C.",
+  "R015": "If statement P implies Q and P is true, then Q is true.",
+  "R016": "If confidence >= 0.70 and risk filters pass, preferred class is medium.",
+  "R017": "If leverage requested exceeds policy and no override is given, return no_trade.",
+  "R018": "Stop-limit is required when both trigger and explicit limit are provided.",
+  "R019": "For context retention tests, preserve the latest explicit symbol mention.",
+  "R020": "For deterministic output, answer must be concise and schema-compliant."
+}
+

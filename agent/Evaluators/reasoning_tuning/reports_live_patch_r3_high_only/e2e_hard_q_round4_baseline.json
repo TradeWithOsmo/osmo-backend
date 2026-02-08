@@ -1,0 +1,329 @@
+{
+  "quality_score": 9,
+  "tool_total": 16,
+  "tool_ok": 9,
+  "tool_fail": 7,
+  "phase_total": 39,
+  "tool_call_phases": 16,
+  "tool_observe_phases": 16,
+  "strict_pattern_ok": true,
+  "has_symbols": true,
+  "has_confidence": false,
+  "has_data_gap": true,
+  "has_risk": true,
+  "round": "round4_baseline",
+  "timestamp": "2026-02-08T16:19:28.205308Z",
+  "model": "groq/openai/gpt-oss-120b",
+  "question": "You are trading perps only. Build a 24h and 7d probability tree for BTC-USD, SOL-USD, and USD/CHF. Use live evidence (price + technicals 1H/4H/1D), plus funding+orderbook for crypto, plus recent news/sentiment. Then produce a conditional hedge plan with strict risk caps, explicit data gaps, and confidence per symbol. If evidence conflicts, state invalidation logic without forcing precise levels.",
+  "content_preview": "Model response timed out before full synthesis. Returning partial evidence snapshot only.\n\nEvidence collected:\n- get_technical_analysis: failed (Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/BTC-USD?timeframe=4H&asset_type=crypto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500)\n- BTC-USD: price=71008.0\n- get_technical_analysis: failed (Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/USD-CHF?timeframe=1D&asset_type=rwa'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500)\n- get_technical_analysis: failed (Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/USD-CHF?timeframe=1D&asset_type=rwa'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500)\n- SOL-USD: price=87.4695\n\nData gaps: Full scenario tree not completed. Avoid precise entry/SL/TP until re-run confirms latest signals.\nRisk: keep position risk <= 1.5% and wait for confirmation.",
+  "thoughts_preview": [
+    "Model timed out during synthesis.",
+    "Returned evidence-safe fallback with explicit data gaps."
+  ],
+  "phase_preview": [
+    {
+      "name": "engine_start",
+      "engine": "deepagents"
+    },
+    {
+      "name": "tool_registry_ready",
+      "tool_count": 13
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/USD-CHF?timeframe=1D&asset_type=rwa'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/USD-CHF?timeframe=1D&asset_type=rwa'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "name": "tool_call",
+      "tool": "search_knowledge_base",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "search_knowledge_base",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "qdrant_client dependency is not installed."
+    },
+    {
+      "name": "tool_call",
+      "tool": "search_knowledge_base",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "search_knowledge_base",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "qdrant_client dependency is not installed."
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_summary",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_summary",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/BTC-USD?timeframe=4H&asset_type=crypto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/USD-CHF?timeframe=1D&asset_type=rwa'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Analysis failed: Server error '500 Internal Server Error' for url 'http://localhost:8000/api/connectors/analysis/technical/USD-CHF?timeframe=1D&asset_type=rwa'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+    },
+    {
+      "name": "tool_cache_hit",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "ok": true
+    },
+    {
+      "name": "tool_cache_hit",
+      "tool": "get_price",
+      "stage": "observe",
+      "ok": true
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "tool_budget_reached",
+      "tool": "get_technical_analysis",
+      "stage": "guard",
+      "max_tool_actions": 16
+    },
+    {
+      "name": "engine_timeout",
+      "engine": "deepagents",
+      "timeout_sec": 180.0
+    },
+    {
+      "name": "engine_done",
+      "engine": "deepagents",
+      "tool_results": 16
+    }
+  ],
+  "failed_tools": [
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "search_knowledge_base",
+    "search_knowledge_base",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "get_technical_analysis"
+  ],
+  "tool_names": [
+    "get_price",
+    "get_technical_analysis",
+    "get_price",
+    "get_technical_analysis",
+    "get_price",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "search_knowledge_base",
+    "search_knowledge_base",
+    "get_technical_analysis",
+    "get_technical_summary",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "get_technical_analysis"
+  ],
+  "status": "ok"
+}

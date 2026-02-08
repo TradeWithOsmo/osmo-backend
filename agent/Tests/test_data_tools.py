@@ -10,7 +10,8 @@ sys.path.append(os.getcwd())
 
 from backend.agent.Tools.data import market, analysis, analytics, web, tradingview, memory, knowledge
 
-async def test_market_tools():
+
+async def _exercise_market_tools():
     """Test Market Data Tools (Granular)"""
     print("\n[TEST] Testing Market Tools...")
     
@@ -56,7 +57,7 @@ async def test_market_tools():
     except Exception as e:
         print(f"    Error: {e}")
 
-async def test_analytics_tools():
+async def _exercise_analytics_tools():
     """Test Analytics (Whale/On-Chain)"""
     print("\n[TEST] Testing Analytics Tools...")
     
@@ -68,7 +69,7 @@ async def test_analytics_tools():
     except Exception as e:
         print(f"    Error: {e}")
 
-async def test_analysis_tools():
+async def _exercise_analysis_tools():
     """Test Analysis Tools"""
     print("\n[TEST] Testing Analysis Tools...")
     
@@ -80,7 +81,7 @@ async def test_analysis_tools():
     except Exception as e:
         print(f"    Error: {e}")
     
-async def test_web_tools():
+async def _exercise_web_tools():
     """Test Web Tools"""
     print("\n[TEST] Testing Web Tools...")
     
@@ -92,7 +93,7 @@ async def test_web_tools():
     except Exception as e:
         print(f"    Error: {e}")
 
-async def test_memory_tools():
+async def _exercise_memory_tools():
     """Test Memory Tools (mem0)"""
     print("\n[TEST] Testing Memory Tools...")
     
@@ -112,7 +113,7 @@ async def test_memory_tools():
     except Exception as e:
         print(f"    Error: {e}")
 
-async def test_knowledge_tools():
+async def _exercise_knowledge_tools():
     """Test Knowledge Tools (Mock)"""
     print("\n[TEST] Testing Knowledge Tools...")
     
@@ -122,12 +123,25 @@ async def test_knowledge_tools():
     except Exception as e:
         print(f"    Error: {e}")
 
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(test_market_tools())
-    loop.run_until_complete(test_analytics_tools())
-    loop.run_until_complete(test_analysis_tools())
-    loop.run_until_complete(test_web_tools())
-    loop.run_until_complete(test_memory_tools())
-    loop.run_until_complete(test_knowledge_tools())
-    loop.close()
+def test_market_tools():
+    asyncio.run(_exercise_market_tools())
+
+
+def test_analytics_tools():
+    asyncio.run(_exercise_analytics_tools())
+
+
+def test_analysis_tools():
+    asyncio.run(_exercise_analysis_tools())
+
+
+def test_web_tools():
+    asyncio.run(_exercise_web_tools())
+
+
+def test_memory_tools():
+    asyncio.run(_exercise_memory_tools())
+
+
+def test_knowledge_tools():
+    asyncio.run(_exercise_knowledge_tools())

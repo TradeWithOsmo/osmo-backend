@@ -1,0 +1,215 @@
+{
+  "quality_score": 5,
+  "tool_total": 10,
+  "tool_ok": 0,
+  "tool_fail": 10,
+  "phase_total": 26,
+  "tool_call_phases": 10,
+  "tool_observe_phases": 10,
+  "strict_pattern_ok": true,
+  "has_symbols": false,
+  "has_confidence": false,
+  "has_data_gap": true,
+  "has_risk": true,
+  "thoughts_count": 2,
+  "content_preview": "Model response timed out before full synthesis. Returning partial evidence snapshot only.\n\nEvidence collected:\n- get_price: failed (Failed to fetch price: All connection attempts failed)\n- get_price: failed (Failed to fetch price: All connection attempts failed)\n- get_technical_analysis: failed (Analysis failed: All connection attempts failed)\n- get_technical_analysis: failed (Analysis failed: All connection attempts failed)\n- get_price: failed (Failed to fetch price: All connection attempts failed)\n- get_price: failed (Failed to fetch price: All connection attempts failed)\n\nData gaps: Full scenario tree not completed. Avoid precise entry/SL/TP until re-run confirms latest signals.\nRisk: keep position risk <= 1.5% and wait for confirmation.",
+  "thoughts_preview": [
+    "Model timed out during synthesis.",
+    "Returned evidence-safe fallback with explicit data gaps."
+  ],
+  "phase_preview": [
+    {
+      "name": "engine_start",
+      "engine": "deepagents"
+    },
+    {
+      "name": "tool_registry_ready",
+      "tool_count": 25
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Failed to fetch price: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Failed to fetch price: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Analysis failed: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Analysis failed: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Failed to fetch price: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Failed to fetch price: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Analysis failed: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_technical_analysis",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_technical_analysis",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Analysis failed: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 1,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 1,
+      "ok": false,
+      "error": "Failed to fetch price: All connection attempts failed"
+    },
+    {
+      "name": "tool_call",
+      "tool": "get_price",
+      "stage": "act",
+      "attempt": 2,
+      "max_attempts": 2
+    },
+    {
+      "name": "tool_observe",
+      "tool": "get_price",
+      "stage": "observe",
+      "attempt": 2,
+      "ok": false,
+      "error": "Failed to fetch price: All connection attempts failed"
+    },
+    {
+      "name": "tool_budget_reached",
+      "tool": "get_technical_analysis",
+      "stage": "guard",
+      "max_tool_actions": 10
+    },
+    {
+      "name": "tool_budget_reached",
+      "tool": "get_price",
+      "stage": "guard",
+      "max_tool_actions": 10
+    },
+    {
+      "name": "engine_timeout",
+      "engine": "deepagents",
+      "timeout_sec": 90.0
+    },
+    {
+      "name": "engine_done",
+      "engine": "deepagents",
+      "tool_results": 10
+    }
+  ],
+  "failed_tools": [
+    "get_price",
+    "get_price",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "get_price",
+    "get_price",
+    "get_technical_analysis",
+    "get_technical_analysis",
+    "get_price",
+    "get_price"
+  ],
+  "status": "ok"
+}

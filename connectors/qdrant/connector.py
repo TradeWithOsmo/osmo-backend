@@ -31,7 +31,8 @@ class QdrantConnector(BaseConnector):
         self.enabled = config.get("enabled", False)
         self.host = config.get("host", "memory")  # 'memory' or 'localhost' or path
         self.port = config.get("port", 6333)
-        self.collection_name = config.get("collection_name", "osmo_knowledge_base")
+        self.collection_name = config.get("collection_name", os.getenv("QDRANT_KB_COLLECTION", "osmo_knowledge_base"))
+        self.embedding_dims = int(config.get("embedding_dims", os.getenv("KB_EMBEDDING_DIMS", "768")))
         self.api_key = config.get("api_key")
         
         self.client = None
@@ -55,7 +56,7 @@ class QdrantConnector(BaseConnector):
                 if not self.client.collection_exists(self.collection_name):
                     self.client.create_collection(
                         collection_name=self.collection_name,
-                        vectors_config=VectorParams(size=1536, distance=Distance.COSINE) # Default to OpenAI embedding size
+                        vectors_config=VectorParams(size=self.embedding_dims, distance=Distance.COSINE)
                     )
                     logger.info(f"✓ Created Qdrant collection: {self.collection_name}")
                 

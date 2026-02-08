@@ -1,0 +1,98 @@
+{
+  "model_id": "groq/openai/gpt-oss-120b",
+  "wallet_address": "0x31B91aDB9EC04a3BE391D4899E4ba0572DA32Bfc",
+  "rounds": [
+    {
+      "round_index": 1,
+      "model_id": "groq/openai/gpt-oss-120b",
+      "wallet_address": "0x31B91aDB9EC04a3BE391D4899E4ba0572DA32Bfc",
+      "global_aggregate": {
+        "correctness": 1.0,
+        "context_accuracy": 1.0,
+        "logical_reasoning": 0.883333,
+        "calibration": 1.0,
+        "self_evaluation": 1.0,
+        "iterative_refinement": 0.4,
+        "tool_alignment": 1.0,
+        "consistency": 1.0,
+        "overall": 0.938
+      },
+      "suggestions": {
+        "high": [
+          "Add stronger logical verification checks.",
+          "Add explicit iterative refinement before final answer."
+        ]
+      },
+      "effort_reports": [
+        {
+          "effort": "high",
+          "profile": {
+            "effort": "high",
+            "temperature": 0.12,
+            "self_consistency_samples": 1,
+            "tool_budget": 2,
+            "prompt_flags": [
+              "LOGICAL_REASONING",
+              "CONTEXT_AUDIT",
+              "SELF_EVALUATION",
+              "CALIBRATION_CHECK",
+              "ERROR_ANALYSIS",
+              "TOOL_MINIMALITY"
+            ],
+            "top_p": 1.0
+          },
+          "aggregate": {
+            "correctness": 1.0,
+            "context_accuracy": 1.0,
+            "logical_reasoning": 0.883333,
+            "calibration": 1.0,
+            "self_evaluation": 1.0,
+            "iterative_refinement": 0.4,
+            "tool_alignment": 1.0,
+            "consistency": 1.0,
+            "overall": 0.938
+          },
+          "task_results": [
+            {
+              "task_id": "T001",
+              "effort": "high",
+              "metrics": {
+                "correctness": 1.0,
+                "context_accuracy": 1.0,
+                "logical_reasoning": 0.883333,
+                "calibration": 1.0,
+                "self_evaluation": 1.0,
+                "iterative_refinement": 0.4,
+                "tool_alignment": 1.0,
+                "consistency": 1.0,
+                "overall": 0.938
+              },
+              "selected_output": {
+                "final_answer": "42",
+                "confidence": 1.0,
+                "context_summary": [
+                  "Numbers: 19, 23",
+                  "Constraint: answer must be numeric only and concise",
+                  "Objective: compute sum"
+                ],
+                "reasoning_checks": [
+                  "Addition of 19 and 23 yields 42",
+                  "Output format matches schema"
+                ],
+                "self_eval_status": "pass",
+                "self_eval_issues": [],
+                "revised_answer": null,
+                "tool_plan": [],
+                "raw_text": "{\n  \"final_answer\": \"42\",\n  \"confidence\": 1.0,\n  \"context_summary\": [\n    \"Numbers: 19, 23\",\n    \"Constraint: answer must be numeric only and concise\",\n    \"Objective: compute sum\"\n  ],\n  \"reasoning_checks\": [\n    \"Addition of 19 and 23 yields 42\",\n    \"Output format matches schema\"\n  ],\n  \"self_evaluation\": {\n    \"status\": \"pass\",\n    \"issues\": []\n  },\n  \"tool_plan\": []\n}"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "best_overall": 0.938,
+  "target_success": 0.95,
+  "target_met": false,
+  "created_at": "2026-02-07T16:39:18.931001+00:00"
+}

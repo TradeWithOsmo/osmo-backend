@@ -13,7 +13,7 @@ router = APIRouter(tags=["leaderboard"])
 
 @router.get("/traders")
 async def get_trader_leaderboard(
-    timeframe: str = Query('24h', regex='^(24h|7d|30d|all)$'),
+    timeframe: str = Query('24h', pattern='^(24h|7d|30d|all)$'),
     snapshot_date: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
@@ -60,7 +60,7 @@ async def get_trader_leaderboard(
 
 @router.get("/agents")
 async def get_agent_leaderboard(
-    timeframe: str = Query('24h', regex='^(24h|7d|30d|all)$'),
+    timeframe: str = Query('24h', pattern='^(24h|7d|30d|all)$'),
     snapshot_date: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),

@@ -4,28 +4,19 @@ TradingView Navigation Tools
 Allows the agent to control chart navigation (Pan, Zoom, Reset) and inputs.
 """
 
-import httpx
 from typing import Dict, Any, List, Optional
-from backend.agent.Config.tools_config import DATA_SOURCES
-
-CONNECTORS_API = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
+from ..command_client import send_tradingview_command
 
 async def _send_command(symbol: str, action: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Helper to send command to connector"""
-    url = f"{CONNECTORS_API}/tradingview/commands"
-    command = {
-        "symbol": symbol,
-        "action": action,
-        "params": params or {}
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(url, json=command)
-            resp.raise_for_status()
-            return {"status": "success", "info": f"Command '{action}' sent to {symbol}."}
-        except Exception as e:
-            return {"error": f"Failed to send command: {str(e)}"}
+    """Helper to send NAV command to connector with consistent envelope."""
+    return await send_tradingview_command(
+        symbol=symbol,
+        action=action,
+        params=params or {},
+        mode="nav",
+        expected_state={},
+        strict_write_verification=False,
+    )
 
 # === FOCUS & BASE STATE ===
 
@@ -121,6 +112,12 @@ async def get_box(symbol: str) -> Dict[str, Any]:
 async def get_screenshot(symbol: str) -> Dict[str, Any]:
     """Get a screenshot of the chart canvas."""
     return await _send_command(symbol, "get_screenshot", {"target": "canvas"})
+
+async def get_photo_chart(symbol: str, target: str = "canvas") -> Dict[str, Any]:
+    """
+    Capture a chart photo (PNG-oriented screenshot helper).
+    """
+    return await _send_command(symbol, "get_screenshot", {"target": target, "format": "png"})
 
 # === ADVANCED INTERACTION ===
 

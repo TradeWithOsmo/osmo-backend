@@ -14,7 +14,7 @@ router = APIRouter(tags=["portfolio"])
 @router.get("/{user_address}/history")
 async def get_portfolio_history(
     user_address: str,
-    timeframe: str = Query('1d', regex='^(1d|7d|30d|all)$'),
+    timeframe: str = Query('1d', pattern='^(1d|7d|30d|all)$'),
     limit: int = Query(500, ge=1, le=1000),
     db: Session = Depends(get_db)
 ):
@@ -111,7 +111,7 @@ async def snapshot_all_users(db: Session = Depends(get_db)):
 @router.get("/{user_address}/funding")
 async def get_funding_history(
     user_address: str,
-    type: Optional[str] = Query(None, regex='^(Deposit|Withdraw)$'),
+    type: Optional[str] = Query(None, pattern='^(Deposit|Withdraw)$'),
     db: Session = Depends(get_db)
 ):
     """

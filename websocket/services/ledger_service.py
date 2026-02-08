@@ -108,7 +108,9 @@ class LedgerService:
         margin_used: float,
         order_id: str,
         position_id: str = None,
-        exchange: str = 'simulation'
+        exchange: str = 'simulation',
+        tp: str = None,
+        sl: str = None,
     ):
         """Lock margin and open/increase position"""
         
@@ -142,6 +144,10 @@ class LedgerService:
                 position.entry_price = new_entry
                 position.size = total_size
                 position.margin_used += margin_used
+                if tp is not None:
+                    position.tp = str(tp)
+                if sl is not None:
+                    position.sl = str(sl)
             else:
                 position = Position(
                     user_address=user_address.lower(),
@@ -152,6 +158,8 @@ class LedgerService:
                     entry_price=entry_price,
                     leverage=leverage,
                     margin_used=margin_used,
+                    tp=str(tp) if tp is not None else None,
+                    sl=str(sl) if sl is not None else None,
                     status='OPEN',
                     position_id=position_id
                 )
