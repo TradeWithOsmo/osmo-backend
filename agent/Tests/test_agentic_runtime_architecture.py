@@ -6,6 +6,7 @@ from backend.agent.Guardrails.risk_gate import RiskGate
 from backend.agent.Orchestrator.planner import build_plan
 from backend.agent.Orchestrator.runtime import AgenticTradingRuntime
 from backend.agent.Orchestrator.reasoning_orchestrator import ReasoningOrchestrator
+from backend.agent.Orchestrator.tool_modules import render_flow_templates_for_prompt
 from backend.agent.Orchestrator.tool_orchestrator import ToolOrchestrator
 from backend.agent.Schema.agent_runtime import ToolCall, AgentPlan, PlanContext
 
@@ -56,7 +57,7 @@ def test_build_plan_warns_when_chart_write_requested_but_write_disabled():
 
 def test_build_plan_uses_user_symbol_even_when_market_chip_is_different():
     plan = build_plan(
-        "gw minta soll",
+        "check sol price",
         tool_states={"market_symbol": "BTC-USD"},
     )
     assert plan.context.symbol == "SOL-USD"
@@ -250,6 +251,70 @@ def test_reasoning_orchestrator_ai_plan_repair_drops_write_tools_when_write_disa
     assert any("dropped" in w.lower() and "write tool" in w.lower() for w in plan.warnings)
 
 
+def test_reasoning_orchestrator_ai_plan_repair_adds_indicator_flow_templates(monkeypatch):
+    class _IndicatorFlowPlannerLLM:
+        def invoke(self, messages):
+            _ = messages
+            return AIMessage(
+                content=(
+                    '{"intent":"analysis","context":{"symbol":"SOL-USD","timeframe":"1H"},'
+                    '"tool_calls":[{"name":"add_indicator","args":{"symbol":"SOL-USD","name":"RSI"},"reason":"add"}]}'
+                )
+            )
+
+    monkeypatch.setattr(
+        "backend.agent.Orchestrator.reasoning_orchestrator.LLMFactory.get_llm",
+        lambda *args, **kwargs: _IndicatorFlowPlannerLLM(),
+    )
+    orchestrator = ReasoningOrchestrator()
+    plan = orchestrator.build_plan(
+        user_message="analyze SOL with RSI",
+        tool_states={
+            "planner_source": "ai",
+            "planner_fallback": "none",
+            "write": True,
+            "market_symbol": "BTC-USD",
+        },
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "set_symbol" in names
+    assert "add_indicator" in names
+    assert "get_active_indicators" in names
+    assert names.index("set_symbol") < names.index("add_indicator")
+    assert names.index("add_indicator") < names.index("get_active_indicators")
+
+
+def test_reasoning_orchestrator_ai_plan_repair_adds_high_low_before_write(monkeypatch):
+    class _WriteFlowPlannerLLM:
+        def invoke(self, messages):
+            _ = messages
+            return AIMessage(
+                content=(
+                    '{"intent":"analysis","context":{"symbol":"SOL-USD","timeframe":"1H"},'
+                    '"tool_calls":[{"name":"draw","args":{"symbol":"SOL-USD","tool":"horizontal_line","points":[1,2]},"reason":"write sr"}]}'
+                )
+            )
+
+    monkeypatch.setattr(
+        "backend.agent.Orchestrator.reasoning_orchestrator.LLMFactory.get_llm",
+        lambda *args, **kwargs: _WriteFlowPlannerLLM(),
+    )
+    orchestrator = ReasoningOrchestrator()
+    plan = orchestrator.build_plan(
+        user_message="write support resistance for SOL",
+        tool_states={
+            "planner_source": "ai",
+            "planner_fallback": "none",
+            "write": True,
+            "market_symbol": "SOL-USD",
+        },
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "draw" in names
+    assert "get_high_low_levels" in names
+    assert names.index("get_high_low_levels") < names.index("draw")
+
+
 def test_tool_orchestrator_resolves_namespace_alias():
     async def _run():
         async def fake_get_price(symbol: str, asset_type: str = "crypto"):
@@ -307,6 +372,63 @@ def test_tool_orchestrator_allows_nav_tools_without_write():
         assert result.name == "get_photo_chart"
 
     asyncio.run(_run())
+
+
+def test_tool_orchestrator_setup_trade_generates_validation_invalidation_decision_payload():
+    async def _run():
+        captured: dict = {}
+
+        async def fake_setup_trade(**kwargs):
+            captured.update(kwargs)
+            return {"status": "success", "data": {"trade_setup": {"symbol": kwargs.get("symbol")}}}
+
+        orchestrator = ToolOrchestrator(registry={"setup_trade": fake_setup_trade}, tool_timeout_sec=2.0)
+        result = await orchestrator.run_tool(
+            ToolCall(
+                name="setup_trade",
+                args={
+                    "symbol": "SOL-USD",
+                    "side": "buy",
+                    "entry": 120,
+                    "tp": 128,
+                    "sl": 116,
+                    "validation": 124,
+                    "invalidation": 118,
+                },
+                reason="test",
+            ),
+            tool_states={"write": True},
+        )
+
+        assert result.ok is True
+        assert captured.get("gp") == 124
+        assert captured.get("gl") == 118
+        assert result.args.get("gp") == 124
+        assert result.args.get("validation") == 124
+        assert result.args.get("gl") == 118
+        assert result.args.get("invalidation") == 118
+
+        decision = (result.data or {}).get("decision") or {}
+        assert decision.get("side") == "long"
+        assert (decision.get("validation") or {}).get("level") == 124
+        assert (decision.get("invalidation") or {}).get("level") == 118
+        assert "validation decision" in str((decision.get("validation") or {}).get("rule", "")).lower()
+        assert "invalidation decision" in str((decision.get("invalidation") or {}).get("rule", "")).lower()
+
+    asyncio.run(_run())
+
+
+def test_flow_templates_include_gp_gl_decision_rules():
+    text = render_flow_templates_for_prompt().lower()
+    assert "tp" in text
+    assert "sl" in text
+    assert "gp" in text
+    assert "gl" in text
+    assert "tp/sl remain standard trade-management levels" in text
+    assert "closest validation point" in text
+    assert "closest invalidation point" in text
+    assert "validation decision" in text
+    assert "invalidation decision" in text
 
 
 def test_risk_gate_blocks_execution_if_auto_execution_is_disabled():
@@ -405,7 +527,12 @@ def test_runtime_prefetches_knowledge_when_enabled_even_if_plan_mode_disabled():
 
         packet = await runtime.prepare(
             "how to manage BTC risk today",
-            tool_states={"plan_mode": False, "knowledge_enabled": True, "knowledge_top_k": 3},
+            tool_states={
+                "plan_mode": False,
+                "knowledge_enabled": True,
+                "knowledge_top_k": 3,
+                "rag_mode": "primary",
+            },
         )
 
         names = [item.name for item in packet["tool_results"]]
@@ -417,6 +544,37 @@ def test_runtime_prefetches_knowledge_when_enabled_even_if_plan_mode_disabled():
         assert "knowledge_think" in phase_names
         assert "knowledge_act" in phase_names
         assert "knowledge_observe" in phase_names
+
+    asyncio.run(_run())
+
+
+def test_runtime_skips_knowledge_prefetch_in_secondary_mode():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_search_knowledge_base(query: str, category: str = None, top_k: int = 3):
+            return {
+                "status": "success",
+                "query": query,
+                "category_filter": category,
+                "results_count": 1,
+                "results": [{"content": "risk-first trading guidance"}],
+                "top_k": top_k,
+            }
+
+        runtime._registry = {"search_knowledge_base": fake_search_knowledge_base}
+
+        packet = await runtime.prepare(
+            "how to manage BTC risk today",
+            tool_states={"plan_mode": False, "knowledge_enabled": True, "rag_mode": "secondary"},
+        )
+
+        names = [item.name for item in packet["tool_results"]]
+        assert names == []
+        phase_entries = packet.get("phases") or []
+        knowledge_act = [entry for entry in phase_entries if entry.get("name") == "knowledge_act"]
+        assert knowledge_act
+        assert any(entry.get("status") == "skipped" for entry in knowledge_act)
 
     asyncio.run(_run())
 
@@ -446,7 +604,7 @@ def test_runtime_context_marks_strong_knowledge_signal():
 
         packet = await runtime.prepare(
             "how to manage risk on btc setup",
-            tool_states={"plan_mode": False, "knowledge_enabled": True},
+            tool_states={"plan_mode": False, "knowledge_enabled": True, "rag_mode": "primary"},
         )
 
         context = packet.get("runtime_context") or ""
@@ -478,7 +636,7 @@ def test_runtime_context_marks_weak_knowledge_signal_on_zero_similarity():
 
         packet = await runtime.prepare(
             "what is best setup now",
-            tool_states={"plan_mode": False, "knowledge_enabled": True},
+            tool_states={"plan_mode": False, "knowledge_enabled": True, "rag_mode": "primary"},
         )
 
         context = packet.get("runtime_context") or ""
@@ -562,6 +720,7 @@ def test_runtime_adds_knowledge_followup_when_prefetch_not_successful():
                 "plan_mode": True,
                 "strict_react": True,
                 "knowledge_enabled": True,
+                "rag_mode": "primary",
                 "max_tool_calls": 5,
             },
         )

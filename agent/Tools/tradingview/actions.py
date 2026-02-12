@@ -53,13 +53,29 @@ _INDICATOR_NAME_MAP = {
 }
 
 
+async def list_supported_indicator_aliases() -> Dict[str, Any]:
+    """
+    Return supported indicator aliases and their TradingView canonical names.
+    """
+    aliases = sorted(_INDICATOR_NAME_MAP.keys())
+    canonical = sorted(set(_INDICATOR_NAME_MAP.values()))
+    return {
+        "status": "ok",
+        "aliases_count": len(aliases),
+        "canonical_count": len(canonical),
+        "aliases": aliases,
+        "canonical_names": canonical,
+        "alias_map": dict(sorted(_INDICATOR_NAME_MAP.items(), key=lambda item: item[0])),
+    }
+
+
 async def add_indicator(
     symbol: str,
     name: str,
     inputs: Dict[str, Any] = None,
     force_overlay: bool = True,
     write_txn_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
     tv_name = _INDICATOR_NAME_MAP.get(name, name)
     return await send_tradingview_command(
         symbol=symbol,
@@ -75,6 +91,41 @@ async def add_indicator(
     )
 
 
+async def remove_indicator(
+    symbol: str,
+    name: str,
+    write_txn_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    tv_name = _INDICATOR_NAME_MAP.get(name, name)
+    return await send_tradingview_command(
+        symbol=symbol,
+        action="remove_indicator",
+        params={
+            "name": tv_name,
+            "write_txn_id": write_txn_id,
+        },
+        mode="write",
+        expected_state={"symbol": symbol},
+    )
+
+
+async def clear_indicators(
+    symbol: str,
+    keep_volume: bool = False,
+    write_txn_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    return await send_tradingview_command(
+        symbol=symbol,
+        action="clear_indicators",
+        params={
+            "keep_volume": bool(keep_volume),
+            "write_txn_id": write_txn_id,
+        },
+        mode="write",
+        expected_state={"symbol": symbol},
+    )
+
+
 async def set_timeframe(symbol: str, timeframe: str, write_txn_id: Optional[str] = None) -> Dict[str, Any]:
     return await send_tradingview_command(
         symbol=symbol,
@@ -85,11 +136,61 @@ async def set_timeframe(symbol: str, timeframe: str, write_txn_id: Optional[str]
     )
 
 
-async def set_symbol(symbol: str, target_symbol: str, write_txn_id: Optional[str] = None) -> Dict[str, Any]:
+def _infer_target_source_from_symbol(symbol: str) -> str:
+    raw = str(symbol or "").strip().upper().replace("/", "-").replace("_", "-")
+    if "-" in raw:
+        base, quote = raw.split("-", 1)
+        fiat = {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD", "MXN", "HKD"}
+        if base in fiat and quote in fiat:
+            return "ostium"
+    rwa_bases = {
+        "XAU",
+        "XAG",
+        "XPD",
+        "XPT",
+        "CL",
+        "HG",
+        "DAX",
+        "DJI",
+        "FTSE",
+        "HSI",
+        "NDX",
+        "NIK",
+        "SPX",
+        "AAPL",
+        "MSFT",
+        "GOOG",
+        "GOOGL",
+        "AMZN",
+        "TSLA",
+        "META",
+        "NFLX",
+        "NVDA",
+        "AMD",
+        "COIN",
+        "PLTR",
+    }
+    base = raw.split("-", 1)[0]
+    if base in rwa_bases:
+        return "ostium"
+    return "hyperliquid"
+
+
+async def set_symbol(
+    symbol: str,
+    target_symbol: str,
+    target_source: Optional[str] = None,
+    write_txn_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    resolved_source = str(target_source or "").strip().lower() or _infer_target_source_from_symbol(target_symbol)
     return await send_tradingview_command(
         symbol=symbol,
         action="set_symbol",
-        params={"symbol": target_symbol, "write_txn_id": write_txn_id},
+        params={
+            "symbol": target_symbol,
+            "target_source": resolved_source,
+            "write_txn_id": write_txn_id,
+        },
         mode="write",
         expected_state={"symbol": target_symbol},
     )

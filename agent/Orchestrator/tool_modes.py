@@ -6,12 +6,15 @@ WRITE_TOOL_NAMES: Set[str] = {
     "set_symbol",
     "set_timeframe",
     "add_indicator",
+    "remove_indicator",
+    "clear_indicators",
     "draw",
     "update_drawing",
     "clear_drawings",
     "setup_trade",
     "add_price_alert",
     "mark_trading_session",
+    "place_order",
 }
 
 NAV_TOOL_NAMES: Set[str] = {
@@ -33,6 +36,11 @@ NAV_TOOL_NAMES: Set[str] = {
     "hover_candle",
     "inspect_cursor",
     "capture_moment",
+}
+
+DECISION_TOOL_NAMES: Set[str] = {
+    "setup_trade",
+    "place_order",
 }
 
 

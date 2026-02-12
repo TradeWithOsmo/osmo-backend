@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     
     # Database
     SAVE_TO_DB: bool = False
+    WS_IN_MEMORY_ONLY: bool = True
     DATABASE_URL: str = "postgresql://osmo_user:osmo_password@localhost:5432/osmo_db"
     DB_RETENTION_DAYS: int = 7
     DB_POOL_SIZE: int = 20
@@ -103,11 +104,37 @@ class Settings(BaseSettings):
     GROQ_SECONDARY_API_KEY: Optional[str] = None
     GROQ_TERTIARY_API_KEY: Optional[str] = None
     GROQ_QUATERNARY_API_KEY: Optional[str] = None
+    NVIDIA_API_KEY: Optional[str] = None
+    NVIDIA_SECONDARY_API_KEY: Optional[str] = None
+    NIM_API_KEY: Optional[str] = None
+    NVIDIA_TOP_P: float = 1.0
+    NVIDIA_MAX_COMPLETION_TOKENS: int = 16384
+    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_PUBLIC_KEY: Optional[str] = None
+    LANGFUSE_SECRET_KEY: Optional[str] = None
+    LANGFUSE_HOST: str = "http://langfuse-web:3000"
+    LANGFUSE_ENV: str = "development"
+    LANGFUSE_RELEASE: Optional[str] = None
+    LANGFUSE_LLM_PROVIDER: str = "openrouter"
+    LANGFUSE_LLM_BASE_URL: str = "https://openrouter.ai/api/v1"
+    LANGFUSE_LLM_CONNECTION: Optional[str] = None
+    LANGFUSE_LLM_CONNECTION_TEMPLATE: Optional[str] = None
     AI_MARKUP_PERCENT: float = 5.0
     AI_BILLING_ONCHAIN_ENABLED: bool = True
+    AI_BILLING_SIGNER_PRIVATE_KEY: Optional[str] = None
+    AI_BILLING_RECEIPT_TIMEOUT_SECONDS: int = 90
+    AI_BILLING_REQUIRE_OPERATOR_ROLE: bool = True
     GROQ_DEFAULT_INPUT_COST_PER_1M: float = 0.0
     GROQ_DEFAULT_OUTPUT_COST_PER_1M: float = 0.0
     GROQ_MODEL_PRICING_USD_PER_1M: str = ""
+
+    # Secondary session history cache (development)
+    SECONDARY_HISTORY_ENABLED: bool = True
+    SECONDARY_HISTORY_PREWARM: bool = True
+    SESSION_HISTORY_DAYS: int = 4
+    SECONDARY_CRYPTO_ONLY: bool = True
+    SECONDARY_NON_CRYPTO_PROVIDER: str = "yahoo"
+    SECONDARY_DISABLE_COMMODITIES: bool = True
     
     @property
     def is_testnet(self) -> bool:

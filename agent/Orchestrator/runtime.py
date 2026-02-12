@@ -101,17 +101,21 @@ class AgenticTradingRuntime:
 
         policy_mode = str(tool_states.get("policy_mode", "advice_only")).lower()
         execution_enabled = bool(tool_states.get("execution"))
+        # Strict auto-execute requires both enabled AND policy=auto_exec
         can_auto_execute = policy_mode == "auto_exec" and execution_enabled
 
-        if not can_auto_execute:
-            return None
+        # 1. Check intent first
         if not plan.context.requested_execution:
             return None
+        
+        # 2. Check for explicit phrase to avoid accidental triggers on discussion
         if not self._has_explicit_execute_phrase(user_message):
             return None
 
+        # 3. Validate Context & Parameters
         user_address = user_context.get("user_address")
         if not user_address:
+            # We return a failed result so the agent knows why it couldn't proceed
             return ToolResult(
                 name="place_order",
                 args={},
@@ -150,6 +154,7 @@ class AgenticTradingRuntime:
                 data={"error": f"Blocked by max_leverage ({max_leverage}x)."},
             )
 
+        # 4. Construct Order Arguments
         order_args: Dict[str, Any] = {
             "user_address": user_address,
             "symbol": plan.context.symbol,
@@ -168,18 +173,36 @@ class AgenticTradingRuntime:
         if plan.context.sl is not None:
             order_args["sl"] = float(plan.context.sl)
 
-        start = time.perf_counter()
-        data = await ExecutionAdapter.place_order(**order_args)
-        latency = int((time.perf_counter() - start) * 1000)
-        has_error = isinstance(data, dict) and bool(data.get("error"))
-        return ToolResult(
-            name="place_order",
-            args=order_args,
-            ok=not has_error,
-            error=data.get("error") if has_error else None,
-            data=data,
-            latency_ms=latency,
-        )
+        # 5. Decide: Execute or Propose?
+        if can_auto_execute:
+            start = time.perf_counter()
+            data = await ExecutionAdapter.place_order(**order_args)
+            latency = int((time.perf_counter() - start) * 1000)
+            has_error = isinstance(data, dict) and bool(data.get("error"))
+            return ToolResult(
+                name="place_order",
+                args=order_args,
+                ok=not has_error,
+                error=data.get("error") if has_error else None,
+                data=data,
+                latency_ms=latency
+            )
+        else:
+            # HITL Flow: Return a proposal result
+            # The frontend will render this as an approval card.
+            return ToolResult(
+                name="place_order",
+                args=order_args,
+                ok=True,
+                error=None,
+                data={
+                    "status": "proposal", 
+                    "order": order_args,
+                    "reason": "Human approval required (HITL)."
+                },
+                latency_ms=0
+            )
+
 
     async def _run_tool(self, call: ToolCall, tool_states: Optional[Dict[str, Any]] = None) -> ToolResult:
         self.tool_orchestrator.set_registry(self._registry)
@@ -347,10 +370,14 @@ class AgenticTradingRuntime:
             if quote in {"USD", "USDT"}:
                 return f"{base}-USD"
             return f"{base}-{quote}"
+        if len(raw) == 6 and raw[:3] in {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"} and raw[3:] in {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"}:
+            return f"{raw[:3]}-{raw[3:]}"
         if raw.endswith("USDT") and len(raw) > 4:
             return f"{raw[:-4]}-USD"
         if raw.endswith("USD") and len(raw) > 3:
             return f"{raw[:-3]}-USD"
+        if raw.isalpha() and 2 <= len(raw) <= 12:
+            return f"{raw}-USD"
         return raw
 
     def _normalize_state_timeframe(self, value: Any) -> str:
@@ -526,9 +553,7 @@ class AgenticTradingRuntime:
         if raw is None:
             provider = str(tool_states.get("runtime_model_provider") or "").strip().lower()
             model_id = str(tool_states.get("runtime_model_id") or "").strip().lower()
-            if provider in {"groq", "openrouter"}:
-                return True
-            if model_id.startswith("groq/"):
+            if provider in {"openrouter"}:
                 return True
             return False
         return self._parse_bool(raw, default=False)
@@ -538,9 +563,6 @@ class AgenticTradingRuntime:
         raw_mode = str(tool_states.get("web_observation_mode") or "").strip().lower()
         if raw_mode in {"quality", "speed", "budget"}:
             return raw_mode
-        provider = str(tool_states.get("runtime_model_provider") or "").strip().lower()
-        if provider == "groq":
-            return "speed"
         return "quality"
 
     def _is_memory_enabled(self, tool_states: Optional[Dict[str, Any]]) -> bool:
@@ -550,6 +572,32 @@ class AgenticTradingRuntime:
     def _is_knowledge_enabled(self, tool_states: Optional[Dict[str, Any]]) -> bool:
         tool_states = tool_states or {}
         return self._parse_bool(tool_states.get("knowledge_enabled"), default=False)
+
+    def _resolve_flow_mode(self, tool_states: Optional[Dict[str, Any]]) -> str:
+        # Runtime architecture is synchronous-by-design:
+        # one action is completed and observed before the next action starts.
+        # Legacy async mode switches are intentionally ignored.
+        return "sync"
+
+    def _resolve_rag_mode(self, tool_states: Optional[Dict[str, Any]]) -> str:
+        """
+        RAG behavior:
+        - secondary (default): no runtime prefetch, allow upper layer fallback.
+        - primary: runtime prefetch/follow-up allowed.
+        - off: disable runtime retrieval.
+        """
+        tool_states = tool_states or {}
+        raw = str(
+            tool_states.get("rag_mode")
+            or tool_states.get("knowledge_mode")
+            or tool_states.get("knowledge_strategy")
+            or "secondary"
+        ).strip().lower()
+        if raw in {"primary", "eager", "always"}:
+            return "primary"
+        if raw in {"off", "disabled", "none"}:
+            return "off"
+        return "secondary"
 
     def _resolve_memory_user_id(
         self,
@@ -602,7 +650,7 @@ class AgenticTradingRuntime:
         text = (user_message or "").strip().lower()
         if len(text) < 3:
             return False
-        greetings = {"hi", "hello", "halo", "hey", "gm", "good morning", "good evening"}
+        greetings = {"hi", "hello", "hey", "gm", "good morning", "good evening"}
         if text in greetings:
             return False
         return True
@@ -731,7 +779,13 @@ class AgenticTradingRuntime:
                 )
 
         knowledge_enabled = self._is_knowledge_enabled(tool_states)
-        if knowledge_enabled and looks_like_analysis and not self._has_success_result(tool_results, "search_knowledge_base"):
+        rag_mode = self._resolve_rag_mode(tool_states)
+        if (
+            knowledge_enabled
+            and rag_mode == "primary"
+            and looks_like_analysis
+            and not self._has_success_result(tool_results, "search_knowledge_base")
+        ):
             knowledge_args: Dict[str, Any] = {
                 "query": f"{symbol} {timeframe} trading analysis playbook and risk management",
                 "top_k": self._resolve_knowledge_top_k(tool_states),
@@ -956,6 +1010,7 @@ class AgenticTradingRuntime:
         user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         tool_states = tool_states or {}
+        rag_mode = self._resolve_rag_mode(tool_states)
         phases: List[Dict[str, Any]] = []
 
         def phase(
@@ -1067,7 +1122,7 @@ class AgenticTradingRuntime:
                 )
 
         knowledge_enabled = self._is_knowledge_enabled(tool_states)
-        if knowledge_enabled:
+        if knowledge_enabled and rag_mode == "primary":
             knowledge_top_k = self._resolve_knowledge_top_k(tool_states=tool_states)
             knowledge_category = self._resolve_knowledge_category(tool_states=tool_states)
             phase(
@@ -1144,6 +1199,25 @@ class AgenticTradingRuntime:
                         "ok": rag_result.ok,
                     },
                 )
+        elif knowledge_enabled and rag_mode == "secondary":
+            phase(
+                "knowledge_think",
+                "done",
+                "RAG strategy is secondary: skip runtime prefetch; defer to fallback.",
+                {"enabled": True, "rag_mode": "secondary"},
+            )
+            phase(
+                "knowledge_act",
+                "skipped",
+                "No runtime knowledge retrieval in secondary mode.",
+                {"enabled": True, "rag_mode": "secondary"},
+            )
+            phase(
+                "knowledge_observe",
+                "skipped",
+                "No knowledge observation in secondary mode.",
+                {"enabled": True, "rag_mode": "secondary"},
+            )
 
         plan_mode_enabled = self._is_plan_mode_enabled(tool_states)
         if not plan_mode_enabled:
@@ -1205,8 +1279,9 @@ class AgenticTradingRuntime:
                 "phases": phases,
             }
 
-        strict_react = self._parse_bool(tool_states.get("strict_react"), default=True)
-        plan_max_iterations = int(tool_states.get("max_plan_iterations", 2 if strict_react else 1) or 1)
+        strict_react = True  # Enforced synchronous ReAct: Think -> Act(1) -> Observe
+        default_plan_loops = 1
+        plan_max_iterations = int(tool_states.get("max_plan_iterations", default_plan_loops) or default_plan_loops)
         plan_max_iterations = max(1, min(plan_max_iterations, 5))
 
         phase(

@@ -27,6 +27,50 @@ LAST_HL_UPDATE = 0
 LAST_OST_UPDATE = 0
 
 
+def _detect_light_patterns(candles: List[Dict[str, Any]]) -> List[str]:
+    if not candles or len(candles) < 2:
+        return []
+    try:
+        c0 = candles[-1]
+        c1 = candles[-2]
+        c0_op = float(c0.get("open", 0))
+        c0_cl = float(c0.get("close", 0))
+        c0_hi = float(c0.get("high", 0))
+        c0_lo = float(c0.get("low", 0))
+        c1_op = float(c1.get("open", 0))
+        c1_cl = float(c1.get("close", 0))
+
+        out: List[str] = []
+        body = abs(c0_cl - c0_op)
+        rng = max(0.0, c0_hi - c0_lo)
+        if rng > 0 and (body / rng) < 0.12:
+            out.append("Doji")
+
+        # Engulfing
+        if (c1_cl < c1_op) and (c0_cl > c0_op) and (c0_cl >= c1_op) and (c0_op <= c1_cl):
+            out.append("Bullish Engulfing")
+        if (c1_cl > c1_op) and (c0_cl < c0_op) and (c0_cl <= c1_op) and (c0_op >= c1_cl):
+            out.append("Bearish Engulfing")
+
+        lower_wick = min(c0_op, c0_cl) - c0_lo
+        upper_wick = c0_hi - max(c0_op, c0_cl)
+        if rng > 0 and (body / rng) < 0.35 and (lower_wick / rng) > 0.55 and (upper_wick / rng) < 0.2:
+            out.append("Hammer (Bullish)")
+        if rng > 0 and (body / rng) < 0.35 and (upper_wick / rng) > 0.55 and (lower_wick / rng) < 0.2:
+            out.append("Shooting Star (Bearish)")
+
+        # De-duplicate preserve order
+        seen = set()
+        dedup: List[str] = []
+        for item in out:
+            if item not in seen:
+                seen.add(item)
+                dedup.append(item)
+        return dedup
+    except Exception:
+        return []
+
+
 class CommandRequest(BaseModel):
     symbol: str
     action: str
@@ -453,6 +497,7 @@ async def get_technical_analysis(
         price_data = (price_payload or {}).get("data", {}) if isinstance(price_payload, dict) else {}
         indicators: Dict[str, Any] = {}
         chart_screenshot: Optional[str] = None
+        patterns: List[str] = []
 
         # Best-effort pull from frontend-cached TradingView indicators.
         try:
@@ -461,9 +506,40 @@ async def get_technical_analysis(
             tv_data = tv_payload.get("data", {}) if isinstance(tv_payload, dict) else {}
             indicators = tv_data.get("indicators", {}) if isinstance(tv_data, dict) else {}
             chart_screenshot = tv_data.get("screenshot") if isinstance(tv_data, dict) else None
+            raw_patterns = tv_data.get("patterns", []) if isinstance(tv_data, dict) else []
+            if isinstance(raw_patterns, list):
+                patterns = [str(item).strip() for item in raw_patterns if str(item).strip()]
         except Exception:
             indicators = {}
             chart_screenshot = None
+
+        # Fallback: detect candlestick patterns from recent candles when frontend
+        # TradingView payload does not provide patterns.
+        if not patterns:
+            try:
+                from analysis.engine import TechnicalAnalysisEngine
+
+                engine = TechnicalAnalysisEngine()
+                candles_payload = await connector.fetch(
+                    normalized_symbol,
+                    data_type="candles",
+                    timeframe=timeframe,
+                    limit=120,
+                )
+                candles = (candles_payload or {}).get("data", []) if isinstance(candles_payload, dict) else []
+                if isinstance(candles, list) and candles:
+                    analysis_result = engine.analyze_ticker(
+                        symbol=normalized_symbol,
+                        timeframe=timeframe,
+                        ohlcv_data=candles,
+                    )
+                    fallback_patterns = analysis_result.get("patterns", []) if isinstance(analysis_result, dict) else []
+                    if isinstance(fallback_patterns, list):
+                        patterns = [str(item).strip() for item in fallback_patterns if str(item).strip()]
+                    if not patterns:
+                        patterns = _detect_light_patterns(candles)
+            except Exception:
+                patterns = patterns or []
 
         return {
             "symbol": view_symbol,
@@ -474,7 +550,7 @@ async def get_technical_analysis(
             "change_percent_24h": price_data.get("change_percent_24h", 0),
             "volume_24h": price_data.get("volume_24h", 0),
             "indicators": indicators,
-            "patterns": [],
+            "patterns": patterns,
             "chart_screenshot": chart_screenshot,
         }
     except HTTPException:

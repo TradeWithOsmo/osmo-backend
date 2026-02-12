@@ -25,7 +25,11 @@ from ..Tools.data import (
     search_memory,
     get_recent_history,
     search_knowledge_base,
+    research_market,
+    compare_markets,
+    scan_market_overview,
 )
+from ..Tools.trade_execution import place_order
 from ..Tools.data.knowledge import (
     get_drawing_guidance,
     get_trade_management_guidance,
@@ -33,7 +37,10 @@ from ..Tools.data.knowledge import (
     consult_strategy,
 )
 from ..Tools.tradingview.actions import (
+    list_supported_indicator_aliases,
     add_indicator,
+    remove_indicator,
+    clear_indicators,
     set_timeframe,
     set_symbol,
     setup_trade,
@@ -108,10 +115,19 @@ def get_tool_registry() -> Dict[str, ToolFunc]:
         "get_market_context_guidance": get_market_context_guidance,
         "consult_strategy": consult_strategy,
 
+        # Research (multi-market)
+        "research_market": research_market,
+        "compare_markets": compare_markets,
+        "scan_market_overview": scan_market_overview,
+
         # TradingView / core actions
+        "list_supported_indicator_aliases": list_supported_indicator_aliases,
         "add_indicator": add_indicator,
+        "remove_indicator": remove_indicator,
+        "clear_indicators": clear_indicators,
         "set_timeframe": set_timeframe,
         "set_symbol": set_symbol,
+        # setup_trade supports gp/gl aliases and validation/invalidation aliases.
         "setup_trade": setup_trade,
         "add_price_alert": add_price_alert,
         "mark_trading_session": mark_trading_session,
@@ -141,4 +157,5 @@ def get_tool_registry() -> Dict[str, ToolFunc]:
         "hover_candle": hover_candle,
         "inspect_cursor": inspect_cursor,
         "capture_moment": capture_moment,
+        "place_order": place_order,
     }

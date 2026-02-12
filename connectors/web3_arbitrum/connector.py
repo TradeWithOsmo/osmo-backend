@@ -83,12 +83,18 @@ class ArbitrumWeb3Connector:
             return self.contracts[contract_name]
             
         # Get address from settings
-        # Convert CamelCase to SNAKE_CASE (e.g. TradingVault -> TRADING_VAULT)
+        # Convert CamelCase/PascalCase to SNAKE_CASE while preserving acronyms.
+        # Examples:
+        # - TradingVault -> TRADING_VAULT
+        # - SessionKeyManager -> SESSION_KEY_MANAGER
+        # - AIVault -> AI_VAULT
+        # - USDC -> USDC
         import re
-        parts = re.findall(r'[A-Z]?[a-z0-9]+', contract_name)
-        # Note: sometimes findall might miss capital letters at start if not careful
-        # Better:
-        snake_name = re.sub(r'(?<!^)(?=[A-Z])', '_', contract_name).upper()
+        snake_name = re.sub(
+            r'(?<=[A-Z])(?=[A-Z][a-z])|(?<=[a-z0-9])(?=[A-Z])',
+            '_',
+            contract_name,
+        ).upper()
         
         env_var_name = f"{snake_name}_ADDRESS"
         address = getattr(settings, env_var_name, None)

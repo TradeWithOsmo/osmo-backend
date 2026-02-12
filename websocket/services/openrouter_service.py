@@ -11,7 +11,7 @@ class OpenRouterService:
     BASE_URL = "https://openrouter.ai/api/v1"
 
     PRIORITY_ORDER = [
-        "google", "anthropic", "deepseek", "openai", "groq", "qwen", 
+        "google", "anthropic", "deepseek", "openai", "nvidia", "qwen",
         "mistral", "z-ai", "moonshot", "x-ai", "meta"
     ]
     
@@ -33,9 +33,15 @@ class OpenRouterService:
             models_list = self._models_cache
         else:
             try:
-                # --- GROQ MODELS (Added Manually for Testing) ---
-                groq_models = [
-                    {"id": "groq/openai/gpt-oss-120b", "name": "Groq GPT-OSS 120B", "input_cost": 0, "output_cost": 0, "context": 131072},
+                nvidia_models = [
+                    {"id": "nvidia/moonshotai/kimi-k2-thinking", "name": "NVIDIA Kimi K2 Thinking", "input_cost": 0, "output_cost": 0, "context": 131072},
+                    {"id": "nvidia/qwen/qwen3-next-80b-a3b-thinking", "name": "NVIDIA Qwen3 Next 80B A3B Thinking", "input_cost": 0, "output_cost": 0, "context": 131072},
+                    {"id": "nvidia/z-ai/glm4.7", "name": "NVIDIA GLM 4.7", "input_cost": 0, "output_cost": 0, "context": 131072},
+                    {"id": "nvidia/minimaxai/minimax-m2.1", "name": "NVIDIA Minimax M2.1", "input_cost": 0, "output_cost": 0, "context": 131072},
+                    {"id": "nvidia/moonshotai/kimi-k2.5", "name": "NVIDIA Kimi K2.5", "input_cost": 0, "output_cost": 0, "context": 131072},
+                ]
+                free_models = [
+                    {"id": "openai/gpt-oss-120b:free", "name": "GPT-OSS 120B (Free)", "input_cost": 0, "output_cost": 0, "context": 131072},
                 ]
                 
                 async with httpx.AsyncClient(timeout=30.0) as client:
@@ -79,23 +85,38 @@ class OpenRouterService:
                             "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
                         })
 
-                    # Add Groq Models
-                    for groq_m in groq_models:
+                    for nvidia_m in nvidia_models:
                         formatted_models.append({
-                            "id": groq_m["id"],
-                            "name": groq_m["name"],
-                            "input_cost": groq_m["input_cost"],
-                            "output_cost": groq_m["output_cost"],
+                            "id": nvidia_m["id"],
+                            "name": nvidia_m["name"],
+                            "input_cost": nvidia_m["input_cost"],
+                            "output_cost": nvidia_m["output_cost"],
                             "includes_markup": False,
-                            "context_length": groq_m["context"],
-                            "description": "High-speed inference model via Groq LPU (Free Tier)",
-                            "capabilities": {"tool_use": True, "reasoning": "reasoning" in groq_m["name"].lower(), "rag": True}
+                            "context_length": nvidia_m["context"],
+                            "description": "Direct NVIDIA inference endpoint model",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
+                        })
+
+                    # Add OpenRouter free models
+                    for free_m in free_models:
+                        formatted_models.append({
+                            "id": free_m["id"],
+                            "name": free_m["name"],
+                            "input_cost": free_m["input_cost"],
+                            "output_cost": free_m["output_cost"],
+                            "includes_markup": False,
+                            "context_length": free_m["context"],
+                            "description": "Free-tier model from OpenRouter",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
                         })
                         
                     for m in models:
                         m_id = m.get("id", "")
-                        # Skip if we already added a mock version or if it's a Groq model (unlikely from OR but possible)
-                        if any(mock["id"] == m_id for mock in mock_models) or m_id.startswith("groq/"):
+                        # Skip if we already added a mock version or if it's an NVIDIA model (already injected).
+                        if (
+                            any(mock["id"] == m_id for mock in mock_models)
+                            or m_id.startswith("nvidia/")
+                        ):
                             continue
 
                         pricing = m.get("pricing", {})
@@ -117,7 +138,7 @@ class OpenRouterService:
                         trusted_families = [
                             "anthropic/", "openai/", "google/", "deepseek/", 
                             "meta/llama-3", "mistralai/mistral-large", "qwen/qwen-2.5",
-                            "x-ai/", "moonshot/", "perplexity/", "groq/"
+                            "x-ai/", "moonshot/", "perplexity/", "nvidia/"
                         ]
                         
                         is_trusted = any(m_id.startswith(family) for family in trusted_families)
@@ -149,7 +170,71 @@ class OpenRouterService:
                     
             except Exception as e:
                 logger.error(f"Error fetching models from OpenRouter: {e}")
-                models_list = self._models_cache if self._models_cache else []
+                if self._models_cache:
+                    models_list = self._models_cache
+                else:
+                    models_list = [
+                        {
+                            "id": "nvidia/moonshotai/kimi-k2-thinking",
+                            "name": "NVIDIA Kimi K2 Thinking",
+                            "input_cost": 0,
+                            "output_cost": 0,
+                            "includes_markup": False,
+                            "context_length": 131072,
+                            "description": "Direct NVIDIA inference endpoint model",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
+                        },
+                        {
+                            "id": "nvidia/qwen/qwen3-next-80b-a3b-thinking",
+                            "name": "NVIDIA Qwen3 Next 80B A3B Thinking",
+                            "input_cost": 0,
+                            "output_cost": 0,
+                            "includes_markup": False,
+                            "context_length": 131072,
+                            "description": "Direct NVIDIA inference endpoint model",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
+                        },
+                        {
+                            "id": "nvidia/z-ai/glm4.7",
+                            "name": "NVIDIA GLM 4.7",
+                            "input_cost": 0,
+                            "output_cost": 0,
+                            "includes_markup": False,
+                            "context_length": 131072,
+                            "description": "Direct NVIDIA inference endpoint model",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
+                        },
+                        {
+                            "id": "nvidia/minimaxai/minimax-m2.1",
+                            "name": "NVIDIA Minimax M2.1",
+                            "input_cost": 0,
+                            "output_cost": 0,
+                            "includes_markup": False,
+                            "context_length": 131072,
+                            "description": "Direct NVIDIA inference endpoint model",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
+                        },
+                        {
+                            "id": "nvidia/moonshotai/kimi-k2.5",
+                            "name": "NVIDIA Kimi K2.5",
+                            "input_cost": 0,
+                            "output_cost": 0,
+                            "includes_markup": False,
+                            "context_length": 131072,
+                            "description": "Direct NVIDIA inference endpoint model",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
+                        },
+                        {
+                            "id": "openai/gpt-oss-120b:free",
+                            "name": "GPT-OSS 120B (Free)",
+                            "input_cost": 0,
+                            "output_cost": 0,
+                            "includes_markup": False,
+                            "context_length": 131072,
+                            "description": "Free-tier model from OpenRouter",
+                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
+                        },
+                    ]
 
             self._models_cache = models_list
 
@@ -207,10 +292,11 @@ class OpenRouterService:
 
     async def get_model_info(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve detailed info for a specific model ID, handling suffixes."""
-        base_id = model_id.split(":")[0]
+        base_id = model_id.split(":", 1)[0]
         models = await self.get_models()
         for m in models:
-            if m["id"] == base_id:
+            m_id = m.get("id", "")
+            if m_id == model_id or m_id == base_id or m_id.split(":", 1)[0] == base_id:
                 return m
         return None
 

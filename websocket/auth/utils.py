@@ -19,10 +19,6 @@ def verify_privy_token(token: str) -> dict:
         jwt.PyJWTError: If token is invalid or expired
         ValueError: If configuration is missing
     """
-    if token.startswith("mock-") or not settings.PRIVY_APP_ID:
-        logger.warning("Bypassing Privy verification (Mock Mode)")
-        return {"sub": token.replace("mock-", "0x") if token.startswith("mock-") else "0xMockUser", "aud": settings.PRIVY_APP_ID}
-
     if not settings.PRIVY_APP_ID or not settings.PRIVY_VERIFICATION_KEY:
         raise ValueError("Privy configuration missing (APP_ID or VERIFICATION_KEY)")
 

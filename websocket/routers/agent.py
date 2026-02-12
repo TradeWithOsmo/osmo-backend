@@ -3,6 +3,7 @@ Agent API Router
 Handles AI Chat interactions and model discovery.
 """
 
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse
 import json
@@ -13,6 +14,7 @@ from auth.dependencies import get_current_user
 from database.connection import get_db
 from sqlalchemy.orm import Session
 from services.portfolio_service import PortfolioService
+from services.langfuse_service import langfuse_service
 from agent.Core.agent_brain import AgentBrain
 from agent.Config.models_config import get_available_models, get_model_config
 try:
@@ -28,6 +30,116 @@ router = APIRouter(
     tags=["Agent"]
 )
 
+_ACTIVE_STREAMS: Dict[tuple[str, str], asyncio.Task] = {}
+
+
+def _stream_key(user_id: str, session_id: str) -> tuple[str, str]:
+    return (str(user_id or "").strip(), str(session_id or "").strip())
+
+
+def _register_active_stream(user_id: str, session_id: str, task: Optional[asyncio.Task]) -> None:
+    if task is None:
+        return
+    key = _stream_key(user_id, session_id)
+    if not key[0] or not key[1]:
+        return
+    _ACTIVE_STREAMS[key] = task
+
+
+def _unregister_active_stream(user_id: str, session_id: str, task: Optional[asyncio.Task] = None) -> None:
+    key = _stream_key(user_id, session_id)
+    existing = _ACTIVE_STREAMS.get(key)
+    if existing is None:
+        return
+    if task is None or existing is task:
+        _ACTIVE_STREAMS.pop(key, None)
+
+
+def _interrupt_active_stream(user_id: str, session_id: str) -> bool:
+    key = _stream_key(user_id, session_id)
+    task = _ACTIVE_STREAMS.get(key)
+    if task is None:
+        return False
+    if task.done():
+        _ACTIVE_STREAMS.pop(key, None)
+        return False
+    task.cancel()
+    return True
+
+def _model_base_id(model_id: Optional[str]) -> str:
+    raw = (model_id or "").strip()
+    return raw.split(":", 1)[0] if raw else ""
+
+_NVIDIA_MODEL_ALIASES = {
+    "moonshotai/kimi-k2-thinking",
+    "qwen/qwen3-next-80b-a3b-thinking",
+    "z-ai/glm4.7",
+    "minimaxai/minimax-m2.1",
+    "moonshotai/kimi-k2.5",
+}
+
+def _is_nvidia_model(model_id: str) -> bool:
+    raw = str(model_id or "").strip().lower()
+    return raw.startswith("nvidia/") or raw in _NVIDIA_MODEL_ALIASES
+
+
+def _looks_like_wallet(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    raw = value.strip()
+    if not raw.startswith("0x") or len(raw) != 42:
+        return False
+    try:
+        int(raw[2:], 16)
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_wallet_address(user: Dict[str, Any]) -> str:
+    wallet = str(user.get("wallet_address") or "").strip()
+    subject = str(user.get("sub") or "").strip()
+    direct_address = str(user.get("address") or "").strip()
+    if _looks_like_wallet(wallet):
+        return wallet.lower()
+    if _looks_like_wallet(subject):
+        return subject.lower()
+    if _looks_like_wallet(direct_address):
+        return direct_address.lower()
+    return ""
+
+
+def _resolve_auth_user_id(user: Dict[str, Any]) -> str:
+    wallet = _resolve_wallet_address(user)
+    if _looks_like_wallet(wallet):
+        return wallet.lower()
+    subject = str(user.get("sub") or "").strip()
+    return subject or wallet
+
+
+def _require_wallet_address(user: Dict[str, Any]) -> str:
+    wallet = _resolve_wallet_address(user)
+    if not _looks_like_wallet(wallet):
+        raise HTTPException(
+            status_code=401,
+            detail="Wallet address not found in authentication context. Please reconnect wallet.",
+        )
+    return wallet.lower()
+
+
+def _is_model_enabled(model_id: str, enabled_models: Optional[List[str]]) -> bool:
+    if not model_id:
+        return False
+    enabled = enabled_models or []
+    if model_id in enabled:
+        return True
+    model_base = _model_base_id(model_id)
+    if not model_base:
+        return False
+    enabled_bases = {_model_base_id(m) for m in enabled}
+    return model_base in enabled_bases
+
+
 def _is_plan_mode_enabled(tool_states: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(tool_states, dict):
         return False
@@ -37,6 +149,90 @@ def _is_plan_mode_enabled(tool_states: Optional[Dict[str, Any]]) -> bool:
     if isinstance(raw, str):
         return raw.strip().lower() not in {"0", "false", "off", "no"}
     return bool(raw)
+
+
+def _extract_active_context(tool_states: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    if not isinstance(tool_states, dict):
+        return {}
+
+    market_raw = (
+        tool_states.get("market_symbol")
+        or tool_states.get("market")
+        or tool_states.get("market_display")
+        or ""
+    )
+    market_raw = str(market_raw).strip()
+    market_symbol = market_raw.replace("/", "-").upper() if market_raw else ""
+    market_display = market_raw.replace("-", "/").upper() if market_raw else ""
+
+    raw_tf = tool_states.get("timeframe")
+    timeframes: List[str] = []
+    if isinstance(raw_tf, str) and raw_tf.strip():
+        timeframes = [raw_tf.strip()]
+    elif isinstance(raw_tf, list):
+        timeframes = [str(item).strip() for item in raw_tf if str(item).strip()]
+
+    primary_tf = timeframes[0] if timeframes else ""
+    joined_tf = ",".join(timeframes)
+
+    payload: Dict[str, str] = {}
+    if market_symbol:
+        payload["market_symbol"] = market_symbol
+    if market_display:
+        payload["market_display"] = market_display
+    if primary_tf:
+        payload["timeframe"] = primary_tf
+    if joined_tf:
+        payload["timeframes"] = joined_tf
+    return payload
+
+
+def _parse_bool_flag(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "off", "no"}
+    return bool(value)
+
+
+def _build_runtime_context_block(tool_states: Optional[Dict[str, Any]]) -> List[str]:
+    context = _extract_active_context(tool_states)
+    if not context and not isinstance(tool_states, dict):
+        return []
+
+    write_enabled = False
+    plan_enabled = False
+    strict_react = False
+    if isinstance(tool_states, dict):
+        write_enabled = _parse_bool_flag(tool_states.get("write"), default=False)
+        plan_enabled = _parse_bool_flag(tool_states.get("plan_mode"), default=False)
+        strict_react = _parse_bool_flag(tool_states.get("strict_react"), default=False)
+
+    lines: List[str] = ["[RUNTIME_CONTEXT]"]
+    lines.append("source=frontend_toolbar")
+    for key in ("market_symbol", "market_display", "timeframe", "timeframes"):
+        value = context.get(key)
+        if value:
+            lines.append(f"{key}={value}")
+    lines.append(f"write_mode={'on' if write_enabled else 'off'}")
+    lines.append(f"plan_mode={'on' if plan_enabled else 'off'}")
+    lines.append(f"strict_react={'on' if strict_react else 'off'}")
+    lines.append("instruction=Treat market/timeframe above as default active scope unless user explicitly changes it.")
+    lines.append("[/RUNTIME_CONTEXT]")
+    return lines
+
+
+def _augment_message_with_active_context(message: str, tool_states: Optional[Dict[str, Any]]) -> str:
+    text = str(message or "")
+    if "[RUNTIME_CONTEXT]" in text:
+        return text
+
+    lines: List[str] = []
+    lines.extend(_build_runtime_context_block(tool_states))
+    if lines:
+        lines.append("")
+    lines.append(text)
+    return "\n".join(lines)
 
 
 @router.post("/plan/preview")
@@ -142,7 +338,8 @@ async def agent_chat(
     Send a message to the AI agent.
     Checks authorization (User Settings) and handles persistent history.
     """
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
+    auth_user_id = user_address
     from services.openrouter_service import openrouter_service
     from services.usage_service import usage_service
     from services.chat_service import chat_service
@@ -175,7 +372,9 @@ async def agent_chat(
         enabled_models = await usage_service.get_default_enabled_models()
         
     is_groq = model_id.startswith("groq/")
-    if model_id not in enabled_models and not is_mock and not is_groq:
+    is_nvidia = _is_nvidia_model(model_id)
+    is_free_model = model_id.endswith(":free")
+    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_nvidia and not is_free_model:
         raise HTTPException(
             status_code=403, 
             detail=f"Model {model_id} is not enabled in your settings."
@@ -186,25 +385,39 @@ async def agent_chat(
         
     # 3. Save User Message
     await chat_service.save_message(
-        user_address=user_address,
+        user_address=auth_user_id,
         session_id=session_id,
         role="user",
         content=message,
         model_id=model_id
     )
+    trace_ctx = langfuse_service.start_trace(
+        name="agent.chat",
+        user_id=auth_user_id,
+        session_id=session_id,
+        model_id=model_id,
+        input_text=message,
+        metadata={
+            "reasoning_effort": reasoning_effort,
+            "stream": False,
+        },
+    )
 
     # 4. Process with AgentBrain
     try:
+        ai_message = _augment_message_with_active_context(message, tool_states)
         runtime_tool_states = dict(tool_states or {})
         runtime_tool_states["agent_engine"] = "deepagents"
         runtime_tool_states["agent_engine_strict"] = True
+        runtime_tool_states["knowledge_enabled"] = True
+        runtime_tool_states["rag_mode"] = "secondary"
         brain = AgentBrain(
             model_id=model_id,
             reasoning_effort=reasoning_effort,
             tool_states=runtime_tool_states,
             user_context={"user_address": user_address, "session_id": session_id},
         )
-        result = await brain.chat(user_message=message, history=history, attachments=attachments)
+        result = await brain.chat(user_message=ai_message, history=history, attachments=attachments)
         
         response_content = result.get("content", "")
         usage = result.get("usage", {})
@@ -230,7 +443,7 @@ async def agent_chat(
 
         # 5. Save AI Response
         await chat_service.save_message(
-            user_address=user_address,
+            user_address=auth_user_id,
             session_id=session_id,
             role="assistant",
             content=response_content,
@@ -251,12 +464,24 @@ async def agent_chat(
         )
 
         runtime_trace_store.add(
-            user_address=user_address,
+            user_address=auth_user_id,
             session_id=session_id,
             trace={
                 "model_id": model_id,
                 "message": message,
                 "runtime": runtime,
+            },
+        )
+        langfuse_service.log_success(
+            trace_ctx,
+            model_id=model_id,
+            input_text=message,
+            output_text=response_content,
+            usage=usage,
+            metadata={
+                "runtime": runtime,
+                "thoughts_count": len(thoughts or []),
+                "billing_total_cost_usd": float(billing.get("total_cost_usd", 0.0)),
             },
         )
         
@@ -271,7 +496,39 @@ async def agent_chat(
             "billing": billing
         }
     except Exception as e:
+        langfuse_service.log_error(
+            trace_ctx,
+            model_id=model_id,
+            input_text=message,
+            error_message=str(e),
+            metadata={"reasoning_effort": reasoning_effort, "stream": False},
+        )
         raise HTTPException(status_code=500, detail=f"AI Agent Error: {str(e)}")
+
+
+class ChatInterruptRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/chat/interrupt")
+async def agent_chat_interrupt(
+    payload: ChatInterruptRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_address = _require_wallet_address(user)
+    auth_user_id = user_address
+
+    session_id = str(payload.session_id or "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    interrupted = _interrupt_active_stream(auth_user_id, session_id)
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "interrupted": interrupted,
+    }
+
 
 @router.post("/chat/stream")
 async def agent_chat_stream(
@@ -289,7 +546,8 @@ async def agent_chat_stream(
     Stream a message to the AI agent.
     Emits Server-Sent Events (SSE).
     """
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
+    auth_user_id = user_address
     from services.openrouter_service import openrouter_service
     from services.usage_service import usage_service
     from services.chat_service import chat_service
@@ -318,30 +576,49 @@ async def agent_chat_stream(
         enabled_models = await usage_service.get_default_enabled_models()
 
     is_groq = model_id.startswith("groq/")
-    if model_id not in enabled_models and not is_mock and not is_groq:
+    is_nvidia = _is_nvidia_model(model_id)
+    is_free_model = model_id.endswith(":free")
+    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_nvidia and not is_free_model:
         raise HTTPException(
             status_code=403,
             detail=f"Model {model_id} is not enabled in your settings."
         )
 
     await chat_service.save_message(
-        user_address=user_address,
+        user_address=auth_user_id,
         session_id=session_id,
         role="user",
         content=message,
         model_id=model_id
+    )
+    trace_ctx = langfuse_service.start_trace(
+        name="agent.chat.stream",
+        user_id=auth_user_id,
+        session_id=session_id,
+        model_id=model_id,
+        input_text=message,
+        metadata={
+            "reasoning_effort": reasoning_effort,
+            "stream": True,
+        },
     )
 
     async def event_stream():
         def sse(data: dict) -> str:
             return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+        stream_task = asyncio.current_task()
+        _register_active_stream(auth_user_id, session_id, stream_task)
+
         try:
             yield sse({"type": "meta", "session_id": session_id, "model": model_id})
 
+            ai_message = _augment_message_with_active_context(message, tool_states)
             runtime_tool_states = dict(tool_states or {})
             runtime_tool_states["agent_engine"] = "deepagents"
             runtime_tool_states["agent_engine_strict"] = True
+            runtime_tool_states["knowledge_enabled"] = True
+            runtime_tool_states["rag_mode"] = "secondary"
             brain = AgentBrain(
                 model_id=model_id,
                 reasoning_effort=reasoning_effort,
@@ -353,7 +630,7 @@ async def agent_chat_stream(
             usage: Dict[str, Any] = {}
             runtime: Dict[str, Any] = {}
 
-            async for event in brain.stream(user_message=message, history=history, attachments=attachments):
+            async for event in brain.stream(user_message=ai_message, history=history, attachments=attachments):
                 if event.get("type") == "delta":
                     full_content += event.get("content", "")
                 elif event.get("type") == "thoughts":
@@ -378,7 +655,7 @@ async def agent_chat_stream(
             total_cost = float(billing.get("total_cost_usd", 0.0))
 
             await chat_service.save_message(
-                user_address=user_address,
+                user_address=auth_user_id,
                 session_id=session_id,
                 role="assistant",
                 content=full_content,
@@ -398,7 +675,7 @@ async def agent_chat_stream(
             )
 
             runtime_trace_store.add(
-                user_address=user_address,
+                user_address=auth_user_id,
                 session_id=session_id,
                 trace={
                     "model_id": model_id,
@@ -406,12 +683,44 @@ async def agent_chat_stream(
                     "runtime": runtime,
                 },
             )
+            langfuse_service.log_success(
+                trace_ctx,
+                model_id=model_id,
+                input_text=message,
+                output_text=full_content,
+                usage=usage,
+                metadata={
+                    "runtime": runtime,
+                    "thoughts_count": len(thoughts or []),
+                    "billing_total_cost_usd": float(billing.get("total_cost_usd", 0.0)),
+                    "stream": True,
+                },
+            )
             yield sse({"type": "billing", "billing": billing})
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            langfuse_service.log_error(
+                trace_ctx,
+                model_id=model_id,
+                input_text=message,
+                error_message=str(e),
+                metadata={"reasoning_effort": reasoning_effort, "stream": True},
+            )
             yield sse({"type": "error", "message": f"AI Agent Error: {str(e)}"})
+        finally:
+            _unregister_active_stream(auth_user_id, session_id, stream_task)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @router.get("/sessions")
 async def get_my_sessions(
@@ -420,7 +729,7 @@ async def get_my_sessions(
 ):
     """Get recent chat sessions for the current user"""
     from services.chat_service import chat_service
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     return await chat_service.get_user_sessions(user_address, limit)
 
 @router.get("/history/{session_id}")
@@ -440,7 +749,7 @@ async def get_runtime_trace(
     user: dict = Depends(get_current_user)
 ):
     """Get recent runtime traces (plan/tool outputs) for a chat session."""
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     return {
         "status": "success",
         "session_id": session_id,
@@ -455,7 +764,7 @@ async def update_session_title(
 ):
     """Update session title (rename)"""
     from services.chat_service import chat_service
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     success = await chat_service.update_session(session_id, user_address, title)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update session title")
@@ -468,7 +777,7 @@ async def delete_chat_session(
 ):
     """Delete a chat session and its history"""
     from services.chat_service import chat_service
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     success = await chat_service.delete_session(session_id, user_address)
     if not success:
         raise HTTPException(status_code=403, detail="Failed to delete session (unauthorized or not found)")
@@ -482,7 +791,7 @@ async def get_workspaces(
 ):
     """Get all workspaces for the current user"""
     from services.chat_service import chat_service
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     return await chat_service.get_user_workspaces(user_address)
 
 class WorkspaceCreateRequest(BaseModel):
@@ -497,7 +806,7 @@ async def create_workspace(
     """Create a new workspace"""
     from services.chat_service import chat_service
     import uuid
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     ws_id = request.workspace_id or f"ws-{uuid.uuid4().hex[:8]}"
     success = await chat_service.create_workspace(user_address, ws_id, request.name)
     if not success:
@@ -512,7 +821,7 @@ async def move_session(
 ):
     """Move session to a workspace (or null for inbox)"""
     from services.chat_service import chat_service
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     success = await chat_service.move_session(session_id, user_address, workspace_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to move session")
@@ -528,7 +837,7 @@ async def update_workspace(
 ):
     """Update workspace properties"""
     from services.chat_service import chat_service
-    user_address = user.get("sub")
+    user_address = _require_wallet_address(user)
     success = await chat_service.update_workspace(
         workspace_id, user_address, 
         name=name, icon=icon, is_expanded=is_expanded

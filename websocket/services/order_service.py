@@ -407,9 +407,14 @@ class OrderService:
                 size=size_tokens, 
                 notional_usd=amount_usd,
                 leverage=leverage,
-                status='confirmed', # Confirmed on blockchain
+                # On-chain tx already confirmed by frontend before calling this endpoint.
+                # Mark as filled so it appears in history/trade views consistently.
+                status='FILLED',
                 exchange_order_id=tx_hash,
-                created_at=datetime.utcnow()
+                created_at=datetime.utcnow(),
+                filled_at=datetime.utcnow(),
+                filled_size=size_tokens,
+                avg_fill_price=price if price and price > 0 else None,
             )
             session.add(order)
             
@@ -624,11 +629,18 @@ class OrderService:
             
             if status:
                 if status.lower() == 'pending':
-                    stmt = stmt.where(Order.status.in_(['pending', 'open', 'confirmed']))
+                    stmt = stmt.where(Order.status.in_(['pending', 'open', 'OPEN', 'PENDING']))
                 elif status.lower() == 'history':
-                    stmt = stmt.where(Order.status.in_(['filled', 'cancelled', 'rejected', 'FILLED', 'CANCELLED']))
+                    # Keep legacy 'confirmed' compatible until old rows are migrated.
+                    stmt = stmt.where(Order.status.in_([
+                        'filled', 'FILLED',
+                        'cancelled', 'CANCELLED',
+                        'rejected', 'REJECTED',
+                        'confirmed', 'CONFIRMED',
+                    ]))
                 elif status.lower() == 'filled':
-                    stmt = stmt.where(Order.status.in_(['filled', 'FILLED']))
+                    # Include legacy 'confirmed' so trade history doesn't look empty.
+                    stmt = stmt.where(Order.status.in_(['filled', 'FILLED', 'confirmed', 'CONFIRMED']))
                 else:
                     stmt = stmt.where(Order.status == status)
             

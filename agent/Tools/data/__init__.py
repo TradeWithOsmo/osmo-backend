@@ -53,6 +53,12 @@ from .trade import (
     adjust_all_positions_tpsl,
 )
 
+from .research import (
+    research_market,
+    compare_markets,
+    scan_market_overview,
+)
+
 __all__ = [
     # Market
     'get_price', 'get_candles', 'get_orderbook', 'get_funding_rate', 
@@ -70,5 +76,7 @@ __all__ = [
     # Memory
     'add_memory', 'search_memory', 'get_recent_history',
     # Knowledge
-    'search_knowledge_base'
+    'search_knowledge_base',
+    # Research
+    'research_market', 'compare_markets', 'scan_market_overview',
 ]

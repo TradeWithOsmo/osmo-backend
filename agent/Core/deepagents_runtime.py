@@ -31,6 +31,7 @@ class DeepAgentsRuntime:
         if name not in {"mouse_move", "mouse_press", "pan", "zoom", "press_key", "set_crosshair", "move_crosshair"}
     }
     _MEMORY_TOOL_NAMES = {"add_memory", "search_memory", "get_recent_history"}
+    _EXECUTION_TOOL_NAMES = {"place_order"}
     _NON_RETRYABLE_MARKERS = (
         "unknown tool",
         "requires write mode",
@@ -41,6 +42,9 @@ class DeepAgentsRuntime:
         "blocked by",
         "not supported",
         "unsupported",
+        "404",
+        "not found",
+        "symbol not found",
     )
     _DEFAULT_ANALYSIS_TOOLS = {
         "get_price",
@@ -50,7 +54,7 @@ class DeepAgentsRuntime:
         "get_indicators",
         "get_technical_summary",
         "get_ticker_stats",
-        "search_knowledge_base",
+        "search_knowledge_base",  # Re-enabled temporarily to fix network error
         "consult_strategy",
     }
     _OPTIONAL_TOOL_KEYWORDS: Dict[str, tuple[str, ...]] = {
@@ -61,12 +65,15 @@ class DeepAgentsRuntime:
         "get_orderbook": ("orderbook", "depth", "bid ask"),
         "get_funding_rate": ("funding",),
         "get_patterns": ("pattern", "bos", "liquidity", "sweep"),
-        "get_high_low_levels": ("high low", "high/low", "support", "resistance", "s/r"),
+        "get_high_low_levels": ("high low", "high/low", "support", "resistance", "s/r", "level", "swing"),
         "get_active_indicators": ("indicator", "rsi", "macd", "ema", "sma"),
         "consult_strategy": ("strategy", "playbook", "framework", "context", "regime"),
-        "get_trade_management_guidance": ("risk", "position size", "trade management"),
-        "get_drawing_guidance": ("drawing", "chart draw"),
+        "get_trade_management_guidance": ("risk", "position size", "trade management", "risk reward", "r/r"),
+        "get_drawing_guidance": ("drawing", "chart draw", "trendline", "fib"),
         "get_chainlink_price": ("oracle", "chainlink"),
+        "research_market": ("research", "cross-market", "multi-market", "compare price", "market comparison", "across markets"),
+        "compare_markets": ("compare", "comparison", "scan symbols", "batch research", "screening"),
+        "scan_market_overview": ("overview", "market scan", "top movers", "opportunities", "broad scan"),
     }
     _TRADINGVIEW_INTENT_KEYWORDS = (
         "tradingview",
@@ -121,6 +128,8 @@ class DeepAgentsRuntime:
         self._max_tool_actions: Optional[int] = self._resolve_max_tool_actions()
         self._model_timeout_sec: float = self._resolve_model_timeout_sec()
         self._write_txn_id: Optional[str] = None
+        # Strict sequential enforcement: only 1 tool can execute at a time
+        self._tool_execution_lock: asyncio.Semaphore = asyncio.Semaphore(1)
 
     @classmethod
     def is_available(cls) -> bool:
@@ -151,6 +160,11 @@ class DeepAgentsRuntime:
             return False
         if not memory_enabled and tool_name in self._MEMORY_TOOL_NAMES:
             return False
+            
+        execution_enabled = self._parse_bool(self.tool_states.get("execution"), default=False)
+        if tool_name in self._EXECUTION_TOOL_NAMES:
+            return execution_enabled
+            
         return True
 
     def _is_retryable_error(self, error: Optional[str]) -> bool:
@@ -219,10 +233,14 @@ class DeepAgentsRuntime:
             if quote in {"USD", "USDT"}:
                 return f"{base}-USD"
             return f"{base}-{quote}"
+        if len(raw) == 6 and raw[:3] in {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"} and raw[3:] in {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"}:
+            return f"{raw[:3]}-{raw[3:]}"
         if raw.endswith("USDT") and len(raw) > 4:
             return f"{raw[:-4]}-USD"
         if raw.endswith("USD") and len(raw) > 3:
             return f"{raw[:-3]}-USD"
+        if raw.isalpha() and 2 <= len(raw) <= 12:
+            return f"{raw}-USD"
         return raw
 
     def _normalize_state_timeframe(self, value: Any) -> str:
@@ -334,10 +352,6 @@ class DeepAgentsRuntime:
                 return True
             if normalized in {"full", "all"}:
                 return False
-        provider = str(self.tool_states.get("runtime_model_provider") or "").strip().lower()
-        model_id = str(self.tool_states.get("runtime_model_id") or "").strip().lower()
-        if provider == "groq" or model_id.startswith("groq/"):
-            return True
         return False
 
     def _select_tool_names(self, user_message: str) -> set[str]:
@@ -357,9 +371,21 @@ class DeepAgentsRuntime:
         if self._parse_bool(self.tool_states.get("write"), default=False):
             selected.update(self._WRITE_TOOL_NAMES)
 
-        if any(kw in text for kw in self._TRADINGVIEW_INTENT_KEYWORDS):
+        if self._parse_bool(self.tool_states.get("execution"), default=False):
+            selected.update(self._EXECUTION_TOOL_NAMES)
+
+        # Expanded TradingView intent detection
+        tradingview_keywords = list(self._TRADINGVIEW_INTENT_KEYWORDS) + [
+            "fib", "fibonacci", "trendline", "rectangle", "channel",
+            "mark level", "horizontal line", "support line", "resistance line",
+        ]
+        if any(kw in text for kw in tradingview_keywords):
             selected.update(self._TRADINGVIEW_NAV_TOOLS)
             selected.add("get_active_indicators")
+            # Drawing operations need reference data
+            selected.add("get_high_low_levels")
+            selected.add("get_candles")
+            selected.add("get_drawing_guidance")
 
         return selected
 
@@ -376,85 +402,87 @@ class DeepAgentsRuntime:
             signature = inspect.signature(tool_fn)
 
             async def _wrapped(*args: Any, __tool_name: str = tool_name, __sig=signature, **kwargs: Any) -> Any:
-                if self._max_tool_actions is not None and len(self._captured_results) >= self._max_tool_actions:
-                    self._phase(
-                        "tool_budget_reached",
-                        {
-                            "tool": __tool_name,
-                            "stage": "guard",
-                            "max_tool_actions": self._max_tool_actions,
-                        },
-                    )
-                    return self._to_safe_tool_content(
-                        None,
-                        error=(
-                            f"Tool action budget reached ({self._max_tool_actions}). "
-                            "Summarize with current evidence."
-                        ),
-                    )
-
-                bound = __sig.bind_partial(*args, **kwargs)
-                bound.apply_defaults()
-                call_args = dict(bound.arguments)
-                if (
-                    classify_tool_mode(__tool_name) == "write"
-                    and self._write_txn_id
-                    and self._tool_accepts_kwarg(__sig, "write_txn_id")
-                ):
-                    call_args.setdefault("write_txn_id", self._write_txn_id)
-                cache_key = self._tool_call_cache_key(__tool_name, call_args)
-
-                cached = self._tool_result_cache.get(cache_key)
-                if cached is not None:
-                    self._tool_cache_hits += 1
-                    self._phase(
-                        "tool_cache_hit",
-                        {
-                            "tool": __tool_name,
-                            "stage": "observe",
-                            "ok": bool(cached.ok),
-                        },
-                    )
-                    return self._to_safe_tool_content(cached.data, error=cached.error)
-
-                attempt = 0
-                while attempt < max_attempts:
-                    attempt += 1
-                    self._phase(
-                        "tool_call",
-                        {"tool": __tool_name, "stage": "act", "attempt": attempt, "max_attempts": max_attempts},
-                    )
-                    result = await self._orchestrator.run_tool(
-                        ToolCall(name=__tool_name, args=call_args),
-                        tool_states=self.tool_states,
-                    )
-                    if classify_tool_mode(__tool_name) == "write":
-                        result = self._enforce_write_precision(result)
-                    self._captured_results.append(result)
-                    self._phase(
-                        "tool_observe",
-                        {
-                            "tool": __tool_name,
-                            "stage": "observe",
-                            "attempt": attempt,
-                            "ok": bool(result.ok),
-                            "error": result.error if not result.ok else None,
-                        },
-                    )
-
-                    has_data_error = isinstance(result.data, dict) and bool(result.data.get("error"))
-                    if result.ok and not has_data_error:
-                        self._tool_result_cache[cache_key] = result
-                        return self._to_safe_tool_content(result.data)
-
-                    if attempt >= max_attempts or not self._is_retryable_error(result.error):
-                        self._tool_result_cache[cache_key] = result
+                # Enforce strict sequential execution via semaphore lock
+                async with self._tool_execution_lock:
+                    if self._max_tool_actions is not None and len(self._captured_results) >= self._max_tool_actions:
+                        self._phase(
+                            "tool_budget_reached",
+                            {
+                                "tool": __tool_name,
+                                "stage": "guard",
+                                "max_tool_actions": self._max_tool_actions,
+                            },
+                        )
                         return self._to_safe_tool_content(
-                            result.data,
-                            error=result.error or f"{__tool_name} failed",
+                            None,
+                            error=(
+                                f"Tool action budget reached ({self._max_tool_actions}). "
+                                "Summarize with current evidence."
+                            ),
                         )
 
-                return self._to_safe_tool_content(None, error=f"{__tool_name} failed after retries")
+                    bound = __sig.bind_partial(*args, **kwargs)
+                    bound.apply_defaults()
+                    call_args = dict(bound.arguments)
+                    if (
+                        classify_tool_mode(__tool_name) == "write"
+                        and self._write_txn_id
+                        and self._tool_accepts_kwarg(__sig, "write_txn_id")
+                    ):
+                        call_args.setdefault("write_txn_id", self._write_txn_id)
+                    cache_key = self._tool_call_cache_key(__tool_name, call_args)
+
+                    cached = self._tool_result_cache.get(cache_key)
+                    if cached is not None:
+                        self._tool_cache_hits += 1
+                        self._phase(
+                            "tool_cache_hit",
+                            {
+                                "tool": __tool_name,
+                                "stage": "observe",
+                                "ok": bool(cached.ok),
+                            },
+                        )
+                        return self._to_safe_tool_content(cached.data, error=cached.error)
+
+                    attempt = 0
+                    while attempt < max_attempts:
+                        attempt += 1
+                        self._phase(
+                            "tool_call",
+                            {"tool": __tool_name, "stage": "act", "attempt": attempt, "max_attempts": max_attempts},
+                        )
+                        result = await self._orchestrator.run_tool(
+                            ToolCall(name=__tool_name, args=call_args),
+                            tool_states=self.tool_states,
+                        )
+                        if classify_tool_mode(__tool_name) == "write":
+                            result = self._enforce_write_precision(result)
+                        self._captured_results.append(result)
+                        self._phase(
+                            "tool_observe",
+                            {
+                                "tool": __tool_name,
+                                "stage": "observe",
+                                "attempt": attempt,
+                                "ok": bool(result.ok),
+                                "error": result.error if not result.ok else None,
+                            },
+                        )
+
+                        has_data_error = isinstance(result.data, dict) and bool(result.data.get("error"))
+                        if result.ok and not has_data_error:
+                            self._tool_result_cache[cache_key] = result
+                            return self._to_safe_tool_content(result.data)
+
+                        if attempt >= max_attempts or not self._is_retryable_error(result.error):
+                            self._tool_result_cache[cache_key] = result
+                            return self._to_safe_tool_content(
+                                result.data,
+                                error=result.error or f"{__tool_name} failed",
+                            )
+
+                    return self._to_safe_tool_content(None, error=f"{__tool_name} failed after retries")
 
             _wrapped.__name__ = tool_name
             _wrapped.__qualname__ = tool_name
@@ -471,14 +499,99 @@ class DeepAgentsRuntime:
 
     def _build_runtime_prompt(self) -> str:
         strict_react = self._parse_bool(self.tool_states.get("strict_react"), default=True)
-        loop_hint = (
-            "Strict ReAct policy: Think -> Act (only 1 tool action per iteration) -> Observe -> Think."
-            if strict_react
-            else "ReAct policy: Think -> Act -> Observe. Keep loops concise and evidence-driven."
-        )
-        plan_hint = "Planning policy: AI writes the plan first, then executes via looped Think-Act-Observe."
         compact = self._is_compact_profile()
-        profile_hint = "Token profile: compact toolset." if compact else "Token profile: full toolset."
+        market = str(
+            self.tool_states.get("market_symbol")
+            or self.tool_states.get("market_display")
+            or self.tool_states.get("market")
+            or "none"
+        ).strip()
+        timeframe = self.tool_states.get("timeframe")
+        if isinstance(timeframe, list):
+            timeframe_text = ",".join(str(item).strip() for item in timeframe if str(item).strip()) or "none"
+        else:
+            timeframe_text = str(timeframe or "none").strip()
+        write_enabled = self._parse_bool(self.tool_states.get("write"), default=False)
+        execution_enabled = self._parse_bool(self.tool_states.get("execution"), default=False)
+
+        runtime_prompt = (
+            "DEEP AGENTS RUNTIME\n"
+            f"Active chart: market={market}, timeframe={timeframe_text}\n"
+            f"Write mode: {'ON' if write_enabled else 'OFF'} | "
+            f"Execution: {'ON' if execution_enabled else 'OFF'} | "
+            f"Profile: {'compact' if compact else 'full'}\n"
+            "Treat active chart as default scope unless user explicitly changes it.\n"
+            "\n"
+            "--- ReAct ENFORCEMENT ---\n"
+        )
+
+        if strict_react:
+            runtime_prompt += (
+                "MODE: STRICT SEQUENTIAL\n"
+                "You CANNOT call multiple tools in parallel. Each call blocks until completion.\n"
+                "\n"
+                "At each step, follow this EXACT template:\n"
+                "\n"
+                "THINK: [What do I know? What do I need? Which ONE tool answers that?]\n"
+                "ACT: [Call exactly ONE tool]\n"
+                "OBSERVE: [Read the result. Extract key facts: price=$X, RSI=Y, etc.]\n"
+                "THINK: [Is evidence sufficient? If yes -> synthesize. If no -> identify gap.]\n"
+                "\n"
+                "STOP CONDITIONS (synthesize your answer when ANY is true):\n"
+                "- You have enough evidence to answer the user confidently.\n"
+                "- You have called 6 tools already.\n"
+                "- Further tools would not change your conclusion.\n"
+                "- A critical tool failed and no alternative exists.\n"
+            )
+        else:
+            runtime_prompt += (
+                "MODE: FLEXIBLE SEQUENTIAL\n"
+                "Tools execute sequentially. Keep loops concise and evidence-driven.\n"
+                "Think -> Act -> Observe. Stop when evidence is sufficient.\n"
+            )
+
+        runtime_prompt += (
+            "\n"
+            "TOOL PRIORITY ORDER:\n"
+            "1. get_price (always first for any symbol)\n"
+            "2. get_technical_analysis (comprehensive technical context)\n"
+            "3. get_high_low_levels (REQUIRED before any drawing)\n"
+            "4. get_orderbook / get_funding_rate (crypto depth context)\n"
+            "5. search_news / search_sentiment (only when explicitly relevant)\n"
+            "\n"
+            "FAILURE RULES:\n"
+            "- Transient error (timeout, connection): retry once.\n"
+            "- Validation/param error: do NOT retry. Note data gap.\n"
+            "- Critical tool failed: reduce confidence 20-30 points, avoid precise levels.\n"
+            "- Never call same tool with identical args twice.\n"
+        )
+
+        if write_enabled:
+            runtime_prompt += (
+                "\n"
+                "CHART & DRAWING PROTOCOL:\n"
+                "- Verify chart symbol matches target before any drawing.\n"
+                "- Call get_high_low_levels or get_candles BEFORE drawing for real reference prices.\n"
+                "- Mutation order: set_symbol > set_timeframe > get reference data > draw > verify.\n"
+                "- Coordinates: time=Unix seconds, price=exact float from tool output.\n"
+                "- NEVER hallucinate price levels or timestamps.\n"
+                "- After drawing: describe what, at what price, and why.\n"
+            )
+
+        if execution_enabled:
+            runtime_prompt += (
+                "\n"
+                "EXECUTION PROTOCOL:\n"
+                "- Require: side + size + SL + TP (or explicit user override).\n"
+                "- Compute R:R ratio when entry/SL/TP available.\n"
+                "- Confidence < 50: recommend reduced size or waiting.\n"
+                "- Leverage > 10x: require multiple confluence signals.\n"
+                "- Always state trade invalidation conditions.\n"
+            )
+
+        base = str(self.system_prompt or "").strip()
+        if base:
+            return f"{base}\n\n{runtime_prompt}"
         return (
             "You are Osmo, a derivatives-only trading assistant.\n"
             "Core constraints:\n"
@@ -488,14 +601,7 @@ class DeepAgentsRuntime:
             "- If required data is missing/failed, lower confidence and avoid precise entry/SL/TP.\n"
             "- Keep response concise and structured per symbol: Bias, Evidence, Confidence, Data gaps.\n"
             "- End with clear next action and risk control.\n\n"
-            "Runtime policy (Deep Agents):\n"
-            f"- {plan_hint}\n"
-            f"- {loop_hint}\n"
-            f"- {profile_hint}\n"
-            "- When a tool fails, reason briefly about failure, then retry only if retry is likely useful.\n"
-            "- Never batch-execute many tools blindly; prioritize sequential evidence checks.\n"
-            "- Do not call the same tool with identical arguments more than once unless prior output was unusable.\n"
-            "- For market-analysis requests, call at least one live evidence tool before final answer.\n"
+            f"{runtime_prompt}"
         )
 
     def _normalize_detected_symbol(self, raw: str) -> Optional[str]:
@@ -537,7 +643,9 @@ class DeepAgentsRuntime:
                 found.append(symbol)
 
         if not found:
-            token_pattern = re.compile(r"\b(BTC|ETH|SOL|ARB|ARK|BERA|BNB|XRP|DOGE|ADA|AVAX|LINK|SUI|APT|OP)\b")
+            # Build pattern dynamically from defined bases for consistency
+            tokens = "|".join(sorted(self._CRYPTO_BASES, key=len, reverse=True))
+            token_pattern = re.compile(rf"\b({tokens})\b")
             for token in token_pattern.findall(text):
                 symbol = self._normalize_detected_symbol(f"{token}-USD")
                 if symbol and symbol not in found:
@@ -588,13 +696,15 @@ class DeepAgentsRuntime:
             kb_args: Dict[str, Any] = {"query": str(user_message or ""), "top_k": int(top_k)}
             if category:
                 kb_args["category"] = str(category)
-            calls.append(
-                ToolCall(
-                    name="search_knowledge_base",
-                    args=kb_args,
-                    reason="Bootstrap evidence: retrieve framework guidance from KB.",
-                )
-            )
+            # DISABLED: RAG should be fallback only, not upfront bootstrap
+            # Only called when primary tools fail or confidence is low
+            # calls.append(
+            #     ToolCall(
+            #         name="search_knowledge_base",
+            #         args=kb_args,
+            #         reason="Bootstrap evidence: retrieve framework guidance from KB.",
+            #     )
+            # )
         return calls[:8]
 
     async def _run_bootstrap_calls(self, calls: List[ToolCall]) -> None:
@@ -699,17 +809,17 @@ class DeepAgentsRuntime:
         for symbol in symbols[:4]:
             sections.append(
                 (
-                    f"### {symbol}\\n"
-                    "- Bias: Neutral (data unavailable).\\n"
-                    "- Evidence: Live connector unreachable; no validated price/technical snapshot.\\n"
-                    "- Confidence: 15/100.\\n"
+                    f"### {symbol}\n"
+                    "- Bias: Neutral (data unavailable).\n"
+                    "- Evidence: Live connector unreachable; no validated price/technical snapshot.\n"
+                    "- Confidence: 15/100.\n"
                     "- Data gaps: price, technicals, and contextual confirmations unavailable."
                 )
             )
-        section_text = "\\n\\n".join(sections)
+        section_text = "\n\n".join(sections)
         return (
-            "Live market connectors are currently unreachable, so this is a safety fallback.\\n\\n"
-            f"{section_text}\\n\\n"
+            "Live market connectors are currently unreachable, so this is a safety fallback.\n\n"
+            f"{section_text}\n\n"
             "Risk plan: hold or reduce exposure, avoid new precise entry/SL/TP until data pipeline recovers, "
             "and cap per-trade risk <= 1.5%."
         )
@@ -912,7 +1022,9 @@ class DeepAgentsRuntime:
         self._tool_result_cache = {}
         self._tool_cache_hits = 0
         self._write_txn_id = None
-        self._phase("engine_start", {"engine": "deepagents"})
+        # Reset semaphore lock for new chat session
+        self._tool_execution_lock = asyncio.Semaphore(1)
+        self._phase("engine_start", {"engine": "deepagents", "execution_mode": "strict_sequential"})
 
         wrapped_tools = self._build_wrapped_tools(user_message=user_message)
         self._phase("tool_registry_ready", {"tool_count": len(wrapped_tools)})

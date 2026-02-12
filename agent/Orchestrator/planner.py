@@ -91,12 +91,9 @@ SYMBOL_STOPWORDS: Set[str] = {
     "PLEASE",
     "HELLO",
     "HI",
-    "HALO",
     "CHECK",
-    "CEK",
-    "MINTA",
-    "HARGA",
-    "BERAPA",
+    "OSTIUM",
+    "HYPERLIQUID",
 }
 
 FIAT_CODES: Set[str] = {
@@ -126,6 +123,21 @@ RWA_BASE_CODES: Set[str] = {
     "NDX",
     "NIK",
     "SPX",
+}
+
+RWA_EQUITY_CODES: Set[str] = {
+    "AAPL",
+    "MSFT",
+    "GOOG",
+    "GOOGL",
+    "AMZN",
+    "TSLA",
+    "META",
+    "NFLX",
+    "NVDA",
+    "AMD",
+    "COIN",
+    "PLTR",
 }
 
 
@@ -309,6 +321,8 @@ def _infer_asset_type_from_symbol(symbol: Optional[str]) -> str:
         return "rwa"
     if base in RWA_BASE_CODES:
         return "rwa"
+    if base in RWA_EQUITY_CODES:
+        return "rwa"
     return "crypto"
 
 
@@ -328,6 +342,17 @@ def _symbol_to_tool_symbol(symbol: Optional[str]) -> Optional[str]:
     if quote in {"USD", "USDT"} and base not in FIAT_CODES:
         return base
     return f"{base}-{quote}"
+
+
+def _infer_requested_chart_source(text: str) -> Optional[str]:
+    lower = (text or "").lower()
+    if not lower:
+        return None
+    if "ostium" in lower or "rwa" in lower:
+        return "ostium"
+    if "hyperliquid" in lower:
+        return "hyperliquid"
+    return None
 
 
 def _looks_like_symbol_only_message(text: str) -> bool:
@@ -352,7 +377,7 @@ def _is_smalltalk(text: str) -> bool:
         return True
     if _extract_symbol(text):
         return False
-    smalltalk_terms = ["hi", "hello", "halo", "hey", "gm", "good morning", "good evening", "how are you"]
+    smalltalk_terms = ["hi", "hello", "hey", "gm", "good morning", "good evening", "how are you"]
     market_terms = [
         "price", "btc", "eth", "sol", "solana", "soll", "market", "chart", "trade", "long", "short",
         "analysis", "indicator", "order", "funding", "orderbook", "news", "sentiment",
@@ -541,17 +566,10 @@ def build_plan(
     extracted_symbols = _extract_symbols(text, max_symbols=4)
     extracted_symbol = extracted_symbols[0] if extracted_symbols else None
     symbol_hint_terms = [
-        "minta",
         "check",
-        "cek",
         "price",
-        "harga",
-        "berapa",
         "quote",
         "about",
-        "tentang",
-        "lihat",
-        "liat",
     ]
     if not extracted_symbol and _contains_any(text, symbol_hint_terms):
         extracted_symbol = _extract_symbol_relaxed(text)
@@ -559,6 +577,7 @@ def build_plan(
             extracted_symbols = [extracted_symbol, *[item for item in extracted_symbols if item != extracted_symbol]]
     symbol = extracted_symbol or tool_state_symbol
     additional_symbols = [item for item in extracted_symbols if item and item != symbol]
+    requested_chart_source = _infer_requested_chart_source(text)
 
     timeframe_match = TIMEFRAME_RE.search(text)
     default_tf = None
@@ -569,7 +588,7 @@ def build_plan(
     timeframe = _normalize_timeframe(timeframe_match.group(1) if timeframe_match else default_tf)
 
     wants_execution = RiskGate.wants_execution(text)
-    wants_price = _contains_any(text, ["price", "last price", "quote", "mark price", "current price", "berapa harga"])
+    wants_price = _contains_any(text, ["price", "last price", "quote", "mark price", "current price"])
     wants_news = _contains_any(text, ["news", "headline", "macro", "fomc", "cpi"])
     wants_sentiment = _contains_any(text, ["sentiment", "twitter", "x.com", "x "])
     wants_whales = _contains_any(text, ["whale", "onchain", "large order flow", "smart money"])
@@ -587,31 +606,92 @@ def build_plan(
     wants_technical_summary = _contains_any(text, ["technical summary", "summarize technical", "summary technical"])
     wants_distribution = _contains_any(text, ["token distribution", "holder distribution", "distribution"])
     wants_active_indicators = _contains_any(text, ["active indicator", "active indicators", "current indicators"])
+    wants_research = _contains_any(text, [
+        "research", "cross-market", "multi-market", "compare market", "market comparison",
+        "across markets", "both markets", "hyperliquid and ostium", "ostium and hyperliquid",
+        "scan market", "market overview", "top movers", "broad scan", "screening",
+        "compare price", "price comparison",
+    ])
     wants_chart_capture = _contains_any(text, ["screenshot", "snapshot", "capture chart"])
     wants_cursor_inspect = _contains_any(text, ["inspect cursor", "cursor data"])
     wants_reset_view = _contains_any(text, ["reset view", "reset chart"])
     wants_focus_latest = _contains_any(text, ["focus latest", "latest candle"])
     wants_set_timeframe = _contains_any(text, ["set timeframe", "change timeframe"])
     wants_set_symbol = _contains_any(text, ["set symbol", "change symbol", "switch symbol"])
-    wants_drawing_guidance = _contains_any(text, ["draw", "trendline", "fibonacci", "fib", "rectangle", "drawing tool"])
-    wants_trade_guidance = _contains_any(text, ["stop loss", "take profit", "risk management", "position sizing"])
-    wants_market_guidance = _contains_any(text, ["market context", "market regime", "trend or range"])
-    wants_strategy_guidance = _contains_any(text, ["strategy", "playbook", "best setup"])
+    wants_clear_indicators = _contains_any(
+        text,
+        [
+            "clear indicators",
+            "clear indicator",
+            "clear all indicators",
+            "delete all indicators",
+            "remove all indicators",
+
+            "reset indicators",
+        ],
+    )
+    wants_remove_indicator = _contains_any(
+        text,
+        [
+            "remove indicator",
+            "delete indicator",
+
+        ],
+    ) and not wants_clear_indicators
+    wants_drawing_guidance = _contains_any(text, [
+        "draw", "trendline", "fibonacci", "fib", "rectangle", "drawing tool",
+        "mark level", "mark zone", "horizontal line", "support line", "resistance line",
+        "channel", "pitchfork", "gann", "elliott", "arrow",
+        "fib retracement", "fib extension", "fib trend",
+        "long position", "short position", "price range",
+    ])
+    wants_trade_guidance = _contains_any(text, [
+        "stop loss", "take profit", "risk management", "position sizing",
+        "risk reward", "risk/reward", "r/r", "rrr", "money management",
+        "position size", "lot size", "margin", "leverage management",
+        "trailing stop", "breakeven", "move sl", "tighten stop",
+        "partial take profit", "scale out", "scale in",
+    ])
+    wants_market_guidance = _contains_any(text, [
+        "market context", "market regime", "trend or range",
+        "market structure", "market phase", "accumulation", "distribution",
+    ])
+    wants_strategy_guidance = _contains_any(text, [
+        "strategy", "playbook", "best setup", "trading plan",
+        "approach", "methodology", "system",
+    ])
     wants_technical = _contains_any(
         text,
         ["technical", "rsi", "macd", "support", "resistance", "trend", "indicator", "setup", "chart"],
     )
+    indicator_management_only = (
+        (wants_clear_indicators or wants_remove_indicator)
+        and not _contains_any(
+            text,
+            [
+                "analysis",
+                "setup",
+                "trend",
+                "signal",
+                "entry",
+                "tp",
+                "sl",
+                "risk",
+                "market context",
+            ],
+        )
+    )
+    if indicator_management_only:
+        wants_technical = False
+        wants_price = False
     mentions_tpsl = _contains_any(text, ["tp", "sl", "take profit", "stop loss", "tpsl"])
     wants_tpsl_adjust = mentions_tpsl and _contains_any(
         text,
         [
             "adjust",
             "update",
-            "ubah",
-            "ganti",
             "change",
             "move",
-            "geser",
             "set tp",
             "set sl",
             "tighten",
@@ -621,13 +701,13 @@ def build_plan(
     )
     wants_tpsl_adjust_all = wants_tpsl_adjust and _contains_any(
         text,
-        ["all positions", "all open positions", "all trades", "all symbols", "semua posisi", "semua trade", "semua symbol"],
+        ["all positions", "all open positions", "all trades", "all symbols"],
     )
     tpsl_targets = _extract_tpsl_targets(text)
     lookback_candles = _extract_lookback_candles(text, default=7)
     has_symbol_hint_request = _contains_any(
         text,
-        ["minta", "check", "cek", "price", "harga", "berapa", "quote", "about", "tentang", "lihat", "liat"],
+        ["check", "price", "quote", "about"],
     )
     if symbol and not any(
         [
@@ -651,6 +731,7 @@ def build_plan(
             wants_market_guidance,
             wants_strategy_guidance,
             wants_technical,
+            wants_research,
         ]
     ) and (has_symbol_hint_request or _looks_like_symbol_only_message(text)):
         wants_price = True
@@ -672,6 +753,27 @@ def build_plan(
             for item in raw_indicators
             if isinstance(item, str) and str(item).strip()
         ]
+
+    indicator_name_hints = {
+        "rsi": "RSI",
+        "macd": "MACD",
+        "stoch": "Stoch",
+        "stochastic": "Stoch",
+        "ema": "EMA",
+        "sma": "SMA",
+        "vwap": "VWAP",
+        "bb": "Bollinger Bands",
+        "bollinger": "Bollinger Bands",
+        "atr": "ATR",
+        "adx": "ADX",
+        "ichimoku": "Ichimoku",
+        "supertrend": "SuperTrend",
+        "volume": "Volume",
+    }
+    text_lower = (text or "").lower()
+    for key, label in indicator_name_hints.items():
+        if key in text_lower and label not in selected_indicators:
+            selected_indicators.append(label)
 
     context = PlanContext(
         symbol=symbol,
@@ -739,7 +841,38 @@ def build_plan(
                 reason="Bulk adjust TP/SL across open positions per user request.",
             )
 
+    # Research agent: cross-market / multi-market tools
+    if wants_research:
+        if extracted_symbols and len(extracted_symbols) > 1:
+            # Multiple symbols -> compare_markets
+            _append_tool_call(
+                plan,
+                name="compare_markets",
+                args={"symbols": extracted_symbols[:5], "timeframe": timeframe},
+                reason="Compare multiple symbols across Hyperliquid + Ostium markets.",
+            )
+        elif symbol:
+            # Single symbol -> research_market (deep dive)
+            _append_tool_call(
+                plan,
+                name="research_market",
+                args={"symbol": _symbol_to_tool_symbol(symbol) or symbol, "timeframe": timeframe},
+                reason=f"Research {symbol} across all available markets (Hyperliquid + Ostium).",
+            )
+        else:
+            # No symbol -> scan_market_overview
+            _append_tool_call(
+                plan,
+                name="scan_market_overview",
+                args={"asset_class": "all"},
+                reason="Scan all available markets for top movers and opportunities.",
+            )
+
     if symbol:
+        inferred_symbol_asset_type = _infer_asset_type_from_symbol(symbol)
+        inferred_symbol_source = "ostium" if inferred_symbol_asset_type == "rwa" else "hyperliquid"
+        target_chart_source = requested_chart_source or inferred_symbol_source
+
         needs_market_data = any([
             wants_price,
             wants_execution,
@@ -769,10 +902,16 @@ def build_plan(
         if auto_set_symbol:
             if write_enabled:
                 source_symbol = tool_state_symbol or symbol
+                set_symbol_args: Dict[str, Any] = {
+                    "symbol": source_symbol,
+                    "target_symbol": symbol,
+                }
+                if requested_chart_source:
+                    set_symbol_args["target_source"] = target_chart_source
                 _append_tool_call(
                     plan,
                     name="set_symbol",
-                    args={"symbol": source_symbol, "target_symbol": symbol},
+                    args=set_symbol_args,
                     reason=f"Switch chart from {tool_state_symbol} to requested symbol {symbol} before analysis.",
                 )
             elif needs_market_data:
@@ -782,7 +921,12 @@ def build_plan(
                 )
 
         tool_symbol = _symbol_to_tool_symbol(symbol) or symbol
-        asset_type = _infer_asset_type_from_symbol(symbol)
+        if requested_chart_source == "ostium":
+            asset_type = "rwa"
+        elif requested_chart_source == "hyperliquid":
+            asset_type = "crypto"
+        else:
+            asset_type = inferred_symbol_asset_type
         is_crypto_asset = asset_type == "crypto"
 
         if any([
@@ -876,7 +1020,7 @@ def build_plan(
                 reason="Cross-check reference oracle pricing.",
             )
 
-        if selected_indicators:
+        if selected_indicators and not wants_remove_indicator and not wants_clear_indicators:
             if write_enabled:
                 for indicator_name in selected_indicators[:2]:
                     _append_tool_call(
@@ -901,6 +1045,75 @@ def build_plan(
                 name="get_active_indicators",
                 args={"symbol": symbol, "timeframe": timeframe},
                 reason="Inspect currently active chart indicators.",
+            )
+
+        if wants_clear_indicators:
+            if write_enabled:
+                _append_tool_call(
+                    plan,
+                    name="clear_indicators",
+                    args={"symbol": symbol},
+                    reason="Clear all active indicators from chart as requested.",
+                )
+            else:
+                plan.warnings.append(
+                    "Clear indicators requested, but write mode is disabled. Enable 'Allow Write' first."
+                )
+        elif wants_remove_indicator:
+            if write_enabled:
+                if selected_indicators:
+                    for indicator_name in selected_indicators[:2]:
+                        _append_tool_call(
+                            plan,
+                            name="remove_indicator",
+                            args={"symbol": symbol, "name": indicator_name},
+                            reason=f"Remove indicator `{indicator_name}` from chart.",
+                        )
+                else:
+                    plan.warnings.append(
+                        "Remove indicator requested, but indicator name not detected. Mention indicator name (e.g., RSI/MACD)."
+                    )
+            else:
+                plan.warnings.append(
+                    "Remove indicator requested, but write mode is disabled. Enable 'Allow Write' first."
+                )
+
+        # When drawing is requested with a symbol, ensure reference data is fetched first
+        if wants_drawing_guidance and symbol:
+            # Ensure high/low levels are available as reference for drawing coordinates
+            if not wants_high_low_levels:
+                _append_tool_call(
+                    plan,
+                    name="get_high_low_levels",
+                    args={
+                        "symbol": tool_symbol,
+                        "timeframe": timeframe,
+                        "lookback": lookback_candles,
+                        "limit": max(lookback_candles, 50),
+                        "asset_type": asset_type,
+                    },
+                    reason="Fetch reference price levels before drawing operations (coordinates must be real).",
+                )
+            # Extract specific drawing tool for targeted guidance
+            drawing_tool_type = "trendline"
+            drawing_kw_map = {
+                "fib": "fib_retracement", "fibonacci": "fib_retracement",
+                "channel": "parallel_channel", "pitchfork": "pitchfork",
+                "gann": "gann_box", "elliott": "elliott_impulse_wave",
+                "rectangle": "rectangle", "horizontal": "horizontal_line",
+                "arrow": "arrow", "support line": "horizontal_line",
+                "resistance line": "horizontal_line",
+            }
+            text_lower_for_draw = (text or "").lower()
+            for kw, tool_type in drawing_kw_map.items():
+                if kw in text_lower_for_draw:
+                    drawing_tool_type = tool_type
+                    break
+            _append_tool_call(
+                plan,
+                name="get_drawing_guidance",
+                args={"tool_name": drawing_tool_type},
+                reason=f"Retrieve drawing best practices for {drawing_tool_type}.",
             )
 
         if wants_technical or wants_execution:
@@ -975,10 +1188,13 @@ def build_plan(
         has_write_intent = any([
             wants_set_timeframe,
             wants_set_symbol,
+            wants_clear_indicators,
+            wants_remove_indicator,
             wants_chart_capture,
             wants_cursor_inspect,
             wants_reset_view,
             wants_focus_latest,
+            wants_drawing_guidance,
             bool(selected_indicators),
         ])
         if has_write_intent and not write_enabled:
@@ -995,10 +1211,16 @@ def build_plan(
                 )
             if wants_set_symbol:
                 source_symbol = tool_state_symbol or symbol
+                set_symbol_args: Dict[str, Any] = {
+                    "symbol": source_symbol,
+                    "target_symbol": symbol,
+                }
+                if requested_chart_source:
+                    set_symbol_args["target_source"] = target_chart_source
                 _append_tool_call(
                     plan,
                     name="set_symbol",
-                    args={"symbol": source_symbol, "target_symbol": symbol},
+                    args=set_symbol_args,
                     reason="Align chart symbol with current request.",
                 )
             if wants_reset_view:
@@ -1075,18 +1297,45 @@ def build_plan(
         )
     else:
         if wants_drawing_guidance:
+            # Extract specific drawing tool from user message for targeted guidance
+            drawing_tool_type = "trendline"  # default
+            drawing_keywords_map = {
+                "fib": "fib_retracement", "fibonacci": "fib_retracement",
+                "channel": "parallel_channel", "pitchfork": "pitchfork",
+                "gann": "gann_box", "elliott": "elliott_impulse_wave",
+                "rectangle": "rectangle", "horizontal": "horizontal_line",
+                "arrow": "arrow", "support line": "horizontal_line",
+                "resistance line": "horizontal_line",
+            }
+            text_lower_draw = (text or "").lower()
+            for kw, tool_type in drawing_keywords_map.items():
+                if kw in text_lower_draw:
+                    drawing_tool_type = tool_type
+                    break
             _append_tool_call(
                 plan,
                 name="get_drawing_guidance",
-                args={"tool_name": "trendline"},
-                reason="Retrieve drawing best practices before chart actions.",
+                args={"tool_name": drawing_tool_type},
+                reason=f"Retrieve drawing best practices for {drawing_tool_type} before chart actions.",
             )
         if wants_trade_guidance:
+            # Extract specific trade management topic
+            trade_topic = "stop loss"  # default
+            trade_topic_map = {
+                "position siz": "position sizing", "risk reward": "risk reward",
+                "trailing": "trailing stop", "breakeven": "breakeven",
+                "scale": "scaling", "partial": "partial take profit",
+            }
+            text_lower_trade = (text or "").lower()
+            for kw, topic in trade_topic_map.items():
+                if kw in text_lower_trade:
+                    trade_topic = topic
+                    break
             _append_tool_call(
                 plan,
                 name="get_trade_management_guidance",
-                args={"topic": "stop loss"},
-                reason="Retrieve risk/trade management guidance.",
+                args={"topic": trade_topic},
+                reason=f"Retrieve risk/trade management guidance for {trade_topic}.",
             )
         if wants_market_guidance:
             _append_tool_call(
@@ -1103,5 +1352,6 @@ def build_plan(
                 reason="Retrieve strategy guidance from knowledge base.",
             )
 
-    _finalize_tool_calls(plan, max_calls=6)
+    _finalize_tool_calls(plan, max_calls=8)
     return plan
+

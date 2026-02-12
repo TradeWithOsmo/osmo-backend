@@ -36,7 +36,7 @@ class LeaderboardService:
         
         # Query all filled orders within timeframe
         stmt = select(
-            Order.user_address,
+            func.lower(Order.user_address).label('user_address'),
             func.sum(Order.notional_usd).label('volume'),
             func.count(Order.id).label('trade_count'),
             func.max(Order.agent_model).label('agent_model')
@@ -47,7 +47,7 @@ class LeaderboardService:
         if cutoff_time:
             stmt = stmt.where(Order.filled_at >= cutoff_time)
         
-        stmt = stmt.group_by(Order.user_address)
+        stmt = stmt.group_by(func.lower(Order.user_address))
         
         result = await self.db.execute(stmt)
         rows = result.all()
@@ -57,7 +57,7 @@ class LeaderboardService:
             user_address = row.user_address
             
             # Get current positions for this user
-            pos_stmt = select(Position).where(Position.user_address == user_address)
+            pos_stmt = select(Position).where(func.lower(Position.user_address) == user_address)
             pos_result = await self.db.execute(pos_stmt)
             positions = pos_result.scalars().all()
             
@@ -68,7 +68,7 @@ class LeaderboardService:
             
             # Win rate calculation
             win_count_stmt = select(func.count(Order.id)).where(
-                Order.user_address == user_address,
+                func.lower(Order.user_address) == user_address,
                 Order.status.in_(['filled', 'FILLED']),
                 Order.realized_pnl > 0
             )
@@ -114,7 +114,7 @@ class LeaderboardService:
         # Query agent trades grouped by model
         stmt = select(
             Order.agent_model,
-            func.count(func.distinct(Order.user_address)).label('total_users'),
+            func.count(func.distinct(func.lower(Order.user_address))).label('total_users'),
             func.sum(Order.notional_usd).label('volume'),
         ).where(
             Order.status.in_(['filled', 'FILLED']),
@@ -135,7 +135,7 @@ class LeaderboardService:
             agent_model = row.agent_model
             
             # Get all users using this model
-            users_stmt = select(Order.user_address).where(
+            users_stmt = select(func.lower(Order.user_address)).where(
                 Order.agent_model == agent_model,
                 Order.is_agent_trade == True,
                 Order.status.in_(['filled', 'FILLED'])
@@ -152,7 +152,7 @@ class LeaderboardService:
             total_account_value = 0
             
             for user_address in users:
-                pos_stmt = select(Position).where(Position.user_address == user_address)
+                pos_stmt = select(Position).where(func.lower(Position.user_address) == user_address)
                 pos_result = await self.db.execute(pos_stmt)
                 positions = pos_result.scalars().all()
                 
@@ -221,7 +221,7 @@ class LeaderboardService:
                 snapshot = LeaderboardSnapshot(
                     snapshot_date=snapshot_date,
                     timeframe=timeframe,
-                    user_address=trader['user_address'],
+                    user_address=str(trader['user_address']).lower(),
                     account_value=trader['account_value'],
                     pnl=trader['pnl'],
                     roi=trader['roi'],
@@ -381,7 +381,7 @@ class LeaderboardService:
                 )
             )
         ).where(
-            Order.user_address == user_address,
+            func.lower(Order.user_address) == str(user_address).lower(),
             Order.status.in_(['filled', 'FILLED'])
         )
         

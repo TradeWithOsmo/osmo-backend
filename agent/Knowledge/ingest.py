@@ -21,6 +21,8 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 COLLECTION_NAME = os.getenv("QDRANT_KB_COLLECTION", "osmo_knowledge_base")
+KB_EMBEDDING_MODEL = os.getenv("KB_EMBEDDING_MODEL", "qwen/qwen3-embedding-8b")
+KB_EMBEDDING_DIMS = int(os.getenv("KB_EMBEDDING_DIMS", "0"))
 CONTENT_CATS_DIR = Path(__file__).parent / "ContectCats"
 
 if not OPENROUTER_API_KEY:
@@ -43,7 +45,7 @@ def get_embedding(text: str) -> List[float]:
     """Generate embedding using OpenRouter (routed to OpenAI model)."""
     response = openai_client.embeddings.create(
         input=text,
-        model="openai/text-embedding-3-small"
+        model=KB_EMBEDDING_MODEL
     )
     return response.data[0].embedding
 
@@ -128,10 +130,14 @@ def create_collection():
     
     if not exists:
         print(f"📦 Creating collection '{COLLECTION_NAME}'...")
+        vector_size = KB_EMBEDDING_DIMS
+        if vector_size <= 0:
+            probe_vector = get_embedding("embedding-dimension-probe")
+            vector_size = len(probe_vector)
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=models.VectorParams(
-                size=1536,  # OpenAI text-embedding-3-small dimension
+                size=vector_size,
                 distance=models.Distance.COSINE
             )
         )

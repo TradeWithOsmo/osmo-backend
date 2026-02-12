@@ -75,8 +75,12 @@ def _command_symbol_key(symbol: str) -> str:
         return raw
     if "-" in raw:
         base, quote = raw.split("-", 1)
+        if base in FIAT_CODES and quote in FIAT_CODES:
+            return f"{base}{quote}"
         if quote in {"USD", "USDT"} and base not in FIAT_CODES:
             return base
+        return raw
+    if len(raw) == 6 and raw[:3] in FIAT_CODES and raw[3:] in FIAT_CODES:
         return raw
     if raw.endswith("USDT") and len(raw) > 4:
         base = raw[:-4]
@@ -87,6 +91,33 @@ def _command_symbol_key(symbol: str) -> str:
         if base and base not in FIAT_CODES:
             return base
     return raw
+
+
+def _command_symbol_keys(symbol: str) -> List[str]:
+    """
+    Return all plausible command queue keys for a symbol.
+    This prevents queue/poll mismatches after source or symbol format switches
+    (e.g. USD-CHF vs USDCHF, BTC-USD vs BTCUSDT vs BTC).
+    """
+    raw = _normalize_symbol_token(symbol)
+    candidates: List[str] = [raw]
+    candidates.extend(_symbol_aliases(raw))
+
+    if "-" in raw:
+        base, quote = raw.split("-", 1)
+        if base in FIAT_CODES and quote in FIAT_CODES:
+            candidates.append(f"{base}{quote}")
+    if len(raw) == 6 and raw[:3] in FIAT_CODES and raw[3:] in FIAT_CODES:
+        candidates.append(f"{raw[:3]}-{raw[3:]}")
+
+    out: List[str] = []
+    seen = set()
+    for candidate in candidates:
+        key = _command_symbol_key(candidate)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
 
 
 class TradingViewConnector(BaseConnector):
@@ -231,26 +262,34 @@ class TradingViewConnector(BaseConnector):
         """
         Get and clear pending commands for a symbol.
         """
-        key = f"commands:tradingview:{_command_symbol_key(symbol)}"
-        
-        # Get all items
-        # Use simple transaction logic: get all, delete key
-        # Or just lpop loop. lrange + del is safer for atomicity if script, but here simple is fine.
-        
-        # Using pipeline for atomicity
+        keys = [f"commands:tradingview:{k}" for k in _command_symbol_keys(symbol)]
+        if not keys:
+            return []
+
+        # Read+clear all alias queues in one pipeline roundtrip.
         async with self.redis_client.pipeline() as pipe:
-            pipe.lrange(key, 0, -1)
-            pipe.delete(key)
+            for key in keys:
+                pipe.lrange(key, 0, -1)
+                pipe.delete(key)
             result = await pipe.execute()
-            
-        raw_commands = result[0]
-        commands = []
-        for cmd_str in raw_commands:
-            try:
-                commands.append(json.loads(cmd_str))
-            except:
-                pass
-                
+
+        commands: List[Dict[str, Any]] = []
+        seen_ids = set()
+        # result layout: [lrange0, del0, lrange1, del1, ...]
+        for idx in range(0, len(result), 2):
+            raw_commands = result[idx] or []
+            for cmd_str in raw_commands:
+                try:
+                    parsed = json.loads(cmd_str)
+                except Exception:
+                    continue
+                cmd_id = str(parsed.get("command_id") or "").strip()
+                if cmd_id and cmd_id in seen_ids:
+                    continue
+                if cmd_id:
+                    seen_ids.add(cmd_id)
+                commands.append(parsed)
+
         return commands
 
     def _result_key(self, command_id: str) -> str:

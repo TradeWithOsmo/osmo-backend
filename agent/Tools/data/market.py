@@ -109,37 +109,46 @@ async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
         symbol: e.g. "BTC", "EURUSD"
         asset_type: "crypto" (Hyperliquid) or "rwa" (Ostium)
     """
-    asset_type = _normalize_asset_type(asset_type)
-    if asset_type == "crypto" and _looks_like_fiat_cross(symbol):
+    preferred_asset_type = _normalize_asset_type(asset_type)
+    if preferred_asset_type == "crypto" and _looks_like_fiat_cross(symbol):
         # Auto-correct common model misses, e.g. USD/CHF requested as crypto.
-        asset_type = "rwa"
-    endpoint = "/hyperliquid/prices" if asset_type == "crypto" else "/ostium/prices"
-    url = f"{CONNECTORS_API}{endpoint}"
+        preferred_asset_type = "rwa"
+
+    # If symbol is missing in preferred source, auto-fallback to the other source.
+    route_order = [preferred_asset_type, "rwa" if preferred_asset_type == "crypto" else "crypto"]
+    tried: List[str] = []
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            payload = resp.json()
-            if not isinstance(payload, list):
-                return {"error": "Unexpected price payload format."}
+            for current_asset_type in route_order:
+                if current_asset_type in tried:
+                    continue
+                tried.append(current_asset_type)
+                endpoint = "/hyperliquid/prices" if current_asset_type == "crypto" else "/ostium/prices"
+                url = f"{CONNECTORS_API}{endpoint}"
+                resp = await client.get(url)
+                resp.raise_for_status()
+                payload = resp.json()
+                if not isinstance(payload, list):
+                    continue
 
-            row = _select_market(payload, symbol)
-            if not row:
+                row = _select_market(payload, symbol)
+                if not row:
+                    continue
+
                 return {
-                    "error": f"Symbol '{symbol}' not found in {asset_type} markets.",
-                    "available_count": len(payload),
+                    "symbol": row.get("symbol", symbol),
+                    "asset_type": current_asset_type,
+                    "price": row.get("price"),
+                    "change_24h": row.get("change_24h"),
+                    "change_percent_24h": row.get("change_percent_24h"),
+                    "volume_24h": row.get("volume_24h"),
+                    "high_24h": row.get("high_24h"),
+                    "low_24h": row.get("low_24h"),
+                    "raw": row,
                 }
 
             return {
-                "symbol": row.get("symbol", symbol),
-                "asset_type": asset_type,
-                "price": row.get("price"),
-                "change_24h": row.get("change_24h"),
-                "change_percent_24h": row.get("change_percent_24h"),
-                "volume_24h": row.get("volume_24h"),
-                "high_24h": row.get("high_24h"),
-                "low_24h": row.get("low_24h"),
-                "raw": row,
+                "error": f"Symbol '{symbol}' not found in {', '.join(tried)} markets.",
             }
         except Exception as e:
             return {"error": f"Failed to fetch price: {str(e)}"}

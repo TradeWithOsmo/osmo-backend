@@ -46,3 +46,28 @@ class AgentPlan:
     tool_calls: List[ToolCall] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     blocks: List[str] = field(default_factory=list)
+
+
+@dataclass
+class RuntimePhase:
+    name: str
+    status: str = "done"
+    detail: str = ""
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RuntimePolicy:
+    flow_mode: str = "sync"
+    rag_mode: str = "secondary"
+    strict_react: bool = True
+    planner_source: str = "ai"
+
+
+@dataclass
+class AgentRuntimePacket:
+    plan: Optional[AgentPlan] = None
+    tool_results: List[ToolResult] = field(default_factory=list)
+    runtime_context: str = ""
+    phases: List[RuntimePhase] = field(default_factory=list)
+    policy: RuntimePolicy = field(default_factory=RuntimePolicy)

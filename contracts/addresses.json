@@ -1,20 +1,20 @@
 {
-    "arbitrum_sepolia": {
-        "chainId": 421614,
-        "contracts": {
-            "OsmoHub": "0x21fd7b6378f24846ad2c9b3f1e55d439e9371c33",
-            "TradingVault": "0x5df0d27eb1adf66581f41356764b4acc1b2b995e",
-            "AIVault": "0x76fd4f177eee625e7fa57f0d9f462e209e7c614e",
-            "OrderRouter": "0xa07439471644a4e4cb3999d9da0d4c74ea0fb487",
-            "PositionManager": "0x5a7ee30c09302da7a0ac5acc9da73bcbc7db19a3",
-            "SessionKeyManager": "0x3ca2ec165a6085acf2239027dd1bb31e22ca681e",
-            "Faucet": "0x40cb86cd24f4444ecb936dc04ae08d65ae678ad2",
-            "PriceFeed": "0xe7ae39ee127a1c76336376f18854d7d6ba50d7d0",
-            "SymbolRegistry": "0xa97b38d0956c3bb407b447e27fb61374c0eb3cc2",
-            "RiskManager": "0x8ac355e54b009b73aab7aaf230103f7fff096ba9",
-            "OstiumAdapter": "0x309b7245ff835892c59c2ae6b8cf4d5131de0f28",
-            "FeeManager": "0x78e13c51787144c5c179780acdf44a71d2aa374e",
-            "USDC": "0x0519dd1411d65fa508b7a68f563b173b02a4bb65"
-        }
-    }
+    "arbitrum_sepolia":  {
+                             "chainId":  421614,
+                             "contracts":  {
+                                               "OsmoHub":  "0x21fd7b6378f24846ad2c9b3f1e55d439e9371c33",
+                                               "TradingVault":  "0x5df0d27eb1adf66581f41356764b4acc1b2b995e",
+                                               "AIVault":  "0xAC6c4fe3Ce5761922770A78bA075ED0873600F0b",
+                                               "OrderRouter":  "0xa07439471644a4e4cb3999d9da0d4c74ea0fb487",
+                                               "PositionManager":  "0x5a7ee30c09302da7a0ac5acc9da73bcbc7db19a3",
+                                               "SessionKeyManager":  "0x3ca2ec165a6085acf2239027dd1bb31e22ca681e",
+                                               "Faucet":  "0x40cb86cd24f4444ecb936dc04ae08d65ae678ad2",
+                                               "PriceFeed":  "0xe7ae39ee127a1c76336376f18854d7d6ba50d7d0",
+                                               "SymbolRegistry":  "0xa97b38d0956c3bb407b447e27fb61374c0eb3cc2",
+                                               "RiskManager":  "0x8ac355e54b009b73aab7aaf230103f7fff096ba9",
+                                               "OstiumAdapter":  "0x309b7245ff835892c59c2ae6b8cf4d5131de0f28",
+                                               "FeeManager":  "0x78e13c51787144c5c179780acdf44a71d2aa374e",
+                                               "USDC":  "0x0519dd1411d65fa508b7a68f563b173b02a4bb65"
+                                           }
+                         }
 }

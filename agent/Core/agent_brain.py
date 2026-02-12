@@ -5,15 +5,20 @@ Handles model routing, prompt preparation, and execution.
 """
 
 from dataclasses import asdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+import json
 import re
+import asyncio
 from langchain_core.messages import AIMessage
 from .llm_factory import LLMFactory
+from .response_cache import TTLCache
 try:
     from .deepagents_runtime import DeepAgentsRuntime
 except Exception:  # pragma: no cover - optional dependency at runtime
     DeepAgentsRuntime = None
 from ..Orchestrator.runtime import AgenticTradingRuntime
+from ..Schema.agent_runtime import ToolResult
+from ..Tools.data.knowledge import search_knowledge_base
 try:
     from ..Tools.data.memory import add_memory_messages
 except Exception:
@@ -66,14 +71,14 @@ class AgentBrain:
             reasoning_effort=reasoning_effort,
             tool_states=tool_states
         )
-        self._groq_key_index = 0
+        self._prompt_cache = TTLCache(ttl_seconds=900, max_items=64)
+        self._response_cache = TTLCache(ttl_seconds=600, max_items=128)
+        self._provider_fallback_model_id: Optional[str] = None
         self.agent_engine = self._resolve_agent_engine(self.tool_states)
         self.agent_engine_strict = self._resolve_agent_engine_strict(self.tool_states)
 
     def _supports_multimodal(self) -> bool:
         model = (self.model_id or "").lower()
-        if model.startswith("groq/"):
-            return False
         multimodal_keywords = (
             "gpt-4o", "gpt-4.1", "gpt-4v", "vision",
             "claude", "gemini", "llava", "qwen-vl", "pixtral",
@@ -81,12 +86,46 @@ class AgentBrain:
         )
         return any(k in model for k in multimodal_keywords)
 
+    def _cache_key(self, prefix: str, *parts: str) -> str:
+        joined = "|".join(p.strip() for p in parts if p is not None)
+        return f"{prefix}:{joined}"
+
+    def _get_cached_prompt(self) -> Optional[str]:
+        key = self._cache_key("system_prompt", self.model_id, str(self.reasoning_effort or ""))
+        return self._prompt_cache.get(key)
+
+    def _set_cached_prompt(self, value: str) -> None:
+        key = self._cache_key("system_prompt", self.model_id, str(self.reasoning_effort or ""))
+        self._prompt_cache.set(key, value)
+
+    def _is_predictable_query(self, user_message: str) -> bool:
+        text = str(user_message or "").strip().lower()
+        return text in {"hi", "hello", "gm", "help"}
+
+    def _cache_response_get(self, key: str) -> Optional[Dict[str, Any]]:
+        return self._response_cache.get(key)
+
+    def _cache_response_set(self, key: str, payload: Dict[str, Any]) -> None:
+        self._response_cache.set(key, payload)
+
+    def _predictable_response_cache_key(self, user_message: str, tool_states: Dict[str, Any]) -> str:
+        market = str(
+            tool_states.get("market_symbol")
+            or tool_states.get("market")
+            or tool_states.get("market_display")
+            or ""
+        ).strip().upper()
+        timeframe = str(tool_states.get("timeframe") or "").strip().upper()
+        return self._cache_key(
+            "predictable_response",
+            self.model_id,
+            self._runtime_model_provider(),
+            str(user_message or "").strip().lower(),
+            market,
+            timeframe,
+        )
+
     def _runtime_model_provider(self) -> str:
-        model = str(self.model_id or "").strip().lower()
-        if model.startswith("groq/"):
-            return "groq"
-        if "/" in model:
-            return "openrouter"
         return "openrouter"
 
     def _parse_bool(self, value: Any, default: bool = False) -> bool:
@@ -142,6 +181,273 @@ class AgentBrain:
     def _is_knowledge_enabled(self) -> bool:
         return self._parse_bool(self.tool_states.get("knowledge_enabled"), default=True)
 
+    def _analysis_intent(self, user_message: str) -> bool:
+        text = str(user_message or "").lower()
+        return any(
+            term in text
+            for term in (
+                "analysis", "analyze", "setup", "trend", "risk", "market",
+                "indicator", "rsi", "macd", "support", "resistance", "entry",
+            )
+        )
+
+    def _content_low_confidence(self, content: str) -> bool:
+        text = str(content or "").lower()
+        markers = (
+            "data gap",
+            "data unavailable",
+            "unable to",
+            "not enough data",
+            "missing evidence",
+            "need confirmation",
+            "cannot confirm",
+            "partial evidence",
+            "partial snapshot",
+            "timed out",
+            "fallback",
+            "not completed",
+        )
+        return any(m in text for m in markers)
+
+    def _extract_confidence_score(self, content: str) -> Optional[float]:
+        text = str(content or "")
+        ratio_match = re.search(r"confidence\s*[:=]?\s*(\d{1,3})\s*/\s*100", text, re.IGNORECASE)
+        if ratio_match:
+            try:
+                value = float(ratio_match.group(1))
+                return max(0.0, min(100.0, value))
+            except Exception:
+                return None
+
+        pct_match = re.search(r"confidence\s*[:=]?\s*(\d{1,3})\s*%", text, re.IGNORECASE)
+        if pct_match:
+            try:
+                value = float(pct_match.group(1))
+                return max(0.0, min(100.0, value))
+            except Exception:
+                return None
+
+        decimal_match = re.search(r"confidence\s*[:=]?\s*(0(?:\.\d+)?|1(?:\.0+)?)", text, re.IGNORECASE)
+        if decimal_match:
+            try:
+                value = float(decimal_match.group(1)) * 100.0
+                return max(0.0, min(100.0, value))
+            except Exception:
+                return None
+        return None
+
+    def _critical_tool_health(self, tool_results: List[Any]) -> Tuple[int, int]:
+        critical_total = 0
+        critical_ok = 0
+        for item in tool_results:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "")
+                ok = bool(item.get("ok"))
+            else:
+                name = getattr(item, "name", "") or ""
+                ok = bool(getattr(item, "ok", False))
+            if name not in self._DATA_GAP_CRITICAL_TOOLS:
+                continue
+            critical_total += 1
+            if ok:
+                critical_ok += 1
+        return critical_ok, critical_total
+
+    def _runtime_tool_results(self, runtime_packet: Dict[str, Any]) -> List[ToolResult]:
+        raw = runtime_packet.get("tool_results") or []
+        output: List[ToolResult] = []
+        if not isinstance(raw, list):
+            return output
+        for item in raw:
+            if isinstance(item, ToolResult):
+                output.append(item)
+                continue
+            if isinstance(item, dict):
+                output.append(
+                    ToolResult(
+                        name=str(item.get("name") or ""),
+                        args=item.get("args") if isinstance(item.get("args"), dict) else {},
+                        ok=bool(item.get("ok")),
+                        data=item.get("data"),
+                        error=item.get("error"),
+                        latency_ms=int(item.get("latency_ms") or 0),
+                    )
+                )
+        return output
+
+    def _usage_to_int(self, value: Any) -> int:
+        try:
+            return int(value or 0)
+        except Exception:
+            return 0
+
+    def _merge_usage(self, base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+        merged = dict(base or {})
+        if not extra:
+            return merged
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
+            merged[key] = self._usage_to_int(merged.get(key)) + self._usage_to_int(extra.get(key))
+        for key, value in (extra or {}).items():
+            if key not in merged:
+                merged[key] = value
+        return merged
+
+    def _should_rag_fallback(
+        self,
+        user_message: str,
+        content: str,
+        runtime_packet: Dict[str, Any],
+        tool_states: Dict[str, Any],
+    ) -> bool:
+        if not self._parse_bool(tool_states.get("knowledge_enabled"), default=True):
+            return False
+        if str(tool_states.get("rag_mode") or "secondary").strip().lower() not in {"secondary", "fallback"}:
+            return False
+        if not self._analysis_intent(user_message):
+            return False
+
+        tool_results = self._runtime_tool_results(runtime_packet)
+        if tool_results and all(not bool(getattr(item, "ok", False)) for item in tool_results):
+            return True
+        if not tool_results:
+            return True
+
+        confidence = self._extract_confidence_score(content)
+        if confidence is not None and confidence < 60.0:
+            return True
+
+        ok_count = sum(1 for item in tool_results if bool(getattr(item, "ok", False)))
+        fail_count = len(tool_results) - ok_count
+        if len(tool_results) >= 2 and fail_count > ok_count:
+            return True
+
+        critical_ok, critical_total = self._critical_tool_health(tool_results)
+        if critical_total > 0 and critical_ok == 0:
+            return True
+
+        warnings = runtime_packet.get("warnings") or []
+        if warnings:
+            warning_text = " ".join(str(item) for item in warnings).lower()
+            if any(term in warning_text for term in ("data gap", "missing", "unavailable", "incomplete")):
+                return True
+
+        if self._content_low_confidence(content):
+            return True
+        return False
+
+    async def _run_rag_fallback(self, user_message: str) -> ToolResult:
+        try:
+            top_k = self._resolve_knowledge_top_k()
+            category = self._resolve_knowledge_category()
+            result = await search_knowledge_base(
+                query=user_message,
+                category=category,
+                top_k=top_k,
+            )
+            return ToolResult(
+                name="search_knowledge_base",
+                args={"query": user_message, "category": category, "top_k": top_k},
+                ok=True,
+                data=result,
+                error=None,
+                latency_ms=0,
+            )
+        except Exception as exc:
+            return ToolResult(
+                name="search_knowledge_base",
+                args={"query": user_message},
+                ok=False,
+                data={"error": str(exc)},
+                error=str(exc),
+                latency_ms=0,
+            )
+
+    async def _synthesize_with_rag(
+        self,
+        *,
+        user_message: str,
+        runtime_context: str,
+        rag_result: ToolResult,
+        history: Optional[List[Dict[str, Any]]],
+        attachments: Optional[List[Dict[str, Any]]],
+    ) -> Tuple[str, List[str], Dict[str, Any]]:
+        rag_payload = rag_result.data if isinstance(rag_result.data, dict) else {"result": rag_result.data}
+        rag_context = json.dumps(rag_payload, ensure_ascii=False, default=str)
+        rag_system = (
+            "RAG_CONTEXT (secondary knowledge). "
+            "Use as framework only. Do not treat as live price evidence.\n"
+            f"{rag_context}"
+        )
+
+        cached_prompt = self._get_cached_prompt()
+        if cached_prompt is None:
+            cached_prompt = self.system_prompt
+            self._set_cached_prompt(cached_prompt)
+
+        messages = [{"role": "system", "content": cached_prompt}]
+        if runtime_context:
+            messages.append({"role": "system", "content": runtime_context})
+        messages.append({"role": "system", "content": rag_system})
+        safe_history = self._sanitize_history(history)
+        if safe_history:
+            messages.extend(safe_history)
+        user_content = user_message
+        if attachments:
+            user_content = f"{user_message}\n\n[Attachments present; interpret with caution.]"
+        messages.append({"role": "user", "content": user_content})
+
+        response = await self._invoke_with_tool_choice_guard(messages)
+        usage = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            usage = response.usage_metadata
+        elif hasattr(response, "response_metadata"):
+            usage = response.response_metadata.get("token_usage", {}) or response.response_metadata.get("usage", {})
+
+        raw_content = response.content or ""
+        raw_content = await self._maybe_rewrite_for_data_gaps(raw_content, {"tool_results": [rag_result]})
+
+        def extract_tag_block(text: str, tag: str) -> tuple[Optional[str], str]:
+            pattern = re.compile(rf"<{tag}>\s*(.*?)\s*</{tag}>", re.IGNORECASE | re.DOTALL)
+            match = pattern.search(text)
+            if not match:
+                return None, text
+            inner = match.group(1).strip()
+            cleaned = (text[:match.start()] + text[match.end():]).strip()
+            return inner, cleaned
+
+        def strip_tags(text: str) -> str:
+            tags = ["<final>", "</final>", "<reasoning>", "</reasoning>", "<reasoning_summary>", "</reasoning_summary>", "<summary>", "</summary>"]
+            for t in tags:
+                text = text.replace(t, "")
+            return text.strip()
+
+        def parse_reasoning_lines(text: Optional[str]) -> List[str]:
+            if not text:
+                return []
+            lines = []
+            for raw in text.splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                line = re.sub(r"^[-*]\s+", "", line)
+                lines.append(line)
+            return lines
+
+        final_block, after_final = extract_tag_block(raw_content, "final")
+        reasoning_block, after_reasoning = extract_tag_block(after_final, "reasoning")
+        if not reasoning_block:
+            reasoning_block, after_reasoning = extract_tag_block(after_reasoning, "reasoning_summary")
+        if not reasoning_block:
+            reasoning_block, after_reasoning = extract_tag_block(after_reasoning, "summary")
+
+        content = final_block if final_block is not None else (after_reasoning or raw_content)
+        content = strip_tags(content)
+        thoughts = parse_reasoning_lines(reasoning_block)
+        if not thoughts:
+            thoughts = self._fallback_thoughts_from_runtime({"tool_results": [rag_result]})
+
+        return content, thoughts, usage
+
     async def _maybe_store_memory_interaction(self, user_message: str, assistant_content: str) -> None:
         if not self._is_memory_enabled():
             return
@@ -180,11 +486,18 @@ class AgentBrain:
         provider = self._runtime_model_provider()
         state.setdefault("runtime_model_id", self.model_id)
         state.setdefault("runtime_model_provider", provider)
+        # Inject user_address for execution tools
+        if self.user_context.get("user_address"):
+            state["user_address"] = self.user_context.get("user_address")
+        state["runtime_flow_mode"] = "sync"
+        state["rag_mode"] = "secondary"
+        state["agent_engine"] = "deepagents"
+        state["agent_engine_strict"] = True
         state.setdefault("planner_source", "ai")
         state.setdefault("planner_model_id", self.model_id)
         state.setdefault("planner_fallback", "none")
-        state.setdefault("web_observation_enabled", provider in {"groq", "openrouter"})
-        state.setdefault("web_observation_mode", "speed" if provider == "groq" else "quality")
+        state.setdefault("web_observation_enabled", True)
+        state.setdefault("web_observation_mode", "quality")
         state["memory_enabled"] = self._parse_bool(state.get("memory_enabled"), default=False)
         state["knowledge_enabled"] = self._parse_bool(state.get("knowledge_enabled"), default=self._is_knowledge_enabled())
         if state["memory_enabled"]:
@@ -200,18 +513,10 @@ class AgentBrain:
         return state
 
     def _resolve_agent_engine(self, tool_states: Optional[Dict[str, Any]]) -> str:
-        states = tool_states or {}
-        raw = str(states.get("agent_engine") or states.get("runtime_engine") or "legacy").strip().lower()
-        if raw in {"deepagents", "deep_agents", "deep-agent", "deep"}:
-            return "deepagents"
-        return "legacy"
+        return "deepagents"
 
     def _resolve_agent_engine_strict(self, tool_states: Optional[Dict[str, Any]]) -> bool:
-        states = tool_states or {}
-        raw = states.get("agent_engine_strict")
-        if raw is None:
-            return self.agent_engine == "deepagents"
-        return self._parse_bool(raw, default=self.agent_engine == "deepagents")
+        return True
 
     def _should_use_deepagents(self) -> bool:
         if self.agent_engine != "deepagents":
@@ -232,30 +537,77 @@ class AgentBrain:
         if self.agent_engine != "deepagents":
             return None
         if not self._should_use_deepagents():
-            if self.agent_engine_strict:
-                raise RuntimeError("Deep Agents engine is required but unavailable.")
-            return None
+            raise RuntimeError("Deep Agents engine is required but unavailable.")
         runtime_tool_states = self._build_runtime_tool_states()
         runtime_tool_states["agent_engine"] = "deepagents"
-        while True:
-            runner = DeepAgentsRuntime(
-                llm=self.llm,
-                system_prompt=self.system_prompt,
-                tool_states=runtime_tool_states,
-            )
-            try:
-                result = await runner.run_chat(
+        predictable_cache_key: Optional[str] = None
+        if self._is_predictable_query(user_message) and not attachments:
+            predictable_cache_key = self._predictable_response_cache_key(user_message, runtime_tool_states)
+            cached = self._cache_response_get(predictable_cache_key)
+            if isinstance(cached, dict):
+                return cached
+        runner = DeepAgentsRuntime(
+            llm=self.llm,
+            system_prompt=self.system_prompt,
+            tool_states=runtime_tool_states,
+        )
+        result = await runner.run_chat(
+            user_message=user_message,
+            history=history,
+            attachments=attachments,
+        )
+        runtime_packet = result.get("runtime") if isinstance(result, dict) else {}
+        if not isinstance(runtime_packet, dict):
+            runtime_packet = {}
+        runtime_tool_results = self._runtime_tool_results(runtime_packet)
+        runtime_packet["tool_results"] = runtime_tool_results
+
+        if self._should_rag_fallback(
+            user_message=user_message,
+            content=str(result.get("content", "") or ""),
+            runtime_packet=runtime_packet,
+            tool_states=runtime_tool_states,
+        ):
+            rag_result = await self._run_rag_fallback(user_message=user_message)
+            runtime_tool_results.append(rag_result)
+            runtime_packet["tool_results"] = runtime_tool_results
+            runtime_packet.setdefault("phases", [])
+            if isinstance(runtime_packet.get("phases"), list):
+                runtime_packet["phases"].append(
+                    {
+                        "name": "rag_secondary",
+                        "status": "done" if rag_result.ok else "error",
+                        "detail": "Secondary RAG fallback triggered after low-confidence primary answer.",
+                    }
+                )
+            if rag_result.ok:
+                synthesized_content, synthesized_thoughts, rag_usage = await self._synthesize_with_rag(
                     user_message=user_message,
+                    runtime_context=str(runtime_packet.get("runtime_context") or ""),
+                    rag_result=rag_result,
                     history=history,
                     attachments=attachments,
                 )
-                break
-            except Exception as deep_error:
-                if self._maybe_rotate_to_next_groq_key(deep_error):
-                    continue
-                if self.agent_engine_strict:
-                    raise
-                return None
+                if synthesized_content.strip():
+                    result["content"] = synthesized_content
+                if synthesized_thoughts:
+                    result["thoughts"] = synthesized_thoughts
+                result["usage"] = self._merge_usage(
+                    result.get("usage") if isinstance(result.get("usage"), dict) else {},
+                    rag_usage if isinstance(rag_usage, dict) else {},
+                )
+            else:
+                fallback_note = (
+                    " Secondary knowledge lookup failed, so this answer remains based on primary evidence only."
+                )
+                base_content = str(result.get("content", "") or "")
+                if fallback_note.strip() not in base_content:
+                    result["content"] = (base_content + fallback_note).strip()
+
+        runtime_packet["tool_results"] = [asdict(item) for item in runtime_tool_results]
+        result["runtime"] = runtime_packet
+        if predictable_cache_key:
+            self._cache_response_set(predictable_cache_key, result)
         try:
             await self._maybe_store_memory_interaction(
                 user_message=user_message,
@@ -263,9 +615,8 @@ class AgentBrain:
             )
             return result
         except Exception:
-            if self.agent_engine_strict:
-                raise
-            return None
+            # Memory write is best-effort and should not block chat.
+            return result
 
     def _sanitize_history(self, history: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         if not history:
@@ -307,32 +658,12 @@ class AgentBrain:
         )
         return any(marker in text for marker in markers)
 
-    def _maybe_rotate_to_next_groq_key(self, error: Exception) -> bool:
-        model = str(self.model_id or "").strip().lower()
-        if not model.startswith("groq/"):
-            return False
-        if not self._is_rate_limit_error(error):
-            return False
-        keys = LLMFactory.groq_api_keys()
-        if not keys:
-            return False
-        if self._groq_key_index >= len(keys) - 1:
-            return False
-        self._groq_key_index += 1
-        self.llm = LLMFactory.get_llm(
-            self.model_id,
-            reasoning_effort=self.reasoning_effort,
-            groq_key_index=self._groq_key_index,
-        )
-        return True
 
     def _build_no_tool_retry_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [{"role": "system", "content": self._NO_TOOL_RETRY_SYSTEM_NOTE}, *messages]
 
     def _fallback_thoughts_from_runtime(self, runtime_packet: Dict[str, Any]) -> List[str]:
-        tool_results = runtime_packet.get("tool_results") or []
-        if not isinstance(tool_results, list):
-            return []
+        tool_results = self._runtime_tool_results(runtime_packet)
         total = len(tool_results)
         ok = sum(1 for item in tool_results if getattr(item, "ok", False))
         failed = max(0, total - ok)
@@ -349,7 +680,7 @@ class AgentBrain:
         return thoughts[:4]
 
     def _collect_failed_data_gaps(self, runtime_packet: Dict[str, Any]) -> tuple[List[str], int]:
-        tool_results = runtime_packet.get("tool_results") or []
+        tool_results = self._runtime_tool_results(runtime_packet)
         failed_symbols: List[str] = []
         failed_count = 0
         for item in tool_results:
@@ -420,11 +751,6 @@ class AgentBrain:
         try:
             return await self.llm.ainvoke(messages)
         except Exception as error:
-            while self._maybe_rotate_to_next_groq_key(error):
-                try:
-                    return await self.llm.ainvoke(messages)
-                except Exception as switched_error:
-                    error = switched_error
             if not self._is_tool_choice_conflict_error(error):
                 raise
             retry_messages = self._build_no_tool_retry_messages(messages)
@@ -435,201 +761,55 @@ class AgentBrain:
                     return AIMessage(content=self._CONFLICT_FALLBACK_CONTENT)
                 raise
 
-    async def _astream_with_tool_choice_guard(self, messages: List[Dict[str, Any]]):
-        yielded_any = False
-        try:
-            async for chunk in self.llm.astream(messages):
-                yielded_any = True
-                yield chunk
-        except Exception as error:
-            while not yielded_any and self._maybe_rotate_to_next_groq_key(error):
-                switched_yielded = False
-                try:
-                    async for switched_chunk in self.llm.astream(messages):
-                        switched_yielded = True
-                        yield switched_chunk
-                    return
-                except Exception as rotated_error:
-                    if switched_yielded:
-                        raise
-                    error = rotated_error
-            if not self._is_tool_choice_conflict_error(error):
-                raise
-            retry_messages = self._build_no_tool_retry_messages(messages)
-            try:
-                retry_response = await self.llm.ainvoke(retry_messages)
-                yield retry_response
-            except Exception as retry_error:
-                if not self._is_tool_choice_conflict_error(retry_error):
-                    raise
-                yield AIMessage(content=self._CONFLICT_FALLBACK_CONTENT)
-        
     async def chat(self, user_message: str, history: List[Dict[str, str]] = None, attachments: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
-        Processes a user message and returns the response with metadata.
+        DeepAgents-only chat execution path.
         """
         deep_result = await self._chat_via_deepagents(
             user_message=user_message,
             history=history,
             attachments=attachments,
         )
-        if deep_result is not None:
-            return deep_result
-
-        def build_user_content(message: str, files: Optional[List[Dict[str, Any]]], allow_multimodal: bool):
-            if not files:
-                return message
-
-            MAX_INLINE_CHARS = 8000
-
-            def attachments_as_text() -> str:
-                lines = []
-                for f in files:
-                    name = f.get("name") or "attachment"
-                    mime = f.get("type") or "application/octet-stream"
-                    data = f.get("data") or f.get("data_url") or ""
-                    line = f"- {name} ({mime})"
-                    if data:
-                        line += f"\n  base64 (truncated): {data[:MAX_INLINE_CHARS]}"
-                    lines.append(line)
-                header = "Attachments:\n" + "\n".join(lines)
-                return f"{message}\n\n{header}" if message else header
-
-            has_image = any((f.get("type") or "").startswith("image/") and (f.get("data") or f.get("data_url")) for f in files)
-            if not allow_multimodal or not has_image:
-                return attachments_as_text()
-
-            parts: List[Dict[str, Any]] = []
-            if message:
-                parts.append({"type": "text", "text": message})
-            else:
-                parts.append({"type": "text", "text": "User attached files."})
-
-            for f in files:
-                name = f.get("name") or "attachment"
-                mime = f.get("type") or "application/octet-stream"
-                data = f.get("data") or f.get("data_url") or ""
-
-                if mime.startswith("image/") and data:
-                    parts.append({"type": "image_url", "image_url": {"url": data}})
-                else:
-                    label = f"[Attachment: {name} ({mime})]"
-                    if data:
-                        label += f"\nData (base64, truncated): {data[:MAX_INLINE_CHARS]}"
-                    parts.append({"type": "text", "text": label})
-
-            return parts
-        def extract_tag_block(text: str, tag: str) -> tuple[Optional[str], str]:
-            pattern = re.compile(rf"<{tag}>\s*(.*?)\s*</{tag}>", re.IGNORECASE | re.DOTALL)
-            match = pattern.search(text)
-            if not match:
-                return None, text
-            inner = match.group(1).strip()
-            cleaned = (text[:match.start()] + text[match.end():]).strip()
-            return inner, cleaned
-
-        def strip_tags(text: str) -> str:
-            tags = [
-                "<final>", "</final>",
-                "<reasoning>", "</reasoning>",
-                "<reasoning_summary>", "</reasoning_summary>",
-                "<summary>", "</summary>"
-            ]
-            for t in tags:
-                text = text.replace(t, "")
-            return text.strip()
-
-        def parse_reasoning_lines(text: Optional[str]) -> List[str]:
-            if not text:
-                return []
-            lines = []
-            for raw in text.splitlines():
-                line = raw.strip()
-                if not line:
-                    continue
-                line = re.sub(r"^[-*]\s+", "", line)
-                lines.append(line)
-            return lines
-
-        runtime_packet: Dict[str, Any] = {"plan": None, "tool_results": [], "runtime_context": ""}
-        runtime_tool_states = self._build_runtime_tool_states()
-        try:
-            runtime_packet = await self.runtime.prepare(
-                user_message=user_message,
-                history=history,
-                tool_states=runtime_tool_states,
-                user_context=self.user_context,
-            )
-        except Exception as runtime_error:
-            runtime_packet["runtime_context"] = f"AGENT_RUNTIME_ERROR: {runtime_error}"
-
-        # Prepare messages
-        messages = [{"role": "system", "content": self.system_prompt}]
-        runtime_context = runtime_packet.get("runtime_context") or ""
-        if runtime_context:
-            messages.append({"role": "system", "content": runtime_context})
-
-        safe_history = self._sanitize_history(history)
-        if safe_history:
-            messages.extend(safe_history)
-
-        user_content = build_user_content(user_message, attachments, self._supports_multimodal())
-        messages.append({"role": "user", "content": user_content})
-        
-        # Call LLM
-        response = await self._invoke_with_tool_choice_guard(messages)
-        
-        # Extract metadata if available (handle multiple formats for compatibility)
-        usage = {}
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            usage = response.usage_metadata
-        elif hasattr(response, 'response_metadata'):
-            usage = response.response_metadata.get('token_usage', {}) or response.response_metadata.get('usage', {})
-
-        raw_content = response.content or ""
-        raw_content = await self._maybe_rewrite_for_data_gaps(raw_content, runtime_packet)
-        final_block, after_final = extract_tag_block(raw_content, "final")
-        reasoning_block, after_reasoning = extract_tag_block(after_final, "reasoning")
-        if not reasoning_block:
-            reasoning_block, after_reasoning = extract_tag_block(after_reasoning, "reasoning_summary")
-        if not reasoning_block:
-            reasoning_block, after_reasoning = extract_tag_block(after_reasoning, "summary")
-
-        # Fallback: some providers may include reasoning in metadata
-        if not reasoning_block and hasattr(response, "additional_kwargs"):
-            reasoning_block = response.additional_kwargs.get("reasoning") or response.additional_kwargs.get("reasoning_content")
-
-        content = final_block if final_block is not None else (after_reasoning or raw_content)
-        content = strip_tags(content)
-        thoughts = parse_reasoning_lines(reasoning_block)
-        if not thoughts:
-            thoughts = self._fallback_thoughts_from_runtime(runtime_packet)
-        await self._maybe_store_memory_interaction(user_message=user_message, assistant_content=content)
-
-        return {
-            "content": content,
-            "usage": usage,
-            "thoughts": thoughts,
-            "runtime": {
-                "plan": asdict(runtime_packet["plan"]) if runtime_packet.get("plan") else None,
-                "tool_results": [asdict(item) for item in (runtime_packet.get("tool_results") or [])],
-                "phases": runtime_packet.get("phases") or [],
-            }
-        }
+        if deep_result is None:
+            raise RuntimeError("Deep Agents runtime returned no result.")
+        return deep_result
 
     async def stream(self, user_message: str, history: List[Dict[str, str]] = None, attachments: Optional[List[Dict[str, Any]]] = None):
         """
-        Streams the model response. Yields dict events:
-          - {"type": "delta", "content": "..."}
-          - {"type": "thoughts", "thoughts": [ ... ]}
-          - {"type": "done", "content": "...", "usage": {...}, "thoughts": [...]}
+        DeepAgents-only stream path.
         """
-        deep_result = await self._chat_via_deepagents(
-            user_message=user_message,
-            history=history,
-            attachments=attachments,
+        progress_phases = (
+            ("runtime_start", "Preparing plan and runtime context."),
+            ("runtime_wait", "Running tools and composing final answer."),
         )
-        if deep_result is not None:
+        progress_idx = 0
+        deep_task = asyncio.create_task(
+            self._chat_via_deepagents(
+                user_message=user_message,
+                history=history,
+                attachments=attachments,
+            )
+        )
+        try:
+            while not deep_task.done():
+                if progress_idx < len(progress_phases):
+                    name, detail = progress_phases[progress_idx]
+                    progress_idx += 1
+                    yield {
+                        "type": "runtime_phase",
+                        "phase": {
+                            "name": name,
+                            "status": "running",
+                            "detail": detail,
+                            "meta": {"stage": "think", "synthetic": True},
+                        },
+                    }
+                await asyncio.sleep(0.35)
+
+            deep_result = await deep_task
+            if deep_result is None:
+                raise RuntimeError("Deep Agents runtime returned no result.")
+
             runtime = deep_result.get("runtime", {}) or {}
             yield {
                 "type": "runtime",
@@ -644,270 +824,76 @@ class AgentBrain:
 
             content = str(deep_result.get("content", "") or "")
             if content:
-                yield {"type": "delta", "content": content}
+                content_len = len(content)
+                if content_len > 1800:
+                    chunk_size = 180
+                elif content_len > 900:
+                    chunk_size = 120
+                elif content_len > 400:
+                    chunk_size = 80
+                else:
+                    chunk_size = 48
+                for i in range(0, content_len, chunk_size):
+                    yield {"type": "delta", "content": content[i : i + chunk_size]}
+                    await asyncio.sleep(0)
+
             thoughts = deep_result.get("thoughts", []) or []
-            for item in thoughts:
+
+            # Inject tool results as structured thoughts for frontend visualization (e.g. HITL cards)
+            tool_thoughts = []
+            runtime_data = deep_result.get("runtime", {}) or {}
+            tool_results = runtime_data.get("tool_results") or []
+            for res in tool_results:
+                # Safely handle object or dict
+                if hasattr(res, "name"):
+                    name = res.name
+                    data = res.data
+                    ok = res.ok
+                else:
+                    name = res.get("name")
+                    data = res.get("data")
+                    ok = res.get("ok")
+
+                tool_thoughts.append({
+                    "type": "tool",
+                    "toolName": name,
+                    "title": f"Tool: {name}",
+                    "content": f"Executed {name}",
+                    "meta": data,
+                    "status": "success" if ok else "error"
+                })
+
+            all_thoughts = thoughts + tool_thoughts
+
+            if not all_thoughts:
+                all_thoughts = self._fallback_thoughts_from_runtime(runtime)
+
+            for item in all_thoughts:
                 yield {"type": "thoughts_delta", "thought": item}
-            if thoughts:
-                yield {"type": "thoughts", "thoughts": thoughts}
+                await asyncio.sleep(0)
+
+            if all_thoughts:
+                yield {"type": "thoughts", "thoughts": all_thoughts}
+
             yield {
                 "type": "done",
                 "content": content,
                 "usage": deep_result.get("usage", {}) or {},
-                "thoughts": thoughts,
+                "thoughts": all_thoughts,
             }
-            return
-
-        def build_user_content(message: str, files: Optional[List[Dict[str, Any]]], allow_multimodal: bool):
-            if not files:
-                return message
-
-            MAX_INLINE_CHARS = 8000
-
-            def attachments_as_text() -> str:
-                lines = []
-                for f in files:
-                    name = f.get("name") or "attachment"
-                    mime = f.get("type") or "application/octet-stream"
-                    data = f.get("data") or f.get("data_url") or ""
-                    line = f"- {name} ({mime})"
-                    if data:
-                        line += f"\n  base64 (truncated): {data[:MAX_INLINE_CHARS]}"
-                    lines.append(line)
-                header = "Attachments:\n" + "\n".join(lines)
-                return f"{message}\n\n{header}" if message else header
-
-            has_image = any((f.get("type") or "").startswith("image/") and (f.get("data") or f.get("data_url")) for f in files)
-            if not allow_multimodal or not has_image:
-                return attachments_as_text()
-
-            parts: List[Dict[str, Any]] = []
-            if message:
-                parts.append({"type": "text", "text": message})
-            else:
-                parts.append({"type": "text", "text": "User attached files."})
-
-            for f in files:
-                name = f.get("name") or "attachment"
-                mime = f.get("type") or "application/octet-stream"
-                data = f.get("data") or f.get("data_url") or ""
-
-                if mime.startswith("image/") and data:
-                    parts.append({"type": "image_url", "image_url": {"url": data}})
-                else:
-                    label = f"[Attachment: {name} ({mime})]"
-                    if data:
-                        label += f"\nData (base64, truncated): {data[:MAX_INLINE_CHARS]}"
-                    parts.append({"type": "text", "text": label})
-
-            return parts
-        def extract_tag_block(text: str, tag: str) -> tuple[Optional[str], str]:
-            pattern = re.compile(rf"<{tag}>\s*(.*?)\s*</{tag}>", re.IGNORECASE | re.DOTALL)
-            match = pattern.search(text)
-            if not match:
-                return None, text
-            inner = match.group(1).strip()
-            cleaned = (text[:match.start()] + text[match.end():]).strip()
-            return inner, cleaned
-
-        def parse_reasoning_lines(text: Optional[str]) -> List[str]:
-            if not text:
-                return []
-            lines = []
-            for raw in text.splitlines():
-                line = raw.strip()
-                if not line:
-                    continue
-                line = re.sub(r"^[-*]\s+", "", line)
-                lines.append(line)
-            return lines
-
-        runtime_packet: Dict[str, Any] = {"plan": None, "tool_results": [], "runtime_context": ""}
-        runtime_tool_states = self._build_runtime_tool_states()
-        try:
-            runtime_packet = await self.runtime.prepare(
-                user_message=user_message,
-                history=history,
-                tool_states=runtime_tool_states,
-                user_context=self.user_context,
-            )
-        except Exception as runtime_error:
-            runtime_packet["runtime_context"] = f"AGENT_RUNTIME_ERROR: {runtime_error}"
-
-        messages = [{"role": "system", "content": self.system_prompt}]
-        runtime_context = runtime_packet.get("runtime_context") or ""
-        if runtime_context:
-            messages.append({"role": "system", "content": runtime_context})
-        safe_history = self._sanitize_history(history)
-        if safe_history:
-            messages.extend(safe_history)
-        user_content = build_user_content(user_message, attachments, self._supports_multimodal())
-        messages.append({"role": "user", "content": user_content})
-
-        yield {
-            "type": "runtime",
-            "runtime": {
-                "plan": asdict(runtime_packet["plan"]) if runtime_packet.get("plan") else None,
-                "tool_results": [asdict(item) for item in (runtime_packet.get("tool_results") or [])],
-                "phases": runtime_packet.get("phases") or [],
-            },
-        }
-        for phase in (runtime_packet.get("phases") or []):
-            yield {"type": "runtime_phase", "phase": phase}
-
-        TAGS = [
-            "<final>", "</final>",
-            "<reasoning>", "</reasoning>",
-            "<reasoning_summary>", "</reasoning_summary>",
-            "<summary>", "</summary>"
-        ]
-        TAG_SET = {t.lower() for t in TAGS}
-
-        tag_buffer = ""
-        in_tag = False
-        inside_reasoning = False
-        content_buffer = ""
-        full_text = ""
-        reasoning_meta = ""
-        thoughts: List[str] = []
-        last_usage = {}
-        reason_line_buffer = ""
-
-        async for chunk in self._astream_with_tool_choice_guard(messages):
-            if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
-                last_usage = chunk.usage_metadata
-            elif hasattr(chunk, 'response_metadata'):
-                last_usage = chunk.response_metadata.get('token_usage', {}) or chunk.response_metadata.get('usage', {}) or last_usage
-
-            # capture reasoning metadata if provided
-            if hasattr(chunk, "additional_kwargs") and chunk.additional_kwargs:
-                reasoning_meta += chunk.additional_kwargs.get("reasoning") or chunk.additional_kwargs.get("reasoning_content") or ""
-
-            piece = getattr(chunk, "content", None) or ""
-            if not piece:
-                continue
-
-            full_text += piece
-
-            for ch in piece:
-                if in_tag:
-                    tag_buffer += ch
-                    buf_lower = tag_buffer.lower()
-                    is_prefix = any(t.startswith(buf_lower) for t in TAG_SET)
-
-                    if ch == ">" and buf_lower in TAG_SET:
-                        # handle recognized tag
-                        if buf_lower in ("<reasoning>", "<reasoning_summary>", "<summary>"):
-                            inside_reasoning = True
-                            reason_line_buffer = ""
-                        elif buf_lower in ("</reasoning>", "</reasoning_summary>", "</summary>"):
-                            inside_reasoning = False
-                            if reason_line_buffer.strip():
-                                line = reason_line_buffer.strip()
-                                line = re.sub(r"^[-*]\s+", "", line)
-                                if line:
-                                    thoughts.append(line)
-                                    yield {"type": "thoughts_delta", "thought": line}
-                            reason_line_buffer = ""
-                        # ignore <final> tags
-                        tag_buffer = ""
-                        in_tag = False
-                        continue
-
-                    if is_prefix:
-                        continue
-
-                    # Not a valid tag prefix, flush buffer as text
-                    tail = tag_buffer[-1]
-                    flush_text = tag_buffer[:-1]
-                    if flush_text:
-                        if inside_reasoning:
-                            reason_line_buffer += flush_text
-                            while "\n" in reason_line_buffer:
-                                line, reason_line_buffer = reason_line_buffer.split("\n", 1)
-                                line = line.strip()
-                                if line:
-                                    line = re.sub(r"^[-*]\s+", "", line)
-                                    if line:
-                                        thoughts.append(line)
-                                        yield {"type": "thoughts_delta", "thought": line}
-                        else:
-                            content_buffer += flush_text
-                            yield {"type": "delta", "content": flush_text}
-                    tag_buffer = ""
-                    in_tag = False
-                    if tail == "<":
-                        in_tag = True
-                        tag_buffer = "<"
-                    else:
-                        if inside_reasoning:
-                            reason_line_buffer += tail
-                        else:
-                            content_buffer += tail
-                            yield {"type": "delta", "content": tail}
-                    continue
-
-                if ch == "<":
-                    in_tag = True
-                    tag_buffer = "<"
-                    continue
-
-                if inside_reasoning:
-                    reason_line_buffer += ch
-                    while "\n" in reason_line_buffer:
-                        line, reason_line_buffer = reason_line_buffer.split("\n", 1)
-                        line = line.strip()
-                        if line:
-                            line = re.sub(r"^[-*]\s+", "", line)
-                            if line:
-                                thoughts.append(line)
-                                yield {"type": "thoughts_delta", "thought": line}
-                else:
-                    content_buffer += ch
-                    yield {"type": "delta", "content": ch}
-
-        # Flush any pending tag buffer as text
-        if in_tag and tag_buffer:
-            if inside_reasoning:
-                reason_line_buffer += tag_buffer
-            else:
-                content_buffer += tag_buffer
-                yield {"type": "delta", "content": tag_buffer}
-            tag_buffer = ""
-            in_tag = False
-
-        if inside_reasoning and reason_line_buffer.strip():
-            line = reason_line_buffer.strip()
-            line = re.sub(r"^[-*]\s+", "", line)
-            if line:
-                thoughts.append(line)
-                yield {"type": "thoughts_delta", "thought": line}
-
-        # Extract reasoning from full text tags or metadata
-        reasoning_block, cleaned = extract_tag_block(full_text, "reasoning")
-        if not reasoning_block:
-            reasoning_block, cleaned = extract_tag_block(cleaned, "reasoning_summary")
-        if not reasoning_block:
-            reasoning_block, cleaned = extract_tag_block(cleaned, "summary")
-
-        if not reasoning_block and reasoning_meta:
-            reasoning_block = reasoning_meta
-
-        # Remove <final> block if present
-        _, cleaned = extract_tag_block(cleaned, "final")
-
-        content = content_buffer.strip()
-
-        if not thoughts:
-            thoughts = parse_reasoning_lines(reasoning_block)
-            if not thoughts:
-                thoughts = self._fallback_thoughts_from_runtime(runtime_packet)
-            if thoughts:
-                for t in thoughts:
-                    yield {"type": "thoughts_delta", "thought": t}
-
-        if thoughts:
-            yield {"type": "thoughts", "thoughts": thoughts}
-
-        await self._maybe_store_memory_interaction(user_message=user_message, assistant_content=content)
-        yield {"type": "done", "content": content, "usage": last_usage, "thoughts": thoughts}
+        except asyncio.CancelledError:
+            if not deep_task.done():
+                deep_task.cancel()
+            try:
+                await deep_task
+            except asyncio.CancelledError:
+                pass
+            raise
+        except Exception:
+            if not deep_task.done():
+                deep_task.cancel()
+                try:
+                    await deep_task
+                except asyncio.CancelledError:
+                    pass
+            raise

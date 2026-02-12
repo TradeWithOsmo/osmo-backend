@@ -18,7 +18,9 @@ numpy
 ostium-python-sdk
 langchain
 langchain-openai
+langchain-nvidia-ai-endpoints
 langchain-community
 deepagents>=0.3.5
 fastembed
 qdrant-client
+langfuse

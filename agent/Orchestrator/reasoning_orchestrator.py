@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -9,9 +10,18 @@ from ..Guardrails.risk_gate import RiskGate
 from .planner import build_plan
 from .tool_registry import get_tool_registry
 from .tool_modes import WRITE_TOOL_NAMES as SHARED_WRITE_TOOL_NAMES
+from .tool_modules import (
+    render_tool_modules_for_prompt,
+    render_flow_templates_for_prompt,
+)
 from ..Schema.agent_runtime import AgentPlan
 from ..Schema.agent_runtime import PlanContext, ToolCall
 from ..Core.llm_factory import LLMFactory
+from ..Core.response_cache import TTLCache
+from ..Prompts.planner_prompt_templates import (
+    build_planner_system_prompt,
+    build_planner_user_prompt,
+)
 
 FIAT_CODES: Set[str] = {
     "USD",
@@ -47,6 +57,8 @@ SYMBOL_REQUIRED_TOOLS: Set[str] = {
     "set_symbol",
     "set_timeframe",
     "add_indicator",
+    "remove_indicator",
+    "clear_indicators",
     "focus_chart",
     "reset_view",
     "focus_latest",
@@ -87,10 +99,66 @@ class ReasoningOrchestrator:
     user message -> planner(ai/system) -> guardrails -> finalized plan.
     """
 
+    def __init__(self) -> None:
+        # Planner cache is intentionally short-lived to reduce repeated LLM calls
+        # for identical nearby requests without locking stale plans for too long.
+        self._planner_cache = TTLCache(ttl_seconds=120, max_items=256)
+
     def _extend_unique(self, target: List[str], values: List[str]) -> None:
         for value in values:
             if value and value not in target:
                 target.append(value)
+
+    def _normalize_message_for_cache(self, user_message: str) -> str:
+        text = str(user_message or "").strip().lower()
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    def _history_fingerprint(self, history: Optional[List[Dict[str, Any]]]) -> str:
+        compact: List[Dict[str, str]] = []
+        for item in (history or [])[-4:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"system", "user", "assistant"}:
+                continue
+            content = str(item.get("content") or "")[:280]
+            compact.append({"role": role, "content": content})
+        if not compact:
+            return "[]"
+        return json.dumps(compact, ensure_ascii=False, sort_keys=True)
+
+    def _should_cache_plan(self, user_message: str, tool_states: Optional[Dict[str, Any]]) -> bool:
+        text = self._normalize_message_for_cache(user_message)
+        if not text:
+            return False
+        execution_markers = ("execute", "place order", "open position", "close position")
+        if any(marker in text for marker in execution_markers):
+            return False
+        states = tool_states or {}
+        if bool(states.get("write")) and any(term in text for term in ("set symbol", "set timeframe", "draw", "indicator")):
+            return False
+        return True
+
+    def _planner_cache_key(
+        self,
+        *,
+        model_id: str,
+        reasoning_effort: Any,
+        user_message: str,
+        compact_tool_states: Dict[str, Any],
+        history: Optional[List[Dict[str, Any]]],
+    ) -> str:
+        return "|".join(
+            [
+                "planner",
+                str(model_id or "").strip(),
+                str(reasoning_effort or "").strip().lower(),
+                self._normalize_message_for_cache(user_message),
+                json.dumps(compact_tool_states or {}, ensure_ascii=False, sort_keys=True, default=str),
+                self._history_fingerprint(history),
+            ]
+        )
 
     def _normalize_planner_source(self, tool_states: Optional[Dict[str, Any]]) -> str:
         tool_states = tool_states or {}
@@ -316,6 +384,108 @@ class ReasoningOrchestrator:
     def _tool_call_key(self, call: ToolCall) -> Tuple[str, str]:
         return call.name, json.dumps(call.args, ensure_ascii=False, sort_keys=True, default=str)
 
+    def _active_market_symbol(self, tool_states: Optional[Dict[str, Any]]) -> Optional[str]:
+        states = tool_states or {}
+        raw = states.get("market_symbol") or states.get("market") or states.get("market_display")
+        return self._normalize_symbol(raw)
+
+    def _inject_flow_template_repairs(
+        self,
+        *,
+        calls: List[ToolCall],
+        symbol: Optional[str],
+        timeframe: Optional[str],
+        asset_type: str,
+        tool_states: Optional[Dict[str, Any]],
+        warnings: List[str],
+    ) -> List[ToolCall]:
+        if not calls:
+            return calls
+
+        write_enabled = bool((tool_states or {}).get("write"))
+        active_symbol = self._active_market_symbol(tool_states)
+        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_timeframe = self._normalize_timeframe(timeframe, fallback="1H")
+        tool_symbol = self._symbol_to_tool_symbol(normalized_symbol, asset_type) or normalized_symbol
+
+        def has_tool(name: str) -> bool:
+            return any(call.name == name for call in calls)
+
+        # Template: indicator_inside_symbol / indicator_outside_symbol
+        if has_tool("add_indicator") and normalized_symbol:
+            if write_enabled and active_symbol and active_symbol != normalized_symbol and not has_tool("set_symbol"):
+                calls.insert(
+                    0,
+                    ToolCall(
+                        name="set_symbol",
+                        args={"symbol": active_symbol, "target_symbol": normalized_symbol},
+                        reason="Flow template repair: sync chart symbol before indicator operations.",
+                    ),
+                )
+                self._extend_unique(
+                    warnings,
+                    [
+                        "Flow template repair applied: set_symbol added before add_indicator "
+                        "(outside-symbol indicator flow)."
+                    ],
+                )
+            if not has_tool("get_active_indicators"):
+                calls.append(
+                    ToolCall(
+                        name="get_active_indicators",
+                        args={"symbol": normalized_symbol, "timeframe": normalized_timeframe},
+                        reason="Flow template repair: verify indicator state after add_indicator.",
+                    )
+                )
+                self._extend_unique(
+                    warnings,
+                    ["Flow template repair applied: get_active_indicators added after add_indicator."],
+                )
+
+        # Template: write_high_low_inside_symbol / write_high_low_outside_symbol
+        write_ops = {"draw", "update_drawing", "setup_trade", "add_price_alert", "mark_trading_session"}
+        write_indexes = [idx for idx, call in enumerate(calls) if call.name in write_ops]
+        if write_indexes and normalized_symbol and normalized_timeframe:
+            first_write_idx = write_indexes[0]
+            if write_enabled and active_symbol and active_symbol != normalized_symbol and not has_tool("set_symbol"):
+                calls.insert(
+                    0,
+                    ToolCall(
+                        name="set_symbol",
+                        args={"symbol": active_symbol, "target_symbol": normalized_symbol},
+                        reason="Flow template repair: sync chart symbol before write action.",
+                    ),
+                )
+                first_write_idx += 1
+                self._extend_unique(
+                    warnings,
+                    [
+                        "Flow template repair applied: set_symbol added before write action "
+                        "(outside-symbol write flow)."
+                    ],
+                )
+            if not has_tool("get_high_low_levels"):
+                calls.insert(
+                    first_write_idx,
+                    ToolCall(
+                        name="get_high_low_levels",
+                        args={
+                            "symbol": tool_symbol,
+                            "timeframe": normalized_timeframe,
+                            "lookback": 7,
+                            "limit": 50,
+                            "asset_type": asset_type,
+                        },
+                        reason="Flow template repair: fetch high/low levels before write action.",
+                    ),
+                )
+                self._extend_unique(
+                    warnings,
+                    ["Flow template repair applied: get_high_low_levels added before write action."],
+                )
+
+        return calls
+
     def _repair_ai_plan(
         self,
         plan: AgentPlan,
@@ -416,6 +586,15 @@ class ReasoningOrchestrator:
                 ["AI plan had no actionable tools; bootstrap analysis tools were added."],
             )
 
+        repaired_calls = self._inject_flow_template_repairs(
+            calls=repaired_calls,
+            symbol=symbol,
+            timeframe=timeframe,
+            asset_type=asset_type,
+            tool_states=tool_states,
+            warnings=plan.warnings,
+        )
+
         seen: Set[Tuple[str, str]] = set()
         deduped: List[ToolCall] = []
         for call in repaired_calls:
@@ -455,6 +634,42 @@ class ReasoningOrchestrator:
                 fallback_timeframe = first_tf.strip()
         return AgentPlan(intent="analysis", context=PlanContext(timeframe=fallback_timeframe))
 
+    def _compact_tool_states_for_planner(self, tool_states: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Keep planner prompt focused: only include tool-state fields that
+        materially affect planning decisions.
+        """
+        states = tool_states or {}
+        keys = (
+            "write",
+            "plan_mode",
+            "strict_react",
+            "market_symbol",
+            "market",
+            "market_display",
+            "timeframe",
+            "indicators",
+            "execution",
+            "agent_engine",
+            "agent_engine_strict",
+            "memory_enabled",
+            "knowledge_enabled",
+            "web_observation_enabled",
+            "web_observation_mode",
+            "max_tool_actions",
+        )
+        compact: Dict[str, Any] = {}
+        for key in keys:
+            if key not in states:
+                continue
+            value = states.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            compact[key] = value
+        return compact
+
     def _build_plan_with_ai(
         self,
         user_message: str,
@@ -467,64 +682,31 @@ class ReasoningOrchestrator:
         llm = LLMFactory.get_llm(model_id=model_id, temperature=0.1, reasoning_effort=reasoning_effort)
 
         available_tools = sorted(get_tool_registry().keys())
-        tool_names = ", ".join(available_tools)
-
-        system_prompt = (
-            "You are an AI planner for a trading agent. "
-            "Your only task is to output a single JSON object (no markdown, no extra text). "
-            "Do not call tools. Do not include explanations outside JSON.\n"
-            "JSON schema:\n"
-            "{\n"
-            '  "intent": "analysis|execution|education|smalltalk|other",\n'
-            '  "context": {\n'
-            '    "symbol": "optional string like BTC-USD",\n'
-            '    "timeframe": "optional timeframe like 1H",\n'
-            '    "requested_execution": false,\n'
-            '    "requested_news": false,\n'
-            '    "requested_sentiment": false,\n'
-            '    "requested_whales": false,\n'
-            '    "side": "optional long|short|buy|sell",\n'
-            '    "order_type": "optional market|limit|stop_limit",\n'
-            '    "amount_usd": null,\n'
-            '    "leverage": 1,\n'
-            '    "limit_price": null,\n'
-            '    "stop_price": null,\n'
-            '    "tp": null,\n'
-            '    "sl": null\n'
-            "  },\n"
-            '  "tool_calls": [\n'
-            '    {"name": "tool_name", "args": {}, "reason": "why"}\n'
-            "  ],\n"
-            '  "warnings": ["optional warning"],\n'
-            '  "blocks": ["optional guardrail pre-warning"]\n'
-            "}\n"
-            f"Allowed tool names: {tool_names}\n"
-            "Rules:\n"
-            "- Prefer minimal tool calls needed for high-quality analysis.\n"
-            "- If user asks analysis, include read tools only.\n"
-            "- Write tools are allowed only if explicit chart mutation intent.\n"
-            "- Keep tool_calls <= 6.\n"
+        tool_modules_text = render_tool_modules_for_prompt(available_tools)
+        flow_templates_text = render_flow_templates_for_prompt()
+        compact_tool_states = self._compact_tool_states_for_planner(tool_states)
+        cache_enabled = self._should_cache_plan(user_message=user_message, tool_states=tool_states)
+        cache_key = self._planner_cache_key(
+            model_id=model_id,
+            reasoning_effort=reasoning_effort,
+            user_message=user_message,
+            compact_tool_states=compact_tool_states,
+            history=history,
         )
+        if cache_enabled:
+            cached_plan = self._planner_cache.get(cache_key)
+            if cached_plan is not None:
+                return copy.deepcopy(cached_plan)
 
-        history_block = ""
-        if isinstance(history, list) and history:
-            compact_history: List[Dict[str, str]] = []
-            for item in history[-6:]:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role") or "").strip().lower()
-                if role not in {"system", "user", "assistant"}:
-                    continue
-                content = str(item.get("content") or "")
-                compact_history.append({"role": role, "content": content[:500]})
-            if compact_history:
-                history_block = json.dumps(compact_history, ensure_ascii=False)
-
-        user_prompt = (
-            f"user_message: {user_message}\n"
-            f"tool_states: {json.dumps(tool_states, ensure_ascii=False, default=str)}\n"
-            f"history: {history_block or '[]'}\n"
-            "Output JSON now."
+        system_prompt = build_planner_system_prompt(
+            available_tools,
+            tool_modules_text=tool_modules_text,
+            flow_templates_text=flow_templates_text,
+        )
+        user_prompt = build_planner_user_prompt(
+            user_message=user_message,
+            compact_tool_states=compact_tool_states,
+            history=history,
         )
 
         response = llm.invoke(
@@ -556,12 +738,15 @@ class ReasoningOrchestrator:
             warnings=warnings,
             blocks=blocks,
         )
-        return self._repair_ai_plan(
+        repaired_plan = self._repair_ai_plan(
             plan=plan,
             user_message=user_message,
             history=history,
             tool_states=tool_states,
         )
+        if cache_enabled:
+            self._planner_cache.set(cache_key, copy.deepcopy(repaired_plan))
+        return repaired_plan
 
     def build_plan(
         self,

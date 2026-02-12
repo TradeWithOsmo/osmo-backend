@@ -62,7 +62,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 KB_EMBEDDING_PROVIDER = (
     os.getenv("KB_EMBEDDING_PROVIDER")
     or os.getenv("KB_EMBEDDER_PROVIDER")
-    or "gemini"
+    or "openrouter"
 ).strip().lower()
 if KB_EMBEDDING_PROVIDER in {"local", "fastembed", "bge"}:
     _default_embedding_model = "BAAI/bge-small-en-v1.5"
@@ -71,8 +71,8 @@ elif KB_EMBEDDING_PROVIDER == "gemini":
     _default_embedding_model = "models/text-embedding-004"
     _default_embedding_dims = "768"
 else:
-    _default_embedding_model = "openai/text-embedding-3-small"
-    _default_embedding_dims = "1536"
+    _default_embedding_model = "qwen/qwen3-embedding-8b"
+    _default_embedding_dims = "0"
 KB_EMBEDDING_MODEL = os.getenv("KB_EMBEDDING_MODEL", _default_embedding_model).strip()
 KB_EMBEDDING_DIMS = int(os.getenv("KB_EMBEDDING_DIMS", _default_embedding_dims))
 
@@ -155,6 +155,32 @@ def _resolve_collection_name() -> str:
     raise RuntimeError(f"No Qdrant collection configured. Available collections: {sorted(available)}")
 
 
+def _collection_vector_size() -> Optional[int]:
+    try:
+        info = _get_qdrant().get_collection(collection_name=_resolve_collection_name())
+    except Exception:
+        return None
+    vectors_cfg = getattr(getattr(info, "config", None), "params", None)
+    vectors = getattr(vectors_cfg, "vectors", None)
+    if vectors is None:
+        return None
+    size = getattr(vectors, "size", None)
+    if isinstance(size, int) and size > 0:
+        return size
+    if isinstance(vectors, dict):
+        for _, params in vectors.items():
+            named_size = getattr(params, "size", None)
+            if isinstance(named_size, int) and named_size > 0:
+                return named_size
+    return None
+
+
+def _resolve_target_dims() -> Optional[int]:
+    if KB_EMBEDDING_DIMS > 0:
+        return KB_EMBEDDING_DIMS
+    return _collection_vector_size()
+
+
 def _get_openai() -> OpenAI:
     """Lazy load OpenAI client."""
     if OpenAI is None:
@@ -180,27 +206,29 @@ def _get_local_embedder():
     return _local_embedder
 
 
-def _embedding_openai(text: str) -> List[float]:
+def _embedding_openai(text: str, target_dims: Optional[int] = None) -> List[float]:
     response = _get_openai().embeddings.create(
         input=text,
         model=KB_EMBEDDING_MODEL,
     )
-    return response.data[0].embedding
+    vector = response.data[0].embedding
+    return _fit_embedding_dims(vector, target_dims=target_dims)
 
 
-def _fit_embedding_dims(vector: List[float]) -> List[float]:
-    if KB_EMBEDDING_DIMS <= 0:
+def _fit_embedding_dims(vector: List[float], target_dims: Optional[int] = None) -> List[float]:
+    dims = target_dims if target_dims is not None else KB_EMBEDDING_DIMS
+    if dims <= 0:
         return vector
-    if len(vector) == KB_EMBEDDING_DIMS:
+    if len(vector) == dims:
         return vector
-    if len(vector) > KB_EMBEDDING_DIMS:
-        return vector[:KB_EMBEDDING_DIMS]
+    if len(vector) > dims:
+        return vector[:dims]
     padded = list(vector)
-    padded.extend([0.0] * (KB_EMBEDDING_DIMS - len(padded)))
+    padded.extend([0.0] * (dims - len(padded)))
     return padded
 
 
-def _embedding_local(text: str) -> List[float]:
+def _embedding_local(text: str, target_dims: Optional[int] = None) -> List[float]:
     embedder = _get_local_embedder()
     vectors = list(embedder.embed([text]))
     if not vectors:
@@ -210,10 +238,10 @@ def _embedding_local(text: str) -> List[float]:
         vector = first.tolist()
     else:
         vector = list(first)
-    return _fit_embedding_dims([float(v) for v in vector])
+    return _fit_embedding_dims([float(v) for v in vector], target_dims=target_dims)
 
 
-def _embedding_gemini(text: str) -> List[float]:
+def _embedding_gemini(text: str, target_dims: Optional[int] = None) -> List[float]:
     if not GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_API_KEY/GEMINI_API_KEY is required for gemini embedding mode.")
     primary_model = _normalize_gemini_model_name(KB_EMBEDDING_MODEL)
@@ -230,8 +258,8 @@ def _embedding_gemini(text: str) -> List[float]:
             f"{model_name}:embedContent?key={GOOGLE_API_KEY}"
         )
         payload: Dict[str, Any] = {"content": {"parts": [{"text": text}]}}
-        if model_name == "gemini-embedding-001" and KB_EMBEDDING_DIMS > 0:
-            payload["outputDimensionality"] = KB_EMBEDDING_DIMS
+        if model_name == "gemini-embedding-001" and (target_dims or KB_EMBEDDING_DIMS) > 0:
+            payload["outputDimensionality"] = target_dims or KB_EMBEDDING_DIMS
 
         try:
             response = requests.post(
@@ -245,7 +273,7 @@ def _embedding_gemini(text: str) -> List[float]:
             values = (((data or {}).get("embedding") or {}).get("values")) or []
             if not values:
                 raise RuntimeError("Gemini embedding response has no vector values.")
-            return values
+            return _fit_embedding_dims(values, target_dims=target_dims)
         except Exception as exc:
             last_error = exc
 
@@ -254,9 +282,12 @@ def _embedding_gemini(text: str) -> List[float]:
 
 def _get_embedding(text: str) -> List[float]:
     """Generate embedding for search query using configured provider."""
-    provider = (KB_EMBEDDING_PROVIDER or "gemini").strip().lower()
+    provider = (KB_EMBEDDING_PROVIDER or "openrouter").strip().lower()
+    if provider == "openrouter":
+        provider = "openai"
+    target_dims = _resolve_target_dims()
     provider_order: List[str] = [provider]
-    for candidate in ("gemini", "openai", "local"):
+    for candidate in ("openai", "gemini", "local"):
         if candidate not in provider_order:
             provider_order.append(candidate)
 
@@ -264,11 +295,11 @@ def _get_embedding(text: str) -> List[float]:
     for active in provider_order:
         try:
             if active in {"local", "fastembed", "bge"}:
-                return _embedding_local(text)
+                return _embedding_local(text, target_dims=target_dims)
             if active == "gemini":
-                return _embedding_gemini(text)
-            if active == "openai":
-                return _embedding_openai(text)
+                return _embedding_gemini(text, target_dims=target_dims)
+            if active in {"openai", "openrouter"}:
+                return _embedding_openai(text, target_dims=target_dims)
         except Exception as exc:
             last_error = exc
             continue
@@ -439,9 +470,9 @@ async def consult_strategy(question: str) -> str:
 
     if result.get("warning_code") == "zero_similarity":
         return (
-            "Knowledge base terhubung, tapi kualitas index belum valid "
-            "(semua similarity score = 0). Silakan re-ingest/re-embed dokumen "
-            "agar strategi yang diambil akurat."
+            "Knowledge base is connected, but index quality is invalid "
+            "(all similarity scores = 0). Please re-ingest/re-embed documents "
+            "to ensure accurate strategy retrieval."
         )
     
     if not result["results"]:

@@ -38,6 +38,13 @@ from connectors.hyperliquid.category_map import get_category  # Import category 
 # Import orders API
 from routers.orders import router as orders_router
 from services.price_pusher import price_pusher
+from services.session_candle_cache import (
+    session_candle_cache,
+    to_timeframe,
+    is_cache_timeframe,
+    to_hl_interval,
+    timeframe_minutes,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -77,6 +84,7 @@ connected_clients: Dict[str, Set[WebSocket]] = {}  # symbol -> set of websockets
 connected_l2book_clients: Dict[str, Set[WebSocket]] = {}
 connected_trades_clients: Dict[str, Set[WebSocket]] = {}
 latest_prices: Dict[str, dict] = {}  # symbol -> latest price data
+_COMMODITY_BASES = {"XAU", "XAG", "WTI", "BRN", "NG", "GC", "SI", "HG", "CL"}
 
 
 async def handle_hyperliquid_message(data: dict):
@@ -84,6 +92,18 @@ async def handle_hyperliquid_message(data: dict):
     global latest_prices
     
     normalized = normalize_all_mids(data)
+
+    # Keep session candle cache in sync from primary stream (in-memory only).
+    if settings.SECONDARY_HISTORY_ENABLED:
+        for symbol, payload in normalized.items():
+            try:
+                session_candle_cache.update_tick(
+                    symbol=symbol,
+                    price=float(payload.get("price", 0)),
+                    timestamp_ms=int(payload.get("timestamp", int(time.time() * 1000))),
+                )
+            except Exception:
+                continue
     
     # Preserve 24h stats from existing state
     for symbol, new_data in normalized.items():
@@ -252,6 +272,16 @@ async def handle_ostium_message(data: dict):
             continue
             
         filtered_normalized[symbol] = price_data
+
+        if settings.SECONDARY_HISTORY_ENABLED:
+            try:
+                session_candle_cache.update_tick(
+                    symbol=symbol,
+                    price=float(price_data.get("price", 0)),
+                    timestamp_ms=int(price_data.get("timestamp", int(time.time() * 1000))),
+                )
+            except Exception:
+                pass
         
         # 1. Update Candle Generator
         try:
@@ -541,15 +571,20 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Osmo Backend...")
     logger.info(f"Environment: {settings.ENV}")
     
-    # Load persistence
-    ostium_price_history.load_from_disk()
-    hl_price_history.load_from_disk("/tmp/hl_history_snapshot.json")
+    # Load persistence only when explicitly allowed (dev mode is in-memory only).
+    if not settings.WS_IN_MEMORY_ONLY:
+        ostium_price_history.load_from_disk()
+        hl_price_history.load_from_disk("/tmp/hl_history_snapshot.json")
     
-    # Initialize Persistence
-    candle_queue = asyncio.Queue()
-    ostium_candle_generator = CandleGenerator(queue=candle_queue)
-    ostium_persister = CandlePersister(queue=candle_queue)
-    await ostium_persister.start()
+    # Initialize candle generator and optional DB persister.
+    if settings.WS_IN_MEMORY_ONLY:
+        ostium_candle_generator = CandleGenerator(queue=None)
+        ostium_persister = None
+    else:
+        candle_queue = asyncio.Queue()
+        ostium_candle_generator = CandleGenerator(queue=candle_queue)
+        ostium_persister = CandlePersister(queue=candle_queue)
+        await ostium_persister.start()
     
     # Initialize Redis
     try:
@@ -580,6 +615,18 @@ async def lifespan(app: FastAPI):
     # Start Hyperliquid Stats Poller & Bootstrap
     asyncio.create_task(poll_hyperliquid_stats())
     asyncio.create_task(bootstrap_hyperliquid_history())
+
+    if settings.SECONDARY_HISTORY_ENABLED and settings.SECONDARY_HISTORY_PREWARM:
+        try:
+            logger.info("Prewarming in-memory session candle cache...")
+            await asyncio.wait_for(session_candle_cache.prewarm_default_symbols(), timeout=60.0)
+            logger.info("In-memory session candle cache prewarmed")
+        except asyncio.TimeoutError:
+            logger.warning("Session candle cache prewarm timeout; continuing in background")
+            asyncio.create_task(session_candle_cache.prewarm_default_symbols())
+        except Exception as prewarm_err:
+            logger.warning(f"Session candle cache prewarm failed: {prewarm_err}")
+            asyncio.create_task(session_candle_cache.prewarm_default_symbols())
     
     # Start Ostium API poller
     try:
@@ -678,8 +725,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"⚠️ Failed to clear tables on shutdown: {e}")
     
-    ostium_price_history.save_to_disk()
-    hl_price_history.save_to_disk("/tmp/hl_history_snapshot.json")
+    if not settings.WS_IN_MEMORY_ONLY:
+        ostium_price_history.save_to_disk()
+        hl_price_history.save_to_disk("/tmp/hl_history_snapshot.json")
     
     # Shutdown connector system
     await connector_registry.shutdown()
@@ -745,18 +793,24 @@ from routers.markets import router as markets_router
 from routers.connectors import router as connectors_router # NEW
 from routers.history import router as history_router # NEW
 from routers.watchlist import router as watchlist_router # NEW
+from routers.tools import router as tools_router
+from routers.arena import router as arena_router
 
 app.include_router(user_router, prefix="/api/user", tags=["user"])
 app.include_router(leaderboard_router, prefix="/api/leaderboard", tags=["leaderboard"])
 app.include_router(orders_router, prefix="/api/orders", tags=["orders"])
+app.include_router(arena_router, prefix="/api/arena", tags=["arena"])
 app.include_router(web3_router, prefix="/api/v1", tags=["web3"])
 app.include_router(usage_router, prefix="/api/usage", tags=["usage"])
+
 app.include_router(portfolio_router, prefix="/api/portfolio", tags=["portfolio"])
 app.include_router(agent_router, prefix="/api/agent", tags=["agent"])
 app.include_router(markets_router, prefix="/api/markets", tags=["markets"])
 app.include_router(connectors_router, prefix="/api/connectors", tags=["connectors"]) # NEW: /api/connectors/hyperliquid/prices
 app.include_router(history_router, prefix="/api/history", tags=["history"]) # NEW: /api/history
 app.include_router(watchlist_router, tags=["watchlist"]) # NEW: /api/watchlist (prefix already in router)
+app.include_router(tools_router)
+
 
 
 # Health check endpoint
@@ -807,7 +861,13 @@ async def health_check():
 
 # Candle history endpoint
 @app.get("/api/candles/{symbol}")
-async def get_candles(symbol: str, exchange: str = None, limit: int = 100):
+async def get_candles(
+    symbol: str,
+    exchange: str = None,
+    limit: int = 100,
+    resolution: str = None,
+    timeframe: str = None,
+):
     """Get OHLC candles for a symbol
     
     Args:
@@ -815,12 +875,51 @@ async def get_candles(symbol: str, exchange: str = None, limit: int = 100):
         exchange: Exchange filter - 'ostium' or 'hyperliquid' (optional)
         limit: Number of candles to return (default 100)
     """
+    tf = to_timeframe(timeframe or resolution or "1m")
+    source_hint = exchange
+    normalized_symbol = (symbol or "").upper().replace("/", "-").replace("_", "-")
+    symbol_base = normalized_symbol.split("-")[0] if normalized_symbol else ""
+
+    if settings.SECONDARY_DISABLE_COMMODITIES and symbol_base in _COMMODITY_BASES:
+        return []
+
+    # Preferred path: session-scoped in-memory cache (secondary history + primary ticks).
+    if settings.SECONDARY_HISTORY_ENABLED and is_cache_timeframe(tf):
+        try:
+            cached = await session_candle_cache.get_candles(
+                symbol=symbol,
+                timeframe=tf,
+                limit=limit,
+                source_hint=source_hint,
+            )
+            if cached:
+                return cached
+        except Exception as cache_err:
+            logger.warning(f"Session candle cache failed for {symbol} ({tf}): {cache_err}")
+
+    # Fallback path (legacy)
     # Route based on exchange parameter
     if exchange == "ostium":
         # Force Ostium Candle Generator
         if symbol in ostium_candle_generator.candles or symbol in ostium_candle_generator.current_candles:
             logger.info(f"📊 Fetching {limit} Ostium candles for {symbol}")
-            return ostium_candle_generator.get_candles(symbol, limit)
+            raw = ostium_candle_generator.get_candles(symbol, limit if tf == "1m" else limit * 30)
+            if tf == "1m":
+                return raw
+            # Reuse session cache aggregation helper via temporary local update.
+            try:
+                for item in raw:
+                    session_candle_cache.update_tick(
+                        symbol=symbol,
+                        price=float(item.get("c", item.get("close", 0))),
+                        timestamp_ms=int(item.get("t", item.get("timestamp", int(time.time() * 1000)))),
+                    )
+                aggregated = await session_candle_cache.get_candles(symbol=symbol, timeframe=tf, limit=limit, source_hint="ostium")
+                if aggregated:
+                    return aggregated
+            except Exception:
+                pass
+            return raw
         else:
             logger.warning(f"⚠️ No Ostium candles found for {symbol}")
             return []
@@ -830,10 +929,12 @@ async def get_candles(symbol: str, exchange: str = None, limit: int = 100):
         try:
             coin = symbol.split("-")[0]
             end_time = int(time.time() * 1000)
-            start_time = end_time - (limit * 60 * 1000)
+            tf_minutes = timeframe_minutes(tf)
+            start_time = end_time - (limit * tf_minutes * 60 * 1000)
             
-            logger.info(f"📊 Fetching {limit} Hyperliquid candles for {coin}")
-            candles = await http_client.get_candles(coin, interval="1m", start_time=start_time, end_time=end_time)
+            interval = to_hl_interval(tf)
+            logger.info(f"📊 Fetching {limit} Hyperliquid candles for {coin} ({interval})")
+            candles = await http_client.get_candles(coin, interval=interval, start_time=start_time, end_time=end_time)
             return candles
         except Exception as e:
             logger.error(f"Failed to fetch Hyperliquid candles for {symbol}: {e}")
@@ -848,9 +949,10 @@ async def get_candles(symbol: str, exchange: str = None, limit: int = 100):
         try:
             coin = symbol.split("-")[0]
             end_time = int(time.time() * 1000)
-            start_time = end_time - (limit * 60 * 1000)
-            
-            candles = await http_client.get_candles(coin, interval="1m", start_time=start_time, end_time=end_time)
+            tf_minutes = timeframe_minutes(tf)
+            start_time = end_time - (limit * tf_minutes * 60 * 1000)
+            interval = to_hl_interval(tf)
+            candles = await http_client.get_candles(coin, interval=interval, start_time=start_time, end_time=end_time)
             return candles
         except Exception as e:
             logger.error(f"Failed to fetch external candles for {symbol}: {e}")
@@ -1125,3 +1227,4 @@ if __name__ == "__main__":
         reload=True,  # Hot reload for development Haus
         log_level=settings.LOG_LEVEL.lower()
     )
+

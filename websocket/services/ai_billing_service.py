@@ -5,6 +5,7 @@ import math
 from typing import Any, Dict, Optional, Tuple
 
 from web3 import Web3
+from web3.exceptions import TimeExhausted
 
 try:
     from backend.websocket.config import settings
@@ -15,6 +16,9 @@ except ImportError:
         from config import settings
 
 from connectors.web3_arbitrum.connector import web3_connector
+from database.connection import AsyncSessionLocal
+from database.models import SessionKey
+from sqlalchemy import select, func
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,52 @@ class AIBillingService:
     """Compute AI usage fee and charge it to on-chain AI Vault."""
 
     USDC_BASE = 1_000_000
+
+    @staticmethod
+    def _normalize_private_key(raw_key: Optional[str]) -> Optional[str]:
+        value = str(raw_key or "").strip()
+        if not value:
+            return None
+        if value.startswith("0x"):
+            value = value[2:]
+        return value or None
+
+    def _configured_signer(self) -> Tuple[Optional[str], Optional[Any], Optional[str]]:
+        pk = self._normalize_private_key(
+            getattr(settings, "AI_BILLING_SIGNER_PRIVATE_KEY", None)
+        )
+        if not pk:
+            return None, None, None
+
+        try:
+            account = web3_connector.w3.eth.account.from_key(pk)
+            return pk, account, "billing_signer"
+        except Exception as exc:
+            logger.warning("Invalid AI_BILLING_SIGNER_PRIVATE_KEY: %s", exc)
+            return None, None, None
+
+    async def _latest_session_signer(self, user_key: str) -> Tuple[Optional[str], Optional[Any], Optional[str]]:
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(SessionKey).where(
+                        func.lower(SessionKey.user_address) == user_key,
+                        SessionKey.is_active == True
+                    ).order_by(SessionKey.created_at.desc())
+                )
+                sk_record = result.scalars().first()
+                if not sk_record or not sk_record.encrypted_private_key:
+                    return None, None, None
+
+                pk = self._normalize_private_key(sk_record.encrypted_private_key)
+                if not pk:
+                    return None, None, None
+
+                account = web3_connector.w3.eth.account.from_key(pk)
+                return pk, account, "session_key"
+        except Exception as exc:
+            logger.warning("Failed to load session signer for %s: %s", user_key, exc)
+            return None, None, None
 
     def _markup_multiplier(self) -> float:
         pct = max(0.0, float(getattr(settings, "AI_MARKUP_PERCENT", 5.0)))
@@ -111,6 +161,10 @@ class AIBillingService:
         user_address: str,
         total_cost_usd: float
     ) -> Dict[str, Any]:
+        user_key = str(user_address or "").strip().lower()
+        if not user_key:
+            return {"charged": False, "reason": "missing_user_address", "amount_usdc": 0}
+
         cost = float(total_cost_usd or 0.0)
         if cost <= 0:
             return {"charged": False, "reason": "zero_cost", "amount_usdc": 0}
@@ -121,44 +175,143 @@ class AIBillingService:
         if not settings.AI_VAULT_ADDRESS:
             return {"charged": False, "reason": "missing_ai_vault_address", "amount_usdc": 0}
 
-        if not settings.TREASURY_PRIVATE_KEY or not web3_connector.account:
-            return {"charged": False, "reason": "missing_treasury_signer", "amount_usdc": 0}
+        # Prefer session-key signer (user-side flow), fallback to configured operator signer.
+        signer_pk, signer_account, signer_source = await self._latest_session_signer(user_key)
+        if signer_account:
+            logger.info("Using User Session Key %s for billing", signer_account.address)
+        else:
+            signer_pk, signer_account, signer_source = self._configured_signer()
+            if signer_account:
+                logger.info("Using configured AI billing signer %s", signer_account.address)
+
+        if not signer_pk or not signer_account:
+            logger.warning("No billing signer available for %s", user_address)
+            return {"charged": False, "reason": "missing_billing_signer", "amount_usdc": 0}
 
         amount_usdc = max(1, int(math.ceil(cost * self.USDC_BASE)))
         try:
             ai_vault = web3_connector.get_contract("AIVault")
-            treasury = web3_connector.account
-            user_checksum = Web3.to_checksum_address(user_address)
+            user_checksum = Web3.to_checksum_address(user_key)
+            signer_checksum = Web3.to_checksum_address(signer_account.address)
+
+            function_names = {
+                entry.get("name")
+                for entry in (ai_vault.abi or [])
+                if isinstance(entry, dict) and entry.get("type") == "function"
+            }
+            has_user_deduct = "deductFeeAmountByUser" in function_names
+            use_user_side_path = has_user_deduct and (
+                signer_source == "session_key"
+                or str(signer_account.address).lower() == user_key
+            )
+
+            if use_user_side_path:
+                tx_fn = ai_vault.functions.deductFeeAmountByUser(
+                    user_checksum,
+                    amount_usdc
+                )
+            else:
+                if "deductFeeAmount" not in function_names:
+                    return {
+                        "charged": False,
+                        "amount_usdc": amount_usdc,
+                        "reason": "contract_missing_deduct_function",
+                        "signer": signer_account.address,
+                        "signer_source": signer_source,
+                    }
+
+                if bool(getattr(settings, "AI_BILLING_REQUIRE_OPERATOR_ROLE", True)):
+                    operator_role = await asyncio.to_thread(ai_vault.functions.OPERATOR_ROLE().call)
+                    has_role = await asyncio.to_thread(
+                        ai_vault.functions.hasRole(
+                            operator_role,
+                            signer_checksum,
+                        ).call
+                    )
+                    if not has_role:
+                        return {
+                            "charged": False,
+                            "amount_usdc": amount_usdc,
+                            "reason": "signer_missing_operator_role",
+                            "signer": signer_account.address,
+                            "signer_source": signer_source,
+                            "operator_role": operator_role.hex() if isinstance(operator_role, (bytes, bytearray)) else str(operator_role),
+                        }
+                tx_fn = ai_vault.functions.deductFeeAmount(
+                    user_checksum,
+                    amount_usdc
+                )
+
+            # Dry-run to catch reverts before spending gas.
+            await asyncio.to_thread(
+                tx_fn.call,
+                {"from": signer_account.address},
+            )
 
             nonce = await asyncio.to_thread(
                 web3_connector.w3.eth.get_transaction_count,
-                treasury.address,
+                signer_account.address,
                 "pending",
             )
+
             tx = await asyncio.to_thread(
-                ai_vault.functions.deductFeeAmount(
-                    user_checksum,
-                    amount_usdc
-                ).build_transaction,
+                tx_fn.build_transaction,
                 {
-                    "from": treasury.address,
+                    "from": signer_account.address,
                     "nonce": nonce,
-                    "gas": 220000,
+                    "gas": 300000,
                     "chainId": settings.CHAIN_ID,
                 },
             )
             signed = web3_connector.w3.eth.account.sign_transaction(
                 tx,
-                settings.TREASURY_PRIVATE_KEY,
+                signer_pk,
             )
             tx_hash = await asyncio.to_thread(
                 web3_connector.w3.eth.send_raw_transaction,
                 signed.raw_transaction,
             )
+            timeout_seconds = max(
+                15,
+                int(getattr(settings, "AI_BILLING_RECEIPT_TIMEOUT_SECONDS", 90) or 90),
+            )
+            receipt = await asyncio.to_thread(
+                web3_connector.w3.eth.wait_for_transaction_receipt,
+                tx_hash,
+                timeout=timeout_seconds,
+                poll_latency=1,
+            )
+
+            if not receipt or int(getattr(receipt, "status", 0) or 0) != 1:
+                return {
+                    "charged": False,
+                    "amount_usdc": amount_usdc,
+                    "tx_hash": tx_hash.hex(),
+                    "reason": "tx_reverted",
+                    "signer": signer_account.address,
+                    "signer_source": signer_source,
+                }
+
             return {
                 "charged": True,
                 "amount_usdc": amount_usdc,
                 "tx_hash": tx_hash.hex(),
+                "signer": signer_account.address,
+                "signer_source": signer_source,
+                "billing_mode": "user_side" if use_user_side_path else "operator",
+                "block_number": int(getattr(receipt, "blockNumber", 0) or 0),
+                "gas_used": int(getattr(receipt, "gasUsed", 0) or 0),
+            }
+        except TimeExhausted:
+            logger.warning(
+                "AIVault deduction timed out for %s amount=%s",
+                user_address,
+                amount_usdc,
+            )
+            return {
+                "charged": False,
+                "amount_usdc": amount_usdc,
+                "reason": "tx_timeout",
             }
         except Exception as exc:
             logger.warning(

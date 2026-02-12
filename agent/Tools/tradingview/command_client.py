@@ -54,10 +54,15 @@ def _norm_symbol(value: Any) -> str:
         if quote in {"USDT", "USD"}:
             return f"{base}-USD"
         return f"{base}-{quote}"
+    if len(text) == 6 and text[:3] in {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"} and text[3:] in {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD"}:
+        return f"{text[:3]}-{text[3:]}"
     if text.endswith("USDT") and len(text) > 4:
         return f"{text[:-4]}-USD"
     if text.endswith("USD") and len(text) > 3:
         return f"{text[:-3]}-USD"
+    # TradingView often reports crypto base ticker only (e.g. ETH) while backend expects ETH-USD.
+    if text.isalpha() and 2 <= len(text) <= 12:
+        return f"{text}-USD"
     return text
 
 
@@ -65,7 +70,17 @@ def _norm_timeframe(value: Any) -> str:
     text = _as_text(value).upper()
     if not text:
         return ""
+    compact = text.replace(" ", "")
     mapping = {
+        "1": "1m",
+        "3": "3m",
+        "5": "5m",
+        "15": "15m",
+        "30": "30m",
+        "60": "1H",
+        "240": "4H",
+        "D": "1D",
+        "W": "1W",
         "1M": "1m",
         "3M": "3m",
         "5M": "5m",
@@ -76,7 +91,7 @@ def _norm_timeframe(value: Any) -> str:
         "1D": "1D",
         "1W": "1W",
     }
-    return mapping.get(text, text)
+    return mapping.get(compact, compact)
 
 
 def _extract_state_evidence(command_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,9 +103,10 @@ def _extract_state_evidence(command_result: Dict[str, Any]) -> Dict[str, Any]:
 
     evidence: Dict[str, Any] = dict(payload)
     # Support common frontend naming variants.
-    if "applied_symbol" in payload and "symbol" not in evidence:
+    # applied_* is authoritative for post-action state, so always prefer it when present.
+    if payload.get("applied_symbol") is not None:
         evidence["symbol"] = payload.get("applied_symbol")
-    if "applied_timeframe" in payload and "timeframe" not in evidence:
+    if payload.get("applied_timeframe") is not None:
         evidence["timeframe"] = payload.get("applied_timeframe")
     if "applied_indicator" in payload and "indicator" not in evidence:
         evidence["indicator"] = payload.get("applied_indicator")
