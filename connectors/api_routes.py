@@ -169,6 +169,24 @@ async def get_tradingview_commands(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/tradingview/consumer-status")
+async def get_tradingview_consumer_status(
+    symbol: Optional[str] = Query(None),
+    stale_after_sec: float = Query(6.0, ge=1.0, le=120.0),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """
+    Return TradingView frontend command-consumer heartbeat.
+    """
+    try:
+        from connectors.tradingview import TradingViewConnector
+
+        connector = TradingViewConnector({"redis_client": redis_client})
+        return await connector.get_consumer_status(symbol=str(symbol or ""), stale_after_sec=stale_after_sec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/tradingview/commands/result")
 async def report_tradingview_command_result(
     payload: CommandResultRequest,

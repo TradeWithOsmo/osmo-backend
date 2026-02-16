@@ -70,4 +70,5 @@ class AgentRuntimePacket:
     tool_results: List[ToolResult] = field(default_factory=list)
     runtime_context: str = ""
     phases: List[RuntimePhase] = field(default_factory=list)
+    execution_graph: Dict[str, Any] = field(default_factory=dict)
     policy: RuntimePolicy = field(default_factory=RuntimePolicy)

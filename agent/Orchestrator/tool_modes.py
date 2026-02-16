@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Set
 
-WRITE_TOOL_NAMES: Set[str] = {
+CHART_WRITE_TOOL_NAMES: Set[str] = {
     "set_symbol",
     "set_timeframe",
     "add_indicator",
@@ -14,8 +14,20 @@ WRITE_TOOL_NAMES: Set[str] = {
     "setup_trade",
     "add_price_alert",
     "mark_trading_session",
-    "place_order",
 }
+
+EXECUTION_WRITE_TOOL_NAMES: Set[str] = {
+    # Order execution + portfolio mutations (side-effects)
+    "place_order",
+    "adjust_position_tpsl",
+    "adjust_all_positions_tpsl",
+    "close_position",
+    "close_all_positions",
+    "reverse_position",
+    "cancel_order",
+}
+
+WRITE_TOOL_NAMES: Set[str] = set(CHART_WRITE_TOOL_NAMES) | set(EXECUTION_WRITE_TOOL_NAMES)
 
 NAV_TOOL_NAMES: Set[str] = {
     "focus_chart",

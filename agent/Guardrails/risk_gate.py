@@ -30,6 +30,19 @@ class RiskGate:
         except Exception:
             return None
 
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "on", "yes"}:
+                return True
+            if normalized in {"0", "false", "off", "no"}:
+                return False
+            return default
+        return bool(value)
+
     @classmethod
     def evaluate(cls, text: str, tool_states: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
         tool_states = tool_states or {}
@@ -37,7 +50,7 @@ class RiskGate:
         blocks: List[str] = []
 
         wants_exec = cls.wants_execution(text)
-        execution_enabled = bool(tool_states.get("execution"))
+        execution_enabled = cls._parse_bool(tool_states.get("execution"), default=False)
 
         if wants_exec and not execution_enabled:
             blocks.append("Execution intent detected, but Auto Execution is disabled.")

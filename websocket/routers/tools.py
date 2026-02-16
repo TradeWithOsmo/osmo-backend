@@ -5,6 +5,13 @@ from auth.dependencies import get_current_user
 
 # --- Tool Imports ---
 from agent.Tools.trade_execution import place_order
+from agent.Tools.data.trade import (
+    get_positions,
+    close_position,
+    close_all_positions,
+    reverse_position,
+    cancel_order,
+)
 from agent.Tools.tradingview.actions import (
     add_indicator, 
     remove_indicator, 
@@ -113,6 +120,27 @@ class TradeExecutionRequest(BaseModel):
     sl: Optional[float] = None
     exchange: Optional[str] = "simulation"
     tool_states: Optional[Dict[str, Any]] = None
+
+
+class GetPositionsRequest(BaseModel):
+    exchange: Optional[str] = None
+
+
+class ClosePositionRequest(BaseModel):
+    symbol: str
+    price: Optional[float] = None
+    size_pct: float = 1.0
+    exchange: Optional[str] = None
+
+
+class ReversePositionRequest(BaseModel):
+    symbol: str
+    exchange: Optional[str] = None
+    price: Optional[float] = None
+
+
+class CancelOrderRequest(BaseModel):
+    order_id: str
 
 # TradingView Action Models
 class AddIndicatorRequest(BaseModel):
@@ -259,6 +287,67 @@ async def execute_trade_tool(
         exchange=request.exchange
     )
     return result
+
+
+@router.post("/trade_execution/get_positions")
+async def execute_get_positions_tool(
+    request: GetPositionsRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_address = _require_wallet_address(user)
+    return await get_positions(
+        user_address=user_address,
+        exchange=request.exchange,
+    )
+
+
+@router.post("/trade_execution/close_position")
+async def execute_close_position_tool(
+    request: ClosePositionRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_address = _require_wallet_address(user)
+    return await close_position(
+        user_address=user_address,
+        symbol=request.symbol,
+        price=request.price,
+        size_pct=request.size_pct,
+        exchange=request.exchange,
+    )
+
+
+@router.post("/trade_execution/close_all_positions")
+async def execute_close_all_positions_tool(
+    user: dict = Depends(get_current_user),
+):
+    user_address = _require_wallet_address(user)
+    return await close_all_positions(user_address=user_address)
+
+
+@router.post("/trade_execution/reverse_position")
+async def execute_reverse_position_tool(
+    request: ReversePositionRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_address = _require_wallet_address(user)
+    return await reverse_position(
+        user_address=user_address,
+        symbol=request.symbol,
+        exchange=request.exchange,
+        price=request.price,
+    )
+
+
+@router.post("/trade_execution/cancel_order")
+async def execute_cancel_order_tool(
+    request: CancelOrderRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_address = _require_wallet_address(user)
+    return await cancel_order(
+        user_address=user_address,
+        order_id=request.order_id,
+    )
 
 # 2. TradingView Actions
 @router.post("/tradingview/add_indicator")

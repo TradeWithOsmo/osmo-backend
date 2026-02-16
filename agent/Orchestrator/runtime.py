@@ -11,6 +11,15 @@ from .tool_registry import get_tool_registry
 from .reasoning_orchestrator import ReasoningOrchestrator
 from .tool_orchestrator import ToolOrchestrator
 from .execution_adapter import ExecutionAdapter
+from .human_ops_policy import (
+    build_recovery_calls,
+    default_max_tool_actions_for_mode,
+    inject_human_ops_guards,
+    normalize_recovery_mode,
+    normalize_reliability_mode,
+    recovery_attempt_cap,
+    should_attempt_recovery,
+)
 from ..Schema.agent_runtime import AgentPlan, PlanContext, ToolCall, ToolResult
 
 FIAT_CODES: Set[str] = {
@@ -27,8 +36,14 @@ FIAT_CODES: Set[str] = {
 }
 
 USER_ADDRESS_REQUIRED_TOOLS: Set[str] = {
+    "place_order",
+    "get_positions",
     "adjust_position_tpsl",
     "adjust_all_positions_tpsl",
+    "close_position",
+    "close_all_positions",
+    "reverse_position",
+    "cancel_order",
 }
 
 
@@ -37,6 +52,10 @@ class AgenticTradingRuntime:
     Codex-like runtime loop for trading assistant:
     plan -> guardrail -> tool execution -> structured context for synthesis.
     """
+    _RUNTIME_CONTEXT_BLOCK_RE = re.compile(
+        r"\[RUNTIME_CONTEXT\].*?\[/RUNTIME_CONTEXT\]",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
     def __init__(self, tool_timeout_sec: float = 8.0, max_output_chars: int = 1800):
         # Keep _registry for backward compatibility with existing tests/overrides.
@@ -51,6 +70,11 @@ class AgenticTradingRuntime:
 
     def _has_explicit_execute_phrase(self, message: str) -> bool:
         return bool(re.search(r"\b(execute|place order|send order|open position)\b", message or "", re.IGNORECASE))
+
+    def _strip_runtime_context_block(self, message: str) -> str:
+        text = str(message or "")
+        stripped = self._RUNTIME_CONTEXT_BLOCK_RE.sub("", text)
+        return stripped.strip()
 
     def _parse_bool(self, value: Any, default: bool = False) -> bool:
         if value is None:
@@ -77,6 +101,15 @@ class AgenticTradingRuntime:
             return raw.strip().lower() not in {"0", "false", "off", "no"}
         return bool(raw)
 
+    def _is_strict_write_verification_enabled(self, tool_states: Optional[Dict[str, Any]]) -> bool:
+        """
+        Balance-by-default:
+        - strict reliability mode -> strict write verification ON
+        - balanced/aggressive -> warn on missing evidence unless explicitly overridden
+        """
+        default_strict = normalize_reliability_mode((tool_states or {}).get("reliability_mode")) == "strict"
+        return self._parse_bool((tool_states or {}).get("strict_write_verification"), default=default_strict)
+
     def _build_plan_phase(
         self,
         user_message: str,
@@ -100,9 +133,13 @@ class AgenticTradingRuntime:
         user_context = user_context or {}
 
         policy_mode = str(tool_states.get("policy_mode", "advice_only")).lower()
-        execution_enabled = bool(tool_states.get("execution"))
+        execution_enabled = self._parse_bool(tool_states.get("execution"), default=False)
         # Strict auto-execute requires both enabled AND policy=auto_exec
         can_auto_execute = policy_mode == "auto_exec" and execution_enabled
+        # Hard gate: if execution tools are disabled, do not propose or execute orders.
+        # This aligns with the frontend "Auto Execution" toggle semantics.
+        if not execution_enabled:
+            return None
 
         # 1. Check intent first
         if not plan.context.requested_execution:
@@ -295,7 +332,7 @@ class AgenticTradingRuntime:
         if not symbol_calls:
             return
 
-        if not bool(tool_states.get("write")):
+        if not self._parse_bool(tool_states.get("write"), default=False):
             warning = (
                 f"Requested symbol differs from active chart ({active_symbol} -> {requested_symbol}). "
                 "Enable 'Allow Write' to sync chart symbol automatically."
@@ -361,6 +398,36 @@ class AgenticTradingRuntime:
         )
         return not any(marker in error_text for marker in non_retryable_markers)
 
+    def _is_transient_transport_failure(self, result: ToolResult) -> bool:
+        """
+        Detect transient transport failures where one extra retry is typically safe:
+        - upstream 5xx
+        - timeouts
+        - temporary connectivity issues
+        """
+        if result.ok:
+            return False
+        text = str(result.error or "").strip().lower()
+        if not text and isinstance(result.data, dict):
+            text = str(result.data.get("error") or "").strip().lower()
+        if not text:
+            return False
+        transient_markers = (
+            "http 5",
+            "http status 5",
+            "gateway timeout",
+            "timed out",
+            "timeout",
+            "connection refused",
+            "connection reset",
+            "connection aborted",
+            "network is unreachable",
+            "failed to send command",
+            "temporary unavailable",
+            "service unavailable",
+        )
+        return any(marker in text for marker in transient_markers)
+
     def _normalize_state_symbol(self, value: Any) -> str:
         raw = str(value or "").strip().upper().replace("/", "-").replace("_", "-")
         if not raw:
@@ -397,13 +464,55 @@ class AgenticTradingRuntime:
         }
         return mapping.get(text, text)
 
+    def _resolve_market_sot_symbol(self, tool_states: Optional[Dict[str, Any]]) -> str:
+        states = tool_states or {}
+        return self._normalize_state_symbol(
+            states.get("market_symbol") or states.get("market") or states.get("market_display")
+        )
+
+    def _resolve_market_sot_timeframe(self, tool_states: Optional[Dict[str, Any]]) -> str:
+        states = tool_states or {}
+        return self._normalize_state_timeframe(states.get("market_timeframe"))
+
+    def _build_verifier_sot_mismatch_warning(
+        self,
+        result: ToolResult,
+        tool_states: Optional[Dict[str, Any]],
+    ) -> Optional[str]:
+        if result.name not in {"verify_tradingview_state", "verify_indicator_present"}:
+            return None
+
+        args = result.args if isinstance(result.args, dict) else {}
+        sot_symbol = self._resolve_market_sot_symbol(tool_states)
+        sot_timeframe = self._resolve_market_sot_timeframe(tool_states)
+        verify_symbol = self._normalize_state_symbol(args.get("symbol"))
+        verify_timeframe = self._normalize_state_timeframe(args.get("timeframe"))
+
+        mismatch_fields: List[str] = []
+        mismatch_parts: List[str] = []
+        if sot_symbol and verify_symbol and verify_symbol != sot_symbol:
+            mismatch_fields.append("symbol")
+            mismatch_parts.append(f"symbol verify={verify_symbol} sot={sot_symbol}")
+        if sot_timeframe and verify_timeframe and verify_timeframe != sot_timeframe:
+            mismatch_fields.append("timeframe")
+            mismatch_parts.append(f"timeframe verify={verify_timeframe} sot={sot_timeframe}")
+
+        if not mismatch_fields:
+            return None
+        return (
+            "Verifier SoT mismatch detected for "
+            f"`{result.name}` ({', '.join(mismatch_fields)}): "
+            + "; ".join(mismatch_parts)
+            + ". This can trigger misleading verification failures."
+        )
+
     def _check_tradingview_write_precision(
         self,
         result: ToolResult,
         tool_states: Optional[Dict[str, Any]],
     ) -> Tuple[str, str]:
         data = result.data if isinstance(result.data, dict) else {}
-        strict = self._parse_bool((tool_states or {}).get("strict_write_verification"), default=True)
+        strict = self._is_strict_write_verification_enabled(tool_states)
 
         command_status = str(data.get("status") or "").strip().lower()
         command_result = data.get("command_result") if isinstance(data.get("command_result"), dict) else {}
@@ -563,6 +672,13 @@ class AgenticTradingRuntime:
         raw_mode = str(tool_states.get("web_observation_mode") or "").strip().lower()
         if raw_mode in {"quality", "speed", "budget"}:
             return raw_mode
+
+        # Provider-aware defaults:
+        # - Groq is typically latency/cost optimized, so prefer speed mode unless user overrides.
+        provider = str(tool_states.get("runtime_model_provider") or "").strip().lower()
+        if provider in {"groq"}:
+            return "speed"
+
         return "quality"
 
     def _is_memory_enabled(self, tool_states: Optional[Dict[str, Any]]) -> bool:
@@ -1002,6 +1118,64 @@ class AgenticTradingRuntime:
         )
         return "\n".join(lines).strip()
 
+    def _build_execution_graph(self, phases: List[Dict[str, Any]]) -> Dict[str, Any]:
+        phase_items = phases or []
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+        status_counts: Dict[str, int] = {}
+
+        for idx, item in enumerate(phase_items, start=1):
+            phase = item if isinstance(item, dict) else {"name": str(item)}
+            node_id = f"phase_{idx}"
+            status = str(phase.get("status") or "unknown")
+            status_counts[status] = int(status_counts.get(status, 0) or 0) + 1
+            nodes.append(
+                {
+                    "id": node_id,
+                    "seq": idx,
+                    "name": str(phase.get("name") or f"phase_{idx}"),
+                    "status": status,
+                    "detail": str(phase.get("detail") or ""),
+                    "meta": phase.get("meta") if isinstance(phase.get("meta"), dict) else {},
+                }
+            )
+            if idx > 1:
+                edges.append(
+                    {
+                        "source": f"phase_{idx - 1}",
+                        "target": node_id,
+                        "type": "next",
+                    }
+                )
+
+        error_nodes = [
+            node
+            for node in nodes
+            if str(node.get("status") or "").lower() in {"error", "failed", "fail"}
+        ]
+        running_nodes = [
+            node
+            for node in nodes
+            if str(node.get("status") or "").lower() in {"running", "in_progress"}
+        ]
+        if error_nodes:
+            overall_status = "error"
+        elif running_nodes:
+            overall_status = "running"
+        else:
+            overall_status = "done"
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "summary": {
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+                "status": overall_status,
+                "status_counts": status_counts,
+            },
+        }
+
     async def prepare(
         self,
         user_message: str,
@@ -1010,7 +1184,12 @@ class AgenticTradingRuntime:
         user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         tool_states = tool_states or {}
+        clean_user_message = self._strip_runtime_context_block(user_message)
+        user_message = clean_user_message or str(user_message or "").strip()
         rag_mode = self._resolve_rag_mode(tool_states)
+        reliability_mode = normalize_reliability_mode((tool_states or {}).get("reliability_mode"))
+        recovery_mode = normalize_recovery_mode((tool_states or {}).get("recovery_mode"))
+        recovery_cap = recovery_attempt_cap(tool_states, reliability_mode=reliability_mode)
         phases: List[Dict[str, Any]] = []
 
         def phase(
@@ -1222,7 +1401,11 @@ class AgenticTradingRuntime:
         plan_mode_enabled = self._is_plan_mode_enabled(tool_states)
         if not plan_mode_enabled:
             fallback_timeframe = "1H"
-            raw_tf = tool_states.get("timeframe")
+            raw_tf = tool_states.get("market_timeframe")
+            if raw_tf is None:
+                raw_tf = tool_states.get("preferred_timeframes")
+            if raw_tf is None:
+                raw_tf = tool_states.get("timeframe")
             if isinstance(raw_tf, str) and raw_tf.strip():
                 fallback_timeframe = raw_tf.strip()
             elif isinstance(raw_tf, list) and raw_tf:
@@ -1267,6 +1450,8 @@ class AgenticTradingRuntime:
             ensure_phase("tool_check")
             ensure_phase("tool_retry_think")
             ensure_phase("tool_retry_scheduled")
+            ensure_phase("tool_recovery_think")
+            ensure_phase("tool_recovery_scheduled")
             ensure_phase("tool_followup")
             ensure_phase("tool_round_complete")
             ensure_phase("execution_adapter")
@@ -1277,6 +1462,7 @@ class AgenticTradingRuntime:
                 "tool_results": tool_results,
                 "runtime_context": runtime_context,
                 "phases": phases,
+                "execution_graph": self._build_execution_graph(phases),
             }
 
         strict_react = True  # Enforced synchronous ReAct: Think -> Act(1) -> Observe
@@ -1361,16 +1547,35 @@ class AgenticTradingRuntime:
                     "stage": "plan",
                 },
             )
+        injected_human_guards = inject_human_ops_guards(
+            plan=plan,
+            tool_states=tool_states,
+            available_tools=set(self._registry.keys()),
+        )
+        if injected_human_guards > 0:
+            phase(
+                "plan_human_ops",
+                "done",
+                f"Injected {injected_human_guards} human-ops guard tool call(s).",
+                {"inserted": injected_human_guards},
+            )
 
         tool_results: List[ToolResult] = [*memory_prefetched, *knowledge_prefetched]
         if not plan.blocks:
-            max_tool_calls = int((tool_states or {}).get("max_tool_calls", 10) or 10)
+            raw_max_tool_calls: Any = (tool_states or {}).get("max_tool_calls")
+            if raw_max_tool_calls is None:
+                raw_max_tool_calls = (tool_states or {}).get("max_tool_actions")
+            if raw_max_tool_calls is None:
+                raw_max_tool_calls = default_max_tool_actions_for_mode(reliability_mode)
+            max_tool_calls = int(raw_max_tool_calls or 10)
             max_tool_calls = max(1, min(max_tool_calls, 16))
             executed_keys: Set[Tuple[str, str]] = set()
             executed_actions = 0
             pending_calls: List[ToolCall] = []
             pending_keys: Set[Tuple[str, str]] = set()
             retry_attempts: Dict[Tuple[str, str], int] = {}
+            recovery_attempts: Dict[Tuple[str, str], int] = {}
+            forced_reexec_keys: Set[Tuple[str, str]] = set()
 
             retry_failed_tools = self._parse_bool((tool_states or {}).get("retry_failed_tools"), default=True)
             max_retry_attempts = int((tool_states or {}).get("tool_retry_max_attempts", 2) or 2)
@@ -1389,6 +1594,27 @@ class AgenticTradingRuntime:
                 1,
             )
             has_write_calls = any(self.tool_orchestrator.classify_tool_mode(call.name) == "write" for call in plan.tool_calls)
+            if has_write_calls:
+                min_write_budget = min(
+                    16,
+                    max(default_max_tool_actions_for_mode(reliability_mode), len(plan.tool_calls)),
+                )
+                if max_tool_calls < min_write_budget:
+                    phase(
+                        "write_budget_floor",
+                        "done",
+                        (
+                            f"Raised max_tool_calls floor from {max_tool_calls} to {min_write_budget} "
+                            "for write-heavy human-ops flow."
+                        ),
+                        {
+                            "original_max_tool_calls": max_tool_calls,
+                            "effective_max_tool_calls": min_write_budget,
+                            "planned_tools": len(plan.tool_calls),
+                            "reliability_mode": reliability_mode,
+                        },
+                    )
+                    max_tool_calls = min_write_budget
             write_txn_id = uuid.uuid4().hex if has_write_calls else None
             if write_txn_id:
                 phase(
@@ -1398,12 +1624,21 @@ class AgenticTradingRuntime:
                     {"write_txn_id": write_txn_id},
                 )
 
-            def enqueue_call(candidate: ToolCall) -> None:
+            def enqueue_call(candidate: ToolCall, *, front: bool = False, force_reexec: bool = False) -> None:
                 key = self._tool_call_key(candidate)
-                if key in executed_keys or key in pending_keys:
+                if key in pending_keys:
+                    if force_reexec:
+                        forced_reexec_keys.add(key)
                     return
-                pending_calls.append(candidate)
+                if key in executed_keys and not force_reexec:
+                    return
+                if front:
+                    pending_calls.insert(0, candidate)
+                else:
+                    pending_calls.append(candidate)
                 pending_keys.add(key)
+                if force_reexec:
+                    forced_reexec_keys.add(key)
 
             for initial_call in plan.tool_calls:
                 enqueue_call(initial_call)
@@ -1435,7 +1670,8 @@ class AgenticTradingRuntime:
                     self._inject_user_address_for_tool(call, user_context=user_context)
                     key = self._tool_call_key(call)
                     pending_keys.discard(key)
-                    if key in executed_keys:
+                    is_forced_reexec = key in forced_reexec_keys
+                    if key in executed_keys and not is_forced_reexec:
                         continue
                     if executed_actions >= max_tool_calls:
                         break
@@ -1545,12 +1781,26 @@ class AgenticTradingRuntime:
                             "max_attempts": max_attempts_for_call,
                         },
                     )
+                    verifier_sot_warning = self._build_verifier_sot_mismatch_warning(
+                        result=last_result,
+                        tool_states=tool_states,
+                    )
+                    if verifier_sot_warning and verifier_sot_warning not in plan.warnings:
+                        plan.warnings.append(verifier_sot_warning)
 
                     scheduled_retry = False
+                    scheduled_recovery = False
                     if not last_result.ok and retry_failed_tools:
                         should_retry = self._is_retryable_tool_result(last_result)
+                        effective_max_attempts_for_call = max_attempts_for_call
+                        if (
+                            tool_mode == "write"
+                            and effective_max_attempts_for_call < 2
+                            and self._is_transient_transport_failure(last_result)
+                        ):
+                            effective_max_attempts_for_call = 2
                         has_budget = executed_actions < max_tool_calls
-                        has_attempt_left = attempt_no < max_attempts_for_call
+                        has_attempt_left = attempt_no < effective_max_attempts_for_call
                         phase(
                             "tool_retry_think",
                             "done",
@@ -1562,7 +1812,7 @@ class AgenticTradingRuntime:
                                 "tool": last_result.name,
                                 "loop": loops,
                                 "attempt": attempt_no,
-                                "max_attempts": max_attempts_for_call,
+                                "max_attempts": effective_max_attempts_for_call,
                                 "mode": tool_mode,
                                 "retryable": should_retry,
                                 "has_budget": has_budget,
@@ -1578,20 +1828,84 @@ class AgenticTradingRuntime:
                                 "running",
                                 (
                                     f"Loop {loops}: Schedule retry for `{last_result.name}` "
-                                    f"(attempt {attempt_no + 1}/{max_attempts_for_call})."
+                                    f"(attempt {attempt_no + 1}/{effective_max_attempts_for_call})."
                                 ),
                                 {
                                     "tool": last_result.name,
                                     "loop": loops,
                                     "attempt": attempt_no + 1,
-                                    "max_attempts": max_attempts_for_call,
+                                    "max_attempts": effective_max_attempts_for_call,
                                     "mode": tool_mode,
                                 },
                             )
 
-                    if not scheduled_retry:
+                    if not last_result.ok and not scheduled_retry:
+                        can_recover = should_attempt_recovery(
+                            call=call,
+                            tool_mode=tool_mode,
+                            result=last_result,
+                            recovery_mode=recovery_mode,
+                        )
+                        recovery_used = recovery_attempts.get(key, 0)
+                        recovery_has_attempt = recovery_used < recovery_cap
+                        recovery_has_budget = executed_actions < max_tool_calls
+                        phase(
+                            "tool_recovery_think",
+                            "done",
+                            (
+                                f"Loop {loops}: Think about recovery for `{last_result.name}` "
+                                f"(mode={recovery_mode}, enabled={can_recover}, next_attempt={recovery_used + 1 if recovery_has_attempt else recovery_used})."
+                            ),
+                            {
+                                "tool": last_result.name,
+                                "loop": loops,
+                                "mode": recovery_mode,
+                                "reliability_mode": reliability_mode,
+                                "attempt": recovery_used,
+                                "max_attempts": recovery_cap,
+                                "enabled": can_recover,
+                                "has_budget": recovery_has_budget,
+                                "has_attempt_left": recovery_has_attempt,
+                            },
+                        )
+                        if can_recover and recovery_has_attempt and recovery_has_budget:
+                            recovery_calls = [
+                                item
+                                for item in build_recovery_calls(
+                                    failed_call=call,
+                                    plan=plan,
+                                    tool_states=tool_states,
+                                    result=last_result,
+                                )
+                                if item.name in self._registry
+                            ]
+                            if recovery_calls:
+                                recovery_attempts[key] = recovery_used + 1
+                                scheduled_recovery = True
+                                # Prioritize recovery sequence + original call ahead of remaining queue.
+                                recovery_queue = [*recovery_calls, call]
+                                for recovery_call in reversed(recovery_queue):
+                                    enqueue_call(recovery_call, front=True, force_reexec=True)
+                                phase(
+                                    "tool_recovery_scheduled",
+                                    "running",
+                                    (
+                                        f"Loop {loops}: Scheduled {len(recovery_calls)} recovery step(s) "
+                                        f"before retrying `{last_result.name}`."
+                                    ),
+                                    {
+                                        "tool": last_result.name,
+                                        "loop": loops,
+                                        "recovery_attempt": recovery_used + 1,
+                                        "recovery_max_attempts": recovery_cap,
+                                        "recovery_tools": [item.name for item in recovery_calls],
+                                    },
+                                )
+
+                    if not scheduled_retry and not scheduled_recovery:
                         executed_keys.add(key)
                         retry_attempts.pop(key, None)
+                        forced_reexec_keys.discard(key)
 
                 followups = self._infer_followup_calls(
                     user_message=user_message,
@@ -1679,6 +1993,9 @@ class AgenticTradingRuntime:
         ensure_phase("tool_check")
         ensure_phase("tool_retry_think")
         ensure_phase("tool_retry_scheduled")
+        ensure_phase("tool_recovery_think")
+        ensure_phase("tool_recovery_scheduled")
+        ensure_phase("plan_human_ops")
         ensure_phase("tool_followup")
         ensure_phase("tool_round_complete")
         ensure_phase("execution_adapter")
@@ -1689,4 +2006,5 @@ class AgenticTradingRuntime:
             "tool_results": tool_results,
             "runtime_context": runtime_context,
             "phases": phases,
+            "execution_graph": self._build_execution_graph(phases),
         }

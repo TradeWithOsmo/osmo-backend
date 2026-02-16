@@ -50,6 +50,22 @@ _TOOL_MODULES: Dict[str, ToolModule] = {
         snippet='add_indicator(symbol="SOL-USD", name="RSI")',
         category="write",
     ),
+    "verify_indicator_present": ToolModule(
+        name="verify_indicator_present",
+        description="Verify an indicator is present on the active chart before reading indicator values.",
+        inputs="symbol, name, timeframe?, timeout_sec?",
+        outputs="present(bool), active_indicators[], attempts",
+        snippet='verify_indicator_present(symbol="SOL-USD", name="RSI", timeframe="1H")',
+        category="read",
+    ),
+    "verify_tradingview_state": ToolModule(
+        name="verify_tradingview_state",
+        description="Verify TradingView frontend state after write-tools (symbol/timeframe/indicators/drawings/trade setup).",
+        inputs="symbol, timeframe?, require_indicators?, forbid_indicators?, require_drawings?, require_trade_setup?, timeout_sec?",
+        outputs="verified(bool), active_indicators[], drawing_tags[], trade_setup{}",
+        snippet='verify_tradingview_state(symbol="SOL-USD", timeframe="1H", require_indicators=["RSI"])',
+        category="read",
+    ),
     "remove_indicator": ToolModule(
         name="remove_indicator",
         description="Remove a single indicator from chart.",
@@ -134,9 +150,12 @@ _TOOL_MODULES: Dict[str, ToolModule] = {
     "place_order": ToolModule(
         name="place_order",
         description="Execute a live trade order (market/limit).",
-        inputs="symbol, side, amount_usd, leverage?, order_type?, price?, stop_price?, tp?, sl?, exchange?, tool_states?",
+        inputs=(
+            "symbol, side, amount_usd, leverage?, order_type?, price?, stop_price?, tp?, sl?, "
+            "exchange?, reduce_only?, post_only?, time_in_force?, trigger_condition?, tool_states?"
+        ),
         outputs="status, order_id, fills[]",
-        snippet='place_order(symbol="SOL-USD", side="long", amount_usd=100, leverage=5, order_type="market")',
+        snippet='place_order(symbol="SOL-USD", side="buy", amount_usd=100, leverage=5, order_type="market")',
         category="write",
     ),
     "add_price_alert": ToolModule(
@@ -267,13 +286,28 @@ _TOOL_MODULES: Dict[str, ToolModule] = {
         snippet='search_sentiment(symbol="SOL")',
         category="read",
     ),
+    "get_positions": ToolModule(
+        name="get_positions",
+        description="Get open positions and account summary for current user.",
+        inputs="user_address, exchange?",
+        outputs="status, result.positions[], result.summary",
+        snippet='get_positions(user_address="0x..", exchange="onchain")',
+        category="read",
+    ),
     "adjust_position_tpsl": ToolModule(
         name="adjust_position_tpsl",
         description="Adjust TP/SL for one open position.",
-        inputs="user_address, symbol, tp?, sl?, exchange?",
-        outputs="status, data.position_update",
-        snippet='adjust_position_tpsl(user_address="0x..", symbol="SOL-USD", tp="130", sl="118")',
-        category="read",
+        inputs=(
+            "user_address, symbol, tp?, sl?, exchange?, "
+            "size_tokens? (fixed TP/SL close size), "
+            "tp_limit_price? (optional), sl_limit_price? (optional)"
+        ),
+        outputs="status, result{symbol,tp,sl,risk_config}",
+        snippet=(
+            'adjust_position_tpsl(user_address="0x..", symbol="SOL-USD", tp="3%", sl="100USD", '
+            "size_tokens=0.5, tp_limit_price=123.4, sl_limit_price=118.9)"
+        ),
+        category="write",
     ),
     "adjust_all_positions_tpsl": ToolModule(
         name="adjust_all_positions_tpsl",
@@ -281,7 +315,39 @@ _TOOL_MODULES: Dict[str, ToolModule] = {
         inputs="user_address, tp?/sl?/tp_pct?/sl_pct?",
         outputs="status, data.bulk_update",
         snippet='adjust_all_positions_tpsl(user_address="0x..", tp_pct=3.0, sl_pct=1.5)',
-        category="read",
+        category="write",
+    ),
+    "close_position": ToolModule(
+        name="close_position",
+        description="Close an open position (market or limit if price is provided).",
+        inputs="user_address, symbol, price?, size_pct?, exchange?",
+        outputs="status, result",
+        snippet='close_position(user_address="0x..", symbol="BTC-USD", size_pct=1.0)',
+        category="write",
+    ),
+    "close_all_positions": ToolModule(
+        name="close_all_positions",
+        description="Close all open positions for a user (market closes).",
+        inputs="user_address",
+        outputs="status, result.results[]",
+        snippet='close_all_positions(user_address="0x..")',
+        category="write",
+    ),
+    "reverse_position": ToolModule(
+        name="reverse_position",
+        description="Reverse a position: close existing then open opposite.",
+        inputs="user_address, symbol, exchange?, price?",
+        outputs="status, result",
+        snippet='reverse_position(user_address="0x..", symbol="BTC-USD")',
+        category="write",
+    ),
+    "cancel_order": ToolModule(
+        name="cancel_order",
+        description="Cancel a pending order by id.",
+        inputs="user_address, order_id",
+        outputs="status, result",
+        snippet='cancel_order(user_address="0x..", order_id="...")',
+        category="write",
     ),
     "add_memory": ToolModule(
         name="add_memory",
@@ -520,32 +586,36 @@ _TOOL_MODULES: Dict[str, ToolModule] = {
 
 _FLOW_TEMPLATES: List[str] = [
     (
-        "indicator_inside_symbol: "
-        "list_supported_indicator_aliases(optional) -> add_indicator -> get_active_indicators "
-        "(use when requested symbol == active chart symbol)."
+        "tv_indicator_cycle_inside_symbol: "
+        "list_supported_indicator_aliases(optional) -> add_indicator -> verify_indicator_present -> "
+        "get_indicators(or get_active_indicators) -> remove_indicator(or clear_indicators) -> "
+        "verify_tradingview_state(require_indicators=[]). "
+        "(human flow: add -> verify -> read -> remove)."
     ),
     (
-        "indicator_outside_symbol: "
-        "set_symbol -> list_supported_indicator_aliases(optional) -> add_indicator -> get_active_indicators "
-        "(use when requested symbol != active chart symbol)."
+        "tv_indicator_cycle_outside_symbol: "
+        "set_symbol -> verify_tradingview_state(symbol/timeframe) -> list_supported_indicator_aliases(optional) -> "
+        "add_indicator -> verify_indicator_present -> get_indicators(or get_active_indicators) -> "
+        "remove_indicator(or clear_indicators)."
     ),
     (
-        "write_high_low_inside_symbol: "
-        "get_high_low_levels -> draw/update_drawing/setup_trade/add_price_alert/mark_trading_session "
-        "(write support/resistance with measured levels)."
+        "tv_write_levels_inside_symbol: "
+        "get_high_low_levels -> draw/update_drawing/setup_trade/add_price_alert/mark_trading_session -> "
+        "verify_tradingview_state(require_drawings or require_trade_setup)."
     ),
     (
-        "write_high_low_outside_symbol: "
-        "set_symbol -> get_high_low_levels -> draw/update_drawing/setup_trade/add_price_alert/mark_trading_session "
-        "(switch symbol first, then calculate levels, then write)."
+        "tv_write_levels_outside_symbol: "
+        "set_symbol -> verify_tradingview_state(symbol/timeframe) -> get_high_low_levels -> "
+        "draw/update_drawing/setup_trade/add_price_alert/mark_trading_session -> verify_tradingview_state(...)."
     ),
     (
-        "setup_trade_validation_invalidation_flow: "
-        "setup_trade(side,entry,tp/sl,gp/gl) -> optional add_price_alert(gp/gl) -> "
-        "TP/SL remain standard trade-management levels -> "
-        "set GP near closest validation point and GL near closest invalidation point -> "
-        "if GP/validation touched then generate validation decision -> "
-        "if GL/invalidation touched then generate invalidation decision."
+        "tv_setup_trade_human: "
+        "setup_trade -> verify_tradingview_state(require_trade_setup) -> optional add_price_alert(gp/gl). "
+        "TP/SL remain standard trade-management levels. "
+        "Set GP near closest validation point and GL near closest invalidation point. "
+        "If GP/validation touched then generate validation decision. "
+        "If GL/invalidation touched then generate invalidation decision. "
+        "(human flow: place objects -> verify they're on chart -> then continue)."
     ),
     (
         "setup_trade_trigger_rules: "
@@ -555,14 +625,162 @@ _FLOW_TEMPLATES: List[str] = [
         f"invalidation trigger price {TRADE_DECISION_COMPARATORS.get('short', {}).get('invalidation', '>=')} GL."
     ),
     (
-        "inspect_more_candles_inside_symbol: "
-        "set_timeframe -> focus_latest -> zoom(range) -> pan(time,left) -> hover_candle -> inspect_cursor -> capture_moment"
+        "tv_inspect_more_candles_inside_symbol: "
+        "focus_chart -> ensure_mode(nav) -> set_timeframe -> focus_latest -> zoom(range) -> pan(time,left) -> "
+        "hover_candle -> inspect_cursor -> capture_moment"
     ),
     (
-        "inspect_more_candles_outside_symbol: "
-        "set_symbol -> set_timeframe -> focus_latest -> zoom(range) -> pan(time,left) -> hover_candle -> inspect_cursor -> capture_moment"
+        "tv_inspect_more_candles_outside_symbol: "
+        "focus_chart -> ensure_mode(nav) -> set_symbol -> verify_tradingview_state(symbol) -> set_timeframe -> "
+        "focus_latest -> zoom(range) -> pan(time,left) -> hover_candle -> inspect_cursor -> capture_moment"
+    ),
+    (
+        "tv_human_switch_symbol_then_indicator: "
+        "set_symbol(BTC) -> verify_tradingview_state(symbol=BTC) -> add_indicator -> verify_indicator_present -> "
+        "get_indicators -> remove_indicator -> set_symbol(ETH) -> verify_tradingview_state(symbol=ETH) -> "
+        "repeat add/verify/get/remove."
+    ),
+    (
+        "portfolio_set_tpsl_with_fixed_size_and_limit: "
+        "adjust_position_tpsl(tp/sl) + optional size_tokens + optional tp_limit_price/sl_limit_price. "
+        "(example: tp='3%', sl='100USD', size_tokens=0.5)."
     ),
 ]
+
+_PLAYWRIGHT_VALIDATED_INDICATOR_ALIASES: List[str] = [
+    "ADX",
+    "AO",
+    "ATR",
+    "BB",
+    "Bollinger Bands",
+    "CCI",
+    "CMF",
+    "DMI",
+    "Donchian",
+    "EMA",
+    "EOM",
+    "HMA",
+    "HV",
+    "Ichimoku",
+    "KST",
+    "Keltner",
+    "MA",
+    "MACD",
+    "MFI",
+    "Mass Index",
+    "OBV",
+    "Parabolic SAR",
+    "ROC",
+    "RSI",
+    "SAR",
+    "SMA",
+    "Stoch",
+    "StochRSI",
+    "SuperTrend",
+    "TSI",
+    "VPFR",
+    "VPVR",
+    "VWAP",
+    "VWMA",
+    "Volume",
+    "WMA",
+    "Williams %R",
+]
+
+_PLAYWRIGHT_VALIDATED_DRAW_ALIASES: List[str] = [
+    "arrow",
+    "circle",
+    "date_range",
+    "extended",
+    "fib_retracement",
+    "line",
+    "long_position",
+    "price_range",
+    "ray",
+    "rect",
+    "rectangle",
+    "short_position",
+    "trend_line",
+]
+
+_PLAYWRIGHT_VALIDATED_SET_SYMBOL_TARGETS: List[str] = [
+    "BTC-USD",
+    "ETH-USD",
+]
+
+
+def _build_playwright_validated_case_templates() -> List[str]:
+    """
+    Build operation templates from live browser coverage cases.
+    These templates are intentionally explicit so planner can mirror
+    the same sequence that passed in Playwright coverage runs.
+    """
+    templates: List[str] = [
+        (
+            "playwright_live_precheck: "
+            "open /trade UI -> wait consumer_online=true -> then execute tool sequence. "
+            "If consumer offline/stale, ask user to re-open /trade before write actions."
+        ),
+        (
+            "playwright_live_core_sequence: "
+            "set_timeframe(1H) -> clear_indicators(keep_volume=true) -> indicator cycle -> "
+            "draw cycle -> clear_drawings -> setup_trade(long/short variants) -> set_symbol checks -> "
+            "add_price_alert -> mark_trading_session -> nav actions."
+        ),
+        (
+            "playwright_live_retry_policy: "
+            "for transient TradingView bridge errors (HTTP 5xx/timeout/offline), retry up to 2 times after consumer check."
+        ),
+    ]
+
+    for alias in _PLAYWRIGHT_VALIDATED_INDICATOR_ALIASES:
+        templates.append(
+            "playwright_live_indicator_add_case: "
+            f"add_indicator(symbol='BTC', name='{alias}', force_overlay=true)."
+        )
+        templates.append(
+            "playwright_live_indicator_remove_case: "
+            f"remove_indicator(symbol='BTC', name='{alias}')."
+        )
+
+    for alias in _PLAYWRIGHT_VALIDATED_DRAW_ALIASES:
+        templates.append(
+            "playwright_live_draw_alias_case: "
+            f"draw(symbol='BTC', tool='{alias}', points=[p1,p2], id='tv_{alias}') -> "
+            "verify command completion."
+        )
+
+    for target in _PLAYWRIGHT_VALIDATED_SET_SYMBOL_TARGETS:
+        templates.append(
+            "playwright_live_set_symbol_case: "
+            f"set_symbol(symbol='BTC', target_symbol='{target}', target_source=None) -> "
+            "verify inferred source in command params."
+        )
+
+    templates.extend(
+        [
+            (
+                "playwright_live_setup_trade_gp_gl: "
+                "setup_trade(side=long, entry/sl/tp, validation, invalidation) -> verify command completion."
+            ),
+            (
+                "playwright_live_setup_trade_validation_invalidation: "
+                "setup_trade(side=short, entry/sl/tp, validation, invalidation) -> verify command completion."
+            ),
+            (
+                "playwright_live_post_write_ops: "
+                "add_price_alert -> mark_trading_session(ASIA) -> mark_trading_session(LONDON)."
+            ),
+            (
+                "playwright_live_nav_ops: "
+                "focus_chart -> pan(time,left,small) -> zoom(in,small) -> reset_view -> get_screenshot."
+            ),
+        ]
+    )
+    return templates
+
+
+_FLOW_TEMPLATES.extend(_build_playwright_validated_case_templates())
 
 
 def get_tool_module(tool_name: str) -> ToolModule:

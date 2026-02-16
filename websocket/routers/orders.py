@@ -118,12 +118,17 @@ async def cancel_order(order_id: str, user_address: str, req: Request):
 
 
 @router.get("/history")
-async def get_orders(user_address: str, status: Optional[str] = None, req: Request = None):
+async def get_orders(
+    user_address: str,
+    status: Optional[str] = None,
+    exchange: Optional[str] = None,
+    req: Request = None,
+):
     """Get order history"""
     try:
         await security_middleware.verify_user(req, user_address)
         
-        orders = await order_service.get_user_orders(user_address, status)
+        orders = await order_service.get_user_orders(user_address, status=status, exchange=exchange)
         return {"success": True, "orders": orders}
     except HTTPException:
         raise
@@ -132,12 +137,12 @@ async def get_orders(user_address: str, status: Optional[str] = None, req: Reque
 
 
 @router.get("/positions")
-async def get_positions(user_address: str, req: Request = None):
+async def get_positions(user_address: str, exchange: Optional[str] = None, req: Request = None):
     """Get active positions"""
     try:
         await security_middleware.verify_user(req, user_address)
         
-        result = await order_service.get_user_positions(user_address)
+        result = await order_service.get_user_positions(user_address, exchange=exchange)
         return {"success": True, **result}
     except HTTPException:
         raise
@@ -151,6 +156,10 @@ class UpdateTPSLRequest(BaseModel):
     tp: Optional[str] = None
     sl: Optional[str] = None
     exchange: Optional[str] = None
+    # Optional UI extensions
+    size_tokens: Optional[float] = None
+    tp_limit_price: Optional[float] = None
+    sl_limit_price: Optional[float] = None
 
 @router.post("/positions/tpsl")
 async def update_tpsl(request_data: UpdateTPSLRequest, req: Request):
@@ -163,7 +172,10 @@ async def update_tpsl(request_data: UpdateTPSLRequest, req: Request):
             symbol=request_data.symbol,
             tp=request_data.tp,
             sl=request_data.sl,
-            exchange=request_data.exchange
+            exchange=request_data.exchange,
+            size_tokens=request_data.size_tokens,
+            tp_limit_price=request_data.tp_limit_price,
+            sl_limit_price=request_data.sl_limit_price,
         )
         return {"success": True, **result}
     except HTTPException:
@@ -207,12 +219,15 @@ from services.trade_action_service import trade_action_service
 class ClosePositionRequest(BaseModel):
     user_address: str
     symbol: str
+    exchange: Optional[str] = None
     price: Optional[float] = None
     size_pct: float = 1.0 # 0.0 - 1.0
 
 class ReversePositionRequest(BaseModel):
     user_address: str
     symbol: str
+    exchange: Optional[str] = None
+    price: Optional[float] = None
 
 @router.post("/close")
 async def close_position(request_data: ClosePositionRequest, req: Request):
@@ -223,7 +238,8 @@ async def close_position(request_data: ClosePositionRequest, req: Request):
             request_data.user_address, 
             request_data.symbol, 
             request_data.price,
-            request_data.size_pct
+            request_data.size_pct,
+            exchange=request_data.exchange
         )
         return {"success": True, **result}
     except Exception as e:
@@ -246,7 +262,9 @@ async def reverse_position(request_data: ReversePositionRequest, req: Request):
         await security_middleware.verify_user(req, request_data.user_address)
         result = await trade_action_service.reverse_position(
             request_data.user_address,
-            request_data.symbol
+            request_data.symbol,
+            exchange=request_data.exchange,
+            price=request_data.price,
         )
         return {"success": True, **result}
     except Exception as e:

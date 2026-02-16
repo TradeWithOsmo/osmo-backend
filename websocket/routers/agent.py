@@ -70,17 +70,17 @@ def _model_base_id(model_id: Optional[str]) -> str:
     raw = (model_id or "").strip()
     return raw.split(":", 1)[0] if raw else ""
 
-_NVIDIA_MODEL_ALIASES = {
-    "moonshotai/kimi-k2-thinking",
-    "qwen/qwen3-next-80b-a3b-thinking",
-    "z-ai/glm4.7",
-    "minimaxai/minimax-m2.1",
-    "moonshotai/kimi-k2.5",
-}
-
-def _is_nvidia_model(model_id: str) -> bool:
-    raw = str(model_id or "").strip().lower()
-    return raw.startswith("nvidia/") or raw in _NVIDIA_MODEL_ALIASES
+def _normalize_model_id_for_runtime(model_id: str) -> str:
+    """
+    Normalize legacy provider prefixes so runtime stays OpenRouter-first.
+    """
+    raw = str(model_id or "").strip()
+    if "/" not in raw:
+        return raw
+    prefix, remainder = raw.split("/", 1)
+    if prefix.lower() in {"nvidia", "openrouter"} and remainder:
+        return remainder
+    return raw
 
 
 def _looks_like_wallet(value: Any) -> bool:
@@ -349,6 +349,7 @@ async def agent_chat(
     if not session_id or session_id == "new-chat":
         import uuid
         session_id = f"s-{uuid.uuid4().hex[:8]}"
+    model_id = _normalize_model_id_for_runtime(model_id)
 
     # 1. Validate if model exists
     model_info = await openrouter_service.get_model_info(model_id)
@@ -372,9 +373,8 @@ async def agent_chat(
         enabled_models = await usage_service.get_default_enabled_models()
         
     is_groq = model_id.startswith("groq/")
-    is_nvidia = _is_nvidia_model(model_id)
     is_free_model = model_id.endswith(":free")
-    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_nvidia and not is_free_model:
+    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_free_model:
         raise HTTPException(
             status_code=403, 
             detail=f"Model {model_id} is not enabled in your settings."
@@ -556,6 +556,7 @@ async def agent_chat_stream(
     if not session_id or session_id == "new-chat":
         import uuid
         session_id = f"s-{uuid.uuid4().hex[:8]}"
+    model_id = _normalize_model_id_for_runtime(model_id)
 
     model_info = await openrouter_service.get_model_info(model_id)
     if not model_info:
@@ -576,9 +577,8 @@ async def agent_chat_stream(
         enabled_models = await usage_service.get_default_enabled_models()
 
     is_groq = model_id.startswith("groq/")
-    is_nvidia = _is_nvidia_model(model_id)
     is_free_model = model_id.endswith(":free")
-    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_nvidia and not is_free_model:
+    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_free_model:
         raise HTTPException(
             status_code=403,
             detail=f"Model {model_id} is not enabled in your settings."
@@ -629,18 +629,60 @@ async def agent_chat_stream(
             thoughts: List[str] = []
             usage: Dict[str, Any] = {}
             runtime: Dict[str, Any] = {}
+            saw_done_event = False
+            saw_error_event = False
 
-            async for event in brain.stream(user_message=ai_message, history=history, attachments=attachments):
-                if event.get("type") == "delta":
-                    full_content += event.get("content", "")
-                elif event.get("type") == "thoughts":
-                    thoughts = event.get("thoughts", [])
-                elif event.get("type") == "runtime":
-                    runtime = event.get("runtime", {}) or {}
-                elif event.get("type") == "done":
-                    usage = event.get("usage", {}) or {}
+            try:
+                model_timeout_raw: Any = None
+                if isinstance(tool_states, dict):
+                    model_timeout_raw = tool_states.get("model_timeout_sec")
+                try:
+                    model_timeout_sec = float(model_timeout_raw) if model_timeout_raw is not None else 120.0
+                except Exception:
+                    model_timeout_sec = 120.0
+                stream_timeout_sec = max(30.0, min(model_timeout_sec + 30.0, 360.0))
 
-                yield sse(event)
+                async with asyncio.timeout(stream_timeout_sec):
+                    async for event in brain.stream(user_message=ai_message, history=history, attachments=attachments):
+                        if event.get("type") == "delta":
+                            full_content += event.get("content", "")
+                        elif event.get("type") == "thoughts":
+                            thoughts = event.get("thoughts", [])
+                        elif event.get("type") == "runtime":
+                            runtime = event.get("runtime", {}) or {}
+                        elif event.get("type") == "done":
+                            saw_done_event = True
+                            usage = event.get("usage", {}) or {}
+                            if isinstance(event.get("thoughts"), list):
+                                thoughts = event.get("thoughts", [])
+                        elif event.get("type") == "error":
+                            saw_error_event = True
+
+                        yield sse(event)
+            except asyncio.TimeoutError:
+                yield sse(
+                    {
+                        "type": "error",
+                        "message": (
+                            f"AI stream timeout after {int(stream_timeout_sec)}s. "
+                            "Please retry with simpler prompt or lower tool scope."
+                        ),
+                    }
+                )
+                return
+
+            if saw_error_event:
+                return
+
+            if not saw_done_event:
+                yield sse(
+                    {
+                        "type": "done",
+                        "content": full_content,
+                        "usage": usage or {},
+                        "thoughts": thoughts or [],
+                    }
+                )
 
             in_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
             out_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)

@@ -6,10 +6,20 @@ Write-mode chart actions with strict execution evidence support.
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional
+import asyncio
+import time
+from typing import Dict, Any, Optional, List
 import datetime
 
+import httpx
+
 from .command_client import send_tradingview_command
+try:
+    from agent.Config.tools_config import DATA_SOURCES
+except Exception:
+    from backend.agent.Config.tools_config import DATA_SOURCES
+
+from .verify import verify_tradingview_state
 
 
 _INDICATOR_NAME_MAP = {
@@ -51,6 +61,118 @@ _INDICATOR_NAME_MAP = {
     "CMF": "Chaikin Money Flow",
     "EOM": "Ease Of Movement",
 }
+
+CONNECTORS_API = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
+
+
+def _norm_indicator_token(value: Any) -> str:
+    return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _timeframe_candidates(timeframe: str) -> List[str]:
+    raw = str(timeframe or "").strip().upper().replace(" ", "")
+    if not raw:
+        return ["1D"]
+    mapping = {
+        "60": "1H",
+        "1H": "60",
+        "240": "4H",
+        "4H": "240",
+        "D": "1D",
+        "1D": "D",
+        "W": "1W",
+        "1W": "W",
+    }
+    alt = mapping.get(raw)
+    out = [raw]
+    if alt and alt not in out:
+        out.append(alt)
+    return out
+
+
+async def verify_indicator_present(
+    symbol: str,
+    name: str,
+    timeframe: str = "1D",
+    timeout_sec: float = 6.0,
+    poll_interval_sec: float = 0.25,
+) -> Dict[str, Any]:
+    """
+    Verify that an indicator is present on the active TradingView chart.
+
+    Intended flow:
+    add_indicator -> verify_indicator_present -> get_active_indicators
+    """
+    tv_name = _INDICATOR_NAME_MAP.get(name, name)
+    want_tokens = {_norm_indicator_token(tv_name), _norm_indicator_token(name)}
+    want_tokens = {t for t in want_tokens if t}
+    deadline = time.time() + max(0.0, float(timeout_sec))
+
+    last_payload: Optional[Dict[str, Any]] = None
+    tried: List[str] = []
+    attempts = 0
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while True:
+            attempts += 1
+            for tf in _timeframe_candidates(timeframe):
+                if tf not in tried:
+                    tried.append(tf)
+
+                try:
+                    resp = await client.get(
+                        f"{CONNECTORS_API}/tradingview/indicators",
+                        params={"symbol": symbol, "timeframe": tf},
+                    )
+                except Exception as exc:
+                    last_payload = {"error": f"Failed to query tradingview indicators: {exc}"}
+                    continue
+
+                if resp.status_code == 404:
+                    last_payload = {"error": "No TradingView indicators cached yet"}
+                    continue
+                try:
+                    resp.raise_for_status()
+                except Exception as exc:
+                    last_payload = {"error": f"TradingView indicators HTTP error: {exc}", "http_status": resp.status_code}
+                    continue
+
+                data = resp.json() if resp.content else {}
+                last_payload = data if isinstance(data, dict) else {"raw": data}
+
+                payload_data = (last_payload.get("data") or {}) if isinstance(last_payload, dict) else {}
+                active = payload_data.get("active_indicators") or []
+                indicators = payload_data.get("indicators") or {}
+
+                active_tokens = {_norm_indicator_token(x) for x in (active if isinstance(active, list) else [])}
+                key_tokens = {_norm_indicator_token(k) for k in (indicators.keys() if isinstance(indicators, dict) else [])}
+
+                present = bool(want_tokens & active_tokens) or bool(want_tokens & key_tokens)
+                if present:
+                    return {
+                        "status": "ok",
+                        "symbol": symbol,
+                        "timeframe": tf,
+                        "indicator": tv_name,
+                        "present": True,
+                        "attempts": attempts,
+                        "active_indicators": active if isinstance(active, list) else [],
+                    }
+
+            if time.time() >= deadline:
+                return {
+                    "status": "error",
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "indicator": tv_name,
+                    "present": False,
+                    "attempts": attempts,
+                    "tried_timeframes": tried,
+                    "last_payload": last_payload,
+                    "error": f"Indicator '{tv_name}' not found on chart within {timeout_sec:.1f}s",
+                }
+
+            await asyncio.sleep(max(0.05, float(poll_interval_sec)))
 
 
 async def list_supported_indicator_aliases() -> Dict[str, Any]:
@@ -218,6 +340,11 @@ async def setup_trade(
     normalized_side = str(side or "").lower()
     validation_level = gp if gp is not None else validation
     invalidation_level = gl if gl is not None else invalidation
+    expected: Dict[str, Any] = {"symbol": symbol, "side": normalized_side}
+    if validation_level is not None:
+        expected["validation"] = validation_level
+    if invalidation_level is not None:
+        expected["invalidation"] = invalidation_level
     return await send_tradingview_command(
         symbol=symbol,
         action="setup_trade",
@@ -241,18 +368,19 @@ async def setup_trade(
             "write_txn_id": write_txn_id,
         },
         mode="write",
-        expected_state={"symbol": symbol, "side": normalized_side},
+        expected_state=expected,
     )
 
 
 async def add_price_alert(symbol: str, price: float, message: str, write_txn_id: Optional[str] = None) -> Dict[str, Any]:
     now_ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    alert_id = f"alert_{int(price)}"
     return await send_tradingview_command(
         symbol=symbol,
         action="draw_shape",
         params={
             "type": "horizontal_line",
-            "id": f"alert_{int(price)}",
+            "id": alert_id,
             "points": [{"time": now_ts, "price": price}],
             "text": f"ALERT: {message}",
             "style": {
@@ -264,7 +392,7 @@ async def add_price_alert(symbol: str, price: float, message: str, write_txn_id:
             "write_txn_id": write_txn_id,
         },
         mode="write",
-        expected_state={"symbol": symbol},
+        expected_state={"symbol": symbol, "drawing_id": alert_id},
     )
 
 
@@ -283,18 +411,19 @@ async def mark_trading_session(symbol: str, session: str, write_txn_id: Optional
     start_of_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     t_start = int((start_of_day + datetime.timedelta(hours=cfg["start"])).timestamp())
     t_end = int((start_of_day + datetime.timedelta(hours=cfg["end"])).timestamp())
+    drawing_id = f"session_{session.lower()}"
 
     return await send_tradingview_command(
         symbol=symbol,
         action="draw_shape",
         params={
             "type": "rectangle",
-            "id": f"session_{session.lower()}",
+            "id": drawing_id,
             "points": [{"time": t_start, "price": 1000000}, {"time": t_end, "price": 0}],
             "text": cfg["text"],
             "style": {"fillColor": cfg["color"], "color": cfg["color"], "filled": True},
             "write_txn_id": write_txn_id,
         },
         mode="write",
-        expected_state={"symbol": symbol},
+        expected_state={"symbol": symbol, "drawing_id": drawing_id},
     )

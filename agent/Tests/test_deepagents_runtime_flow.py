@@ -49,6 +49,9 @@ def test_deepagents_runtime_skips_bootstrap_prefetch_by_default(monkeypatch):
     phase_names = [item.get("name") for item in phases if isinstance(item, dict)]
     assert "bootstrap_prefetch_skipped" in phase_names
     assert "tool_call" not in phase_names
+    graph = ((result or {}).get("runtime") or {}).get("execution_graph") or {}
+    assert isinstance(graph, dict)
+    assert len(graph.get("nodes") or []) > 0
 
 
 def test_bootstrap_calls_skip_rwa_technical_prefetch():
@@ -101,3 +104,29 @@ def test_timeout_fallback_contains_symbol_confidence_block(monkeypatch):
     assert "per-symbol fallback" in content
     assert "confidence=" in content
     assert "btc-usd" in content
+
+
+def test_compact_profile_skips_write_tools_without_write_intent():
+    runtime = deep_runtime.DeepAgentsRuntime(
+        llm=object(),
+        system_prompt="system",
+        tool_states={"tool_profile": "compact", "write": True, "execution": False},
+    )
+    wrapped = runtime._build_wrapped_tools(user_message="hai osmo")
+    names = {tool.__name__ for tool in wrapped}
+
+    assert not names.intersection(set(deep_runtime.DeepAgentsRuntime._WRITE_TOOL_NAMES))
+    assert "get_price" in names
+
+
+def test_compact_profile_enables_write_tools_when_write_intent_present():
+    runtime = deep_runtime.DeepAgentsRuntime(
+        llm=object(),
+        system_prompt="system",
+        tool_states={"tool_profile": "compact", "write": True, "execution": False},
+    )
+    wrapped = runtime._build_wrapped_tools(user_message="please set symbol to ETH-USD and set timeframe to 1m")
+    names = {tool.__name__ for tool in wrapped}
+
+    assert "set_symbol" in names
+    assert "set_timeframe" in names

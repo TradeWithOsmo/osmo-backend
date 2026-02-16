@@ -139,11 +139,123 @@ class TradingViewConnector(BaseConnector):
         
         self.redis_client = config.get("redis_client")
         self.cache_ttl = config.get("cache_ttl", 60)  # 60 seconds default
+        self.consumer_status_ttl = int(max(30, config.get("consumer_status_ttl", 120)))
+
+        # In CI/dev, Redis may be unavailable. We still want the TradingView command loop
+        # (queue -> poll -> report result) to work for UI + tool verification.
+        #
+        # This in-memory fallback is process-local and non-durable, but unblocks:
+        # - Playwright E2E tests
+        # - Local development without Redis
+        self._memory_enabled = self.redis_client is None
+        self._mem_lock = asyncio.Lock()
+        self._mem_kv: Dict[str, tuple[str, float]] = {}          # key -> (json, expires_at_ms)
+        self._mem_lists: Dict[str, tuple[List[str], float]] = {}  # key -> ([json...], expires_at_ms)
         
+        # Treat in-memory mode as healthy (commands still work).
+        self.status = ConnectorStatus.HEALTHY
+
+    def _now_ms(self) -> int:
+        return int(time.time() * 1000)
+
+    def _expires_at_ms(self, ttl_sec: int) -> float:
+        ttl = int(max(1, ttl_sec))
+        return float(self._now_ms() + (ttl * 1000))
+
+    async def _mem_cleanup_locked(self) -> None:
+        now = float(self._now_ms())
+        kv_dead = [k for k, (_, exp) in self._mem_kv.items() if exp and exp <= now]
+        for k in kv_dead:
+            self._mem_kv.pop(k, None)
+        list_dead = [k for k, (_, exp) in self._mem_lists.items() if exp and exp <= now]
+        for k in list_dead:
+            self._mem_lists.pop(k, None)
+
+    async def _mem_get(self, key: str) -> str | None:
+        async with self._mem_lock:
+            await self._mem_cleanup_locked()
+            item = self._mem_kv.get(key)
+            if not item:
+                return None
+            value, exp = item
+            if exp and exp <= float(self._now_ms()):
+                self._mem_kv.pop(key, None)
+                return None
+            return value
+
+    async def _mem_setex(self, key: str, ttl_sec: int, value: str) -> None:
+        async with self._mem_lock:
+            await self._mem_cleanup_locked()
+            self._mem_kv[key] = (value, self._expires_at_ms(ttl_sec))
+
+    async def _mem_rpush(self, key: str, value: str) -> None:
+        async with self._mem_lock:
+            await self._mem_cleanup_locked()
+            existing, exp = self._mem_lists.get(key, ([], 0.0))
+            existing = list(existing)
+            existing.append(value)
+            # Preserve previous TTL if present, else no expiry until explicit expire().
+            self._mem_lists[key] = (existing, exp)
+
+    async def _mem_expire(self, key: str, ttl_sec: int) -> None:
+        async with self._mem_lock:
+            await self._mem_cleanup_locked()
+            if key in self._mem_kv:
+                value, _ = self._mem_kv[key]
+                self._mem_kv[key] = (value, self._expires_at_ms(ttl_sec))
+                return
+            if key in self._mem_lists:
+                items, _ = self._mem_lists[key]
+                self._mem_lists[key] = (list(items), self._expires_at_ms(ttl_sec))
+
+    async def _mem_lrange_and_delete(self, key: str) -> List[str]:
+        async with self._mem_lock:
+            await self._mem_cleanup_locked()
+            items, _ = self._mem_lists.get(key, ([], 0.0))
+            self._mem_lists.pop(key, None)
+            return list(items)
+
+    def _consumer_poll_key(self) -> str:
+        return "commands:tradingview:consumer:last_poll"
+
+    async def _mark_consumer_poll(self, symbol: str) -> None:
+        payload = json.dumps(
+            {
+                "symbol": _normalize_symbol_token(symbol),
+                "polled_at_ms": self._now_ms(),
+            }
+        )
+        key = self._consumer_poll_key()
         if self.redis_client:
-            self.status = ConnectorStatus.HEALTHY
+            await self.redis_client.setex(key, self.consumer_status_ttl, payload)
         else:
-            self.status = ConnectorStatus.OFFLINE
+            await self._mem_setex(key, self.consumer_status_ttl, payload)
+
+    async def get_consumer_status(self, symbol: str = "", stale_after_sec: float = 6.0) -> Dict[str, Any]:
+        key = self._consumer_poll_key()
+        raw = await self.redis_client.get(key) if self.redis_client else await self._mem_get(key)
+        now_ms = self._now_ms()
+        stale_after_ms = int(max(500, float(stale_after_sec) * 1000))
+
+        parsed: Dict[str, Any] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = {}
+
+        last_poll_ms = int(parsed.get("polled_at_ms") or 0)
+        last_symbol = _normalize_symbol_token(str(parsed.get("symbol") or ""))
+        age_ms = now_ms - last_poll_ms if last_poll_ms > 0 else None
+        consumer_online = bool(age_ms is not None and age_ms <= stale_after_ms)
+        return {
+            "consumer_online": consumer_online,
+            "stale_after_sec": float(stale_after_sec),
+            "last_poll_ms": last_poll_ms or None,
+            "last_poll_age_ms": age_ms,
+            "last_polled_symbol": last_symbol or None,
+            "requested_symbol": _normalize_symbol_token(symbol) or None,
+        }
     
     async def fetch(self, symbol: str, **kwargs) -> Dict[str, Any]:
         """
@@ -163,7 +275,7 @@ class TradingViewConnector(BaseConnector):
         try:
             for alias in _symbol_aliases(symbol):
                 cache_key = f"indicators:{alias}:{timeframe}"
-                cached = await self.redis_client.get(cache_key)
+                cached = await self.redis_client.get(cache_key) if self.redis_client else await self._mem_get(cache_key)
                 if not cached:
                     continue
                 data = json.loads(cached)
@@ -216,11 +328,11 @@ class TradingViewConnector(BaseConnector):
 
         for alias in _symbol_aliases(symbol):
             cache_key = f"indicators:{alias}:{timeframe}"
-            await self.redis_client.setex(
-                cache_key,
-                self.cache_ttl,
-                json.dumps(data)
-            )
+            payload = json.dumps(data)
+            if self.redis_client:
+                await self.redis_client.setex(cache_key, self.cache_ttl, payload)
+            else:
+                await self._mem_setex(cache_key, self.cache_ttl, payload)
         
         return {
             "status": "stored",
@@ -254,41 +366,63 @@ class TradingViewConnector(BaseConnector):
         }
 
         # Expire commands after 60s if not picked up
-        await self.redis_client.rpush(key, json.dumps(envelope))
-        await self.redis_client.expire(key, 60)
+        payload = json.dumps(envelope)
+        if self.redis_client:
+            await self.redis_client.rpush(key, payload)
+            await self.redis_client.expire(key, 60)
+        else:
+            await self._mem_rpush(key, payload)
+            await self._mem_expire(key, 60)
         return envelope
         
     async def get_pending_commands(self, symbol: str) -> List[Dict[str, Any]]:
         """
         Get and clear pending commands for a symbol.
         """
+        await self._mark_consumer_poll(symbol)
         keys = [f"commands:tradingview:{k}" for k in _command_symbol_keys(symbol)]
         if not keys:
             return []
 
-        # Read+clear all alias queues in one pipeline roundtrip.
-        async with self.redis_client.pipeline() as pipe:
-            for key in keys:
-                pipe.lrange(key, 0, -1)
-                pipe.delete(key)
-            result = await pipe.execute()
-
         commands: List[Dict[str, Any]] = []
         seen_ids = set()
-        # result layout: [lrange0, del0, lrange1, del1, ...]
-        for idx in range(0, len(result), 2):
-            raw_commands = result[idx] or []
-            for cmd_str in raw_commands:
-                try:
-                    parsed = json.loads(cmd_str)
-                except Exception:
-                    continue
-                cmd_id = str(parsed.get("command_id") or "").strip()
-                if cmd_id and cmd_id in seen_ids:
-                    continue
-                if cmd_id:
-                    seen_ids.add(cmd_id)
-                commands.append(parsed)
+
+        if self.redis_client:
+            # Read+clear all alias queues in one pipeline roundtrip.
+            async with self.redis_client.pipeline() as pipe:
+                for key in keys:
+                    pipe.lrange(key, 0, -1)
+                    pipe.delete(key)
+                result = await pipe.execute()
+
+            # result layout: [lrange0, del0, lrange1, del1, ...]
+            for idx in range(0, len(result), 2):
+                raw_commands = result[idx] or []
+                for cmd_str in raw_commands:
+                    try:
+                        parsed = json.loads(cmd_str)
+                    except Exception:
+                        continue
+                    cmd_id = str(parsed.get("command_id") or "").strip()
+                    if cmd_id and cmd_id in seen_ids:
+                        continue
+                    if cmd_id:
+                        seen_ids.add(cmd_id)
+                    commands.append(parsed)
+        else:
+            for key in keys:
+                raw_commands = await self._mem_lrange_and_delete(key)
+                for cmd_str in raw_commands:
+                    try:
+                        parsed = json.loads(cmd_str)
+                    except Exception:
+                        continue
+                    cmd_id = str(parsed.get("command_id") or "").strip()
+                    if cmd_id and cmd_id in seen_ids:
+                        continue
+                    if cmd_id:
+                        seen_ids.add(cmd_id)
+                    commands.append(parsed)
 
         return commands
 
@@ -310,7 +444,13 @@ class TradingViewConnector(BaseConnector):
             "error": error,
             "completed_at": int(time.time() * 1000),
         }
-        await self.redis_client.setex(self._result_key(command_id), int(max(30, ttl_sec)), json.dumps(payload))
+        key = self._result_key(command_id)
+        raw = json.dumps(payload)
+        ttl = int(max(30, ttl_sec))
+        if self.redis_client:
+            await self.redis_client.setex(key, ttl, raw)
+        else:
+            await self._mem_setex(key, ttl, raw)
         return payload
 
     async def wait_for_command_result(
@@ -322,7 +462,7 @@ class TradingViewConnector(BaseConnector):
         deadline = time.time() + max(0.2, float(timeout_sec))
         key = self._result_key(command_id)
         while time.time() < deadline:
-            raw = await self.redis_client.get(key)
+            raw = await self.redis_client.get(key) if self.redis_client else await self._mem_get(key)
             if raw:
                 try:
                     return json.loads(raw)
@@ -370,6 +510,12 @@ class TradingViewConnector(BaseConnector):
             "data": {
                 "timeframe": raw_data.get("timeframe"),
                 "indicators": raw_data.get("indicators", {}),
-                "screenshot": raw_data.get("chart_screenshot")
+                "screenshot": raw_data.get("chart_screenshot"),
+                # Optional: chart.getAllStudies() names so tools can verify add/remove applied.
+                "active_indicators": raw_data.get("active_indicators") or raw_data.get("activeIndicators") or [],
+                # Optional: keys from drawing handler's ID map so tools can verify draw/update/clear.
+                "drawing_tags": raw_data.get("drawing_tags") or raw_data.get("drawingTags") or [],
+                # Optional: last trade setup parameters (entry/sl/tp/validation/invalidation/etc).
+                "trade_setup": raw_data.get("trade_setup") or raw_data.get("tradeSetup") or {},
             }
         }

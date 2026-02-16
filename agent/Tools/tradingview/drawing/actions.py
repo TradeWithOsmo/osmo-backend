@@ -122,7 +122,16 @@ async def draw(
     if write_txn_id:
         params["write_txn_id"] = write_txn_id
 
-    return await _send_command(symbol, "draw_shape", params)
+    expected_state: Dict[str, Any] = {"symbol": symbol}
+    if id:
+        expected_state["drawing_id"] = id
+    return await send_tradingview_command(
+        symbol=symbol,
+        action="draw_shape",
+        params=params,
+        mode="write",
+        expected_state=expected_state,
+    )
 
 async def update_drawing(
     symbol: str,
@@ -147,10 +156,22 @@ async def update_drawing(
     if write_txn_id:
         params["write_txn_id"] = write_txn_id
         
-    return await _send_command(symbol, "update_drawing", params)
+    return await send_tradingview_command(
+        symbol=symbol,
+        action="update_drawing",
+        params=params,
+        mode="write",
+        expected_state={"symbol": symbol, "drawing_id": id},
+    )
 
 async def clear_drawings(symbol: str, write_txn_id: Optional[str] = None) -> Dict[str, Any]:
     params: Dict[str, Any] = {}
     if write_txn_id:
         params["write_txn_id"] = write_txn_id
-    return await _send_command(symbol, "clear_drawings", params)
+    return await send_tradingview_command(
+        symbol=symbol,
+        action="clear_drawings",
+        params=params,
+        mode="write",
+        expected_state={"symbol": symbol, "drawings_cleared": True},
+    )

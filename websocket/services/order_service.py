@@ -5,12 +5,14 @@ Orchestrates order placement, validation, and routing across exchanges.
 """
 
 from typing import Dict, Any, List, Optional
+import asyncio
 import uuid
 from datetime import datetime
 import sys
 import os
 
 from database.models import Order, Position
+from database.models import PositionRiskConfig
 from database.connection import AsyncSessionLocal
 from connectors.init_connectors import connector_registry
 
@@ -239,10 +241,10 @@ class OrderService:
             is_pending = exchange_response.get('status') == 'pending'
             
             if is_pending:
-                 # Create Pending Order Record
-                 async with AsyncSessionLocal() as session:
+                # Create Pending Order Record
+                async with AsyncSessionLocal() as session:
                     order = Order(
-                        id=order_id, # This is the UUID from simulation block
+                        id=order_id,  # This is the UUID from simulation block
                         user_address=user_address.lower(),
                         exchange=exchange,
                         symbol=symbol,
@@ -256,11 +258,12 @@ class OrderService:
                         reduce_only=reduce_only,
                         post_only=post_only,
                         time_in_force=time_in_force,
-                        status='OPEN', # Use OPEN for pending orders
+                        exchange_order_id=exchange_response.get("exchange_order_id"),
+                        status="OPEN",  # OPEN means pending in simulation
                         created_at=datetime.utcnow(),
                         filled_size=0,
-                        trigger_condition='BELOW' if side == 'sell' else 'ABOVE', # Simple heuristic for now
-                        trigger_price=stop_price
+                        trigger_condition="BELOW" if side == "sell" else "ABOVE",  # heuristic
+                        trigger_price=stop_price,
                     )
                     session.add(order)
                     await session.commit()
@@ -587,13 +590,27 @@ class OrderService:
             
             if not order:
                 raise ValueError(f"Order {order_id} not found")
-            
-            if order.status not in ['pending', 'open', 'confirmed']:
+
+            status_norm = (order.status or "").strip().lower()
+            if status_norm not in ["pending", "open", "confirmed"]:
                 raise ValueError(f"Cannot cancel order with status {order.status}")
-            
+
+            # Simulation orders are DB-only; there's no external connector cancellation.
+            exchange_norm = (order.exchange or "").strip().lower()
+            if exchange_norm == "simulation":
+                order.status = "cancelled"
+                order.updated_at = datetime.utcnow()
+                await session.commit()
+                return {"order_id": order_id, "status": "cancelled"}
+
             # Get connector
             connector = connector_registry.get_connector(order.exchange)
-            
+            if not connector:
+                raise ValueError(f"No connector configured for exchange {order.exchange}")
+
+            if not getattr(order, "exchange_order_id", None):
+                raise ValueError(f"Order {order_id} missing exchange_order_id; cannot cancel on {order.exchange}")
+
             # Cancel on exchange
             try:
                 await connector.cancel_order(user_address, order.exchange_order_id)
@@ -614,18 +631,22 @@ class OrderService:
     async def get_user_orders(
         self, 
         user_address: str, 
-        status: str = None
+        status: str = None,
+        exchange: Optional[str] = None,
     ) -> List[Dict]:
         """Get user's order history across all exchanges and DB"""
         
         all_orders = []
         db_order_ids = set()
+        exchange_norm = (exchange or "").strip().lower() or None
 
         # 1. Fetch from DB (Shadow & History)
         async with AsyncSessionLocal() as session:
             from sqlalchemy import select, or_
             
             stmt = select(Order).where(Order.user_address == user_address.lower())
+            if exchange_norm:
+                stmt = stmt.where(Order.exchange == exchange_norm)
             
             if status:
                 if status.lower() == 'pending':
@@ -673,6 +694,13 @@ class OrderService:
                     db_order_ids.add(order.exchange_order_id.lower())
                 db_order_ids.add(order.id.lower())
 
+        # If caller explicitly asked for a specific exchange, don't attempt cross-exchange enrichment here.
+        # (On-chain connector order fetch is currently disabled anyway.)
+        #
+        # This keeps the UI consistent when VITE_TRADING_EXCHANGE is used for "mode switching".
+        if exchange_norm:
+            return all_orders
+
         # 2. Query On-chain connector for real-time status (Disabled temporarily to fix hang)
         # onchain_connector = connector_registry.get_connector('onchain')
         # if onchain_connector:
@@ -709,12 +737,14 @@ class OrderService:
     
     async def get_user_positions(
         self, 
-        user_address: str
+        user_address: str,
+        exchange: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Get user's active positions across all exchanges with account summary"""
         
         all_positions = []
         successful_exchanges = set()
+        exchange_norm = (exchange or "").strip().lower() or None
         overall_summary = {
             "account_value": 0,
             "total_margin_used": 0,
@@ -725,9 +755,9 @@ class OrderService:
         
         # Query Hyperliquid positions
         hl_connector = connector_registry.get_connector('hyperliquid')
-        if hl_connector:
+        if hl_connector and (exchange_norm is None or exchange_norm == 'hyperliquid'):
             try:
-                hl_data = await hl_connector.get_user_positions(user_address)
+                hl_data = await asyncio.wait_for(hl_connector.get_user_positions(user_address), timeout=1.5)
                 hl_positions = hl_data.get('positions', [])
                 hl_summary = hl_data.get('summary', {})
                 
@@ -741,15 +771,17 @@ class OrderService:
                 overall_summary["free_collateral"] += hl_summary.get("free_collateral", 0)
                 
                 successful_exchanges.add('hyperliquid')
+            except asyncio.TimeoutError:
+                print(f"[OrderService] Timeout fetching Hyperliquid positions for {user_address}")
             except Exception as e:
                 print(f"[OrderService] Error fetching Hyperliquid positions: {e}")
         
         # Query Ostium positions
         ostium_connector = connector_registry.get_connector('ostium')
-        if ostium_connector:
+        if ostium_connector and (exchange_norm is None or exchange_norm == 'ostium'):
             try:
                 # Ostium currently returns a list (NotImplementedError usually)
-                ostium_result = await ostium_connector.get_user_positions(user_address)
+                ostium_result = await asyncio.wait_for(ostium_connector.get_user_positions(user_address), timeout=1.5)
                 if isinstance(ostium_result, list):
                     for pos in ostium_result:
                         pos['exchange'] = 'ostium'
@@ -762,6 +794,8 @@ class OrderService:
                     # Aggregate summary if available
                     # ...
                 successful_exchanges.add('ostium')
+            except asyncio.TimeoutError:
+                print(f"[OrderService] Timeout fetching Ostium positions for {user_address}")
             except NotImplementedError:
                 pass
             except Exception as e:
@@ -769,23 +803,25 @@ class OrderService:
 
         # Query On-chain positions
         onchain_connector = connector_registry.get_connector('onchain')
-        if onchain_connector:
+        if onchain_connector and (exchange_norm is None or exchange_norm == 'onchain'):
             try:
                 onchain_balances = {}
                 # 1. Get Balances
                 if hasattr(onchain_connector, 'get_user_balances'):
-                    onchain_balances = await onchain_connector.get_user_balances(user_address)
+                    onchain_balances = await asyncio.wait_for(onchain_connector.get_user_balances(user_address), timeout=1.5)
                     overall_summary["account_value"] += onchain_balances.get("account_value", 0)
                     overall_summary["free_collateral"] += onchain_balances.get("free_collateral", 0)
                     overall_summary["total_margin_used"] += onchain_balances.get("total_margin_used", 0)
         
                 # 2. Get Positions
-                onchain_result = await onchain_connector.get_user_positions(user_address)
+                onchain_result = await asyncio.wait_for(onchain_connector.get_user_positions(user_address), timeout=1.5)
                 for pos in onchain_result:
                     pos['exchange'] = 'onchain'
                     all_positions.append(pos)
                 successful_exchanges.add('onchain')
                 print(f"[OrderService] On-chain Summary for {user_address}: {onchain_balances}")
+            except asyncio.TimeoutError:
+                print(f"[OrderService] Timeout fetching On-chain positions/balances for {user_address}")
             except Exception as e:
                 print(f"[OrderService] Error fetching On-chain positions/balances: {e}")
 
@@ -821,88 +857,103 @@ class OrderService:
             print(f"[OrderService] Error fetching/syncing LedgerAccount: {e}")
 
 
-        
-        # Query Local DB for Shadow Positions and TP/SL
+
+        # Query Local DB for Shadow Positions and TP/SL (+ extended risk config)
         try:
             async with AsyncSessionLocal() as session:
                 from sqlalchemy import select
+
                 db_result = await session.execute(
-                    select(Position).where(Position.user_address == user_address.lower())
+                    select(Position).where(
+                        Position.user_address == user_address.lower(),
+                        *( [Position.exchange == exchange_norm] if exchange_norm else [] ),
+                    )
                 )
                 db_positions = db_result.scalars().all()
-                
-                # 1. Map symbols for TP/SL (for general use)
-                tpsl_map = {p.symbol: {'tp': p.tp, 'sl': p.sl} for p in db_positions}
 
-                # 2. Identify and merge Shadow Positions
-                # We need to match DB positions with connector positions.
-                # Since multiple positions can exist for same symbol (some connectors don't merge),
-                # we track which connector positions have been "matched".
+                cfg_result = await session.execute(
+                    select(PositionRiskConfig).where(
+                        PositionRiskConfig.user_address == user_address.lower(),
+                        *( [PositionRiskConfig.exchange == exchange_norm] if exchange_norm else [] ),
+                    )
+                )
+                cfg_rows = cfg_result.scalars().all()
+                risk_map = {(c.symbol, c.exchange): c for c in cfg_rows}
+
+                # Map symbols for TP/SL (kept for debugging/backward compat)
+                _tpsl_map = {p.symbol: {"tp": p.tp, "sl": p.sl} for p in db_positions}
+                _ = _tpsl_map
+
                 matched_pos_ids = set()
-                
                 for db_pos in db_positions:
-                    if db_pos.status != 'OPEN': continue # Skip closed positions
+                    if db_pos.status != "OPEN":
+                        continue
 
-                    # Try to find a matching active position from a connector
                     found_active = False
                     for pos in all_positions:
-                        # Match by symbol and exchange, and ensure it's not already matched
-                        # Match by position_id (best), or symbol+exchange
-                        match_id = (pos.get('id') == db_pos.position_id) if db_pos.position_id else False
-                        match_symbol = (pos.get('symbol') == db_pos.symbol and pos.get('exchange') == db_pos.exchange)
-
-                        if (match_id or match_symbol) and pos.get('id') not in matched_pos_ids:
-                            
-                            matched_pos_ids.add(pos.get('id'))
+                        match_id = (pos.get("id") == db_pos.position_id) if db_pos.position_id else False
+                        match_symbol = (
+                            pos.get("symbol") == db_pos.symbol and pos.get("exchange") == db_pos.exchange
+                        )
+                        if (match_id or match_symbol) and pos.get("id") not in matched_pos_ids:
+                            matched_pos_ids.add(pos.get("id"))
                             found_active = True
-                            print(f"[OrderService] Merging DB position {db_pos.id} with active {pos.get('id')} ({pos.get('symbol')}) - Connector Size: {pos.get('size')} DB Size: {db_pos.size}")
-                            
-                            # Merge TP/SL
-                            pos['tp'] = db_pos.tp
-                            pos['sl'] = db_pos.sl
-                            
-                            # Fallback logic for indexing lag
-                            if pos.get('entry_price', 0) == 0 and db_pos.entry_price > 0:
-                                pos['entry_price'] = db_pos.entry_price
-                            
-                            if pos.get('size', 0) == 0 and db_pos.size > 0:
-                                pos['size'] = db_pos.size
-                                pos['size_tokens'] = db_pos.size
-                                # Update position value if we have a mark price (or entry)
-                                fallback_price = pos.get('mark_price') or pos.get('entry_price') or 0
-                                pos['position_value'] = db_pos.size * fallback_price
 
-                            # Recalculate Liquidation Price if we recovered the entry price
-                            if pos.get('liquidation_price', 0) == 0:
+                            print(
+                                f"[OrderService] Merging DB position {db_pos.id} with active {pos.get('id')} "
+                                f"({pos.get('symbol')}) - Connector Size: {pos.get('size')} DB Size: {db_pos.size}"
+                            )
+
+                            pos["tp"] = db_pos.tp
+                            pos["sl"] = db_pos.sl
+
+                            cfg = risk_map.get((db_pos.symbol, db_pos.exchange))
+                            if cfg:
+                                pos["tpsl_size_tokens"] = cfg.tpsl_size_tokens
+                                pos["tp_limit_price"] = cfg.tp_limit_price
+                                pos["sl_limit_price"] = cfg.sl_limit_price
+
+                            if pos.get("entry_price", 0) == 0 and db_pos.entry_price > 0:
+                                pos["entry_price"] = db_pos.entry_price
+
+                            if pos.get("size", 0) == 0 and db_pos.size > 0:
+                                pos["size"] = db_pos.size
+                                pos["size_tokens"] = db_pos.size
+                                fallback_price = pos.get("mark_price") or pos.get("entry_price") or 0
+                                pos["position_value"] = db_pos.size * fallback_price
+
+                            if pos.get("liquidation_price", 0) == 0:
                                 try:
-                                    s_usd = pos.get('position_value', 0)
-                                    m_usd = pos.get('margin_used', 0)
-                                    ep = pos.get('entry_price', 0)
+                                    s_usd = pos.get("position_value", 0)
+                                    m_usd = pos.get("margin_used", 0)
+                                    ep = pos.get("entry_price", 0)
                                     if s_usd > 0 and ep > 0 and m_usd > 0:
                                         max_loss_ratio = (m_usd * 0.8) / s_usd
-                                        if pos.get('side') == 'long':
-                                            pos['liquidation_price'] = ep * (1 - max_loss_ratio)
+                                        if pos.get("side") == "long":
+                                            pos["liquidation_price"] = ep * (1 - max_loss_ratio)
                                         else:
-                                            pos['liquidation_price'] = ep * (1 + max_loss_ratio)
+                                            pos["liquidation_price"] = ep * (1 + max_loss_ratio)
                                 except Exception:
                                     pass
-                            break # Found match for this db_pos, move to next
-                    
+
+                            break
+
                     if not found_active:
-                        # 3. Handle Pure Shadow Positions (Found in DB but not in Connectors)
-                        # Freshness Check: If we successfully queried the exchange connector 
-                        # and this position wasn't found, it might be stale/closed.
-                        # We only show it if it's very recent (last 60s) to allow for indexing lag.
                         if db_pos.exchange in successful_exchanges:
                             from datetime import timedelta
+
                             now = datetime.utcnow()
-                            # Use opened_at or updated_at to check for freshness
                             ref_time = db_pos.updated_at or db_pos.opened_at or now
                             if now - ref_time > timedelta(seconds=60):
-                                print(f"[OrderService] Skipping stale shadow position for {db_pos.symbol} on {db_pos.exchange} (ref_time: {ref_time})")
+                                print(
+                                    f"[OrderService] Skipping stale shadow position for {db_pos.symbol} on "
+                                    f"{db_pos.exchange} (ref_time: {ref_time})"
+                                )
                                 continue
 
-                        # Create shadow position object
+                        mark_price = db_pos.entry_price  # placeholder; UI can supply live mark
+                        unrealized_pnl = 0
+
                         shadow_pos = {
                             "id": f"shadow_{db_pos.id}",
                             "symbol": db_pos.symbol,
@@ -910,15 +961,22 @@ class OrderService:
                             "size": db_pos.size,
                             "size_tokens": db_pos.size,
                             "entry_price": db_pos.entry_price,
-                            "mark_price": db_pos.entry_price, # Placeholder
-                            "unrealized_pnl": 0,
+                            "mark_price": mark_price,
+                            "unrealized_pnl": unrealized_pnl,
                             "leverage": db_pos.leverage,
                             "margin_used": db_pos.margin_used,
                             "exchange": db_pos.exchange,
-                            "is_shadow": True,
+                            "is_shadow": False if db_pos.exchange == "simulation" else True,
+                            "status": db_pos.status,
                             "tp": db_pos.tp,
-                            "sl": db_pos.sl
+                            "sl": db_pos.sl,
                         }
+                        cfg = risk_map.get((db_pos.symbol, db_pos.exchange))
+                        if cfg:
+                            shadow_pos["tpsl_size_tokens"] = cfg.tpsl_size_tokens
+                            shadow_pos["tp_limit_price"] = cfg.tp_limit_price
+                            shadow_pos["sl_limit_price"] = cfg.sl_limit_price
+
                         all_positions.append(shadow_pos)
 
         except Exception as e:
@@ -946,7 +1004,10 @@ class OrderService:
         symbol: str,
         tp: Optional[Any] = None,
         sl: Optional[Any] = None,
-        exchange: str = None
+        exchange: str = None,
+        size_tokens: Optional[float] = None,
+        tp_limit_price: Optional[float] = None,
+        sl_limit_price: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update TP/SL for a position"""
 
@@ -955,38 +1016,33 @@ class OrderService:
         
         if not exchange:
             exchange = self._detect_exchange(symbol)
-            
+
         async with AsyncSessionLocal() as session:
             from sqlalchemy import select
-            
-            # Find existing position record
-            # Note: Since actual positions are often fetched from connectors, 
-            # we might need to create a shadow record here if it doesn't exist yet 
-            # (or if the syncer hasn't run).
-            
+
+            # Find existing position record. Since connector positions are often not stored,
+            # we keep a shadow DB record for TP/SL + extra risk config.
             result = await session.execute(
                 select(Position).where(
                     Position.user_address == user_address.lower(),
                     Position.symbol == symbol,
-                    Position.exchange == exchange
+                    Position.exchange == exchange,
                 )
             )
             position = result.scalar_one_or_none()
-            
+
             if not position:
-                # Create shadow position for TP/SL storage
-                # Values like size/entry_price might be 0 until synced
                 position = Position(
                     user_address=user_address.lower(),
                     symbol=symbol,
                     exchange=exchange,
-                    side='unknown', # Will be updated by syncer
+                    side="unknown",  # Will be updated by syncer
                     size=0,
                     entry_price=0,
                     leverage=1,
                     margin_used=0,
                     tp=tp_value,
-                    sl=sl_value
+                    sl=sl_value,
                 )
                 session.add(position)
             else:
@@ -995,14 +1051,76 @@ class OrderService:
                 if sl_value is not None:
                     position.sl = sl_value
                 position.updated_at = datetime.utcnow()
-            
+
             await session.commit()
-            
+
+            # Persist extended risk config (optional).
+            # When values are explicitly provided as None, we clear them.
+            if size_tokens is not None or tp_limit_price is not None or sl_limit_price is not None:
+                cfg_res = await session.execute(
+                    select(PositionRiskConfig).where(
+                        PositionRiskConfig.user_address == user_address.lower(),
+                        PositionRiskConfig.symbol == symbol,
+                        PositionRiskConfig.exchange == exchange,
+                    )
+                )
+                cfg = cfg_res.scalar_one_or_none()
+                if cfg is None:
+                    cfg = PositionRiskConfig(
+                        user_address=user_address.lower(),
+                        symbol=symbol,
+                        exchange=exchange,
+                    )
+                    session.add(cfg)
+
+                if size_tokens is not None:
+                    try:
+                        st = float(size_tokens)
+                    except Exception:
+                        st = 0.0
+                    cfg.tpsl_size_tokens = st if st > 0 else None
+
+                if tp_limit_price is not None:
+                    try:
+                        tlp = float(tp_limit_price)
+                    except Exception:
+                        tlp = 0.0
+                    cfg.tp_limit_price = tlp if tlp > 0 else None
+
+                if sl_limit_price is not None:
+                    try:
+                        slp = float(sl_limit_price)
+                    except Exception:
+                        slp = 0.0
+                    cfg.sl_limit_price = slp if slp > 0 else None
+
+                await session.commit()
+
+            cfg_payload: Dict[str, Any] = {}
+            try:
+                cfg_res = await session.execute(
+                    select(PositionRiskConfig).where(
+                        PositionRiskConfig.user_address == user_address.lower(),
+                        PositionRiskConfig.symbol == symbol,
+                        PositionRiskConfig.exchange == exchange,
+                    )
+                )
+                cfg = cfg_res.scalar_one_or_none()
+                if cfg:
+                    cfg_payload = {
+                        "size_tokens": cfg.tpsl_size_tokens,
+                        "tp_limit_price": cfg.tp_limit_price,
+                        "sl_limit_price": cfg.sl_limit_price,
+                    }
+            except Exception:
+                cfg_payload = {}
+
             return {
                 "symbol": symbol,
                 "tp": position.tp,
                 "sl": position.sl,
-                "status": "updated"
+                "risk_config": cfg_payload,
+                "status": "updated",
             }
 
     def _normalize_position_side(self, side: Optional[str]) -> Optional[str]:

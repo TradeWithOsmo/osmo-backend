@@ -156,6 +156,36 @@ class Position(Base):
         Index('idx_user_symbol', 'user_address', 'symbol', 'exchange'),
     )
 
+
+class PositionRiskConfig(Base):
+    """
+    Extra per-position risk config not represented on exchange connectors.
+
+    Used for TP/SL options coming from UI such as:
+    - fixed TP/SL size (tokens) independent from future position size changes
+    - TP/SL "limit price" overrides (for exchanges that support it)
+    """
+
+    __tablename__ = "position_risk_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, index=True, nullable=False)
+    exchange = Column(String, nullable=False)
+    symbol = Column(String, nullable=False)
+
+    # Fixed size in tokens to close when TP/SL triggers (optional)
+    tpsl_size_tokens = Column(Float, nullable=True)
+
+    # Optional limit prices to use on TP or SL trigger (optional)
+    tp_limit_price = Column(Float, nullable=True)
+    sl_limit_price = Column(Float, nullable=True)
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_risk_user_symbol', 'user_address', 'symbol', 'exchange', unique=True),
+    )
+
 class LeaderboardSnapshot(Base):
     """Daily snapshots for trader leaderboard (per user)"""
     __tablename__ = "leaderboard_snapshots"

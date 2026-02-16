@@ -9,7 +9,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from ..Guardrails.risk_gate import RiskGate
 from .planner import build_plan
 from .tool_registry import get_tool_registry
-from .tool_modes import WRITE_TOOL_NAMES as SHARED_WRITE_TOOL_NAMES
+from .tool_modes import (
+    CHART_WRITE_TOOL_NAMES as SHARED_CHART_WRITE_TOOL_NAMES,
+    EXECUTION_WRITE_TOOL_NAMES as SHARED_EXECUTION_WRITE_TOOL_NAMES,
+    WRITE_TOOL_NAMES as SHARED_WRITE_TOOL_NAMES,
+)
 from .tool_modules import (
     render_tool_modules_for_prompt,
     render_flow_templates_for_prompt,
@@ -36,6 +40,8 @@ FIAT_CODES: Set[str] = {
     "HKD",
 }
 
+CHART_WRITE_TOOL_NAMES: Set[str] = set(SHARED_CHART_WRITE_TOOL_NAMES)
+EXECUTION_WRITE_TOOL_NAMES: Set[str] = set(SHARED_EXECUTION_WRITE_TOOL_NAMES)
 WRITE_TOOL_NAMES: Set[str] = set(SHARED_WRITE_TOOL_NAMES)
 
 SYMBOL_REQUIRED_TOOLS: Set[str] = {
@@ -109,6 +115,18 @@ class ReasoningOrchestrator:
             if value and value not in target:
                 target.append(value)
 
+    def _parse_bool(self, value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "on", "yes"}:
+                return True
+            if normalized in {"0", "false", "off", "no"}:
+                return False
+            return default
+        return bool(value)
+
     def _normalize_message_for_cache(self, user_message: str) -> str:
         text = str(user_message or "").strip().lower()
         text = re.sub(r"\s+", " ", text)
@@ -136,7 +154,9 @@ class ReasoningOrchestrator:
         if any(marker in text for marker in execution_markers):
             return False
         states = tool_states or {}
-        if bool(states.get("write")) and any(term in text for term in ("set symbol", "set timeframe", "draw", "indicator")):
+        if self._parse_bool(states.get("write"), default=False) and any(
+            term in text for term in ("set symbol", "set timeframe", "draw", "indicator")
+        ):
             return False
         return True
 
@@ -261,19 +281,43 @@ class ReasoningOrchestrator:
         }
         return mapping.get(norm, text)
 
+    def _preferred_timeframe_from_tool_states(self, tool_states: Optional[Dict[str, Any]]) -> str:
+        states = tool_states or {}
+        market_timeframe = states.get("market_timeframe")
+        if isinstance(market_timeframe, str) and market_timeframe.strip():
+            return market_timeframe.strip()
+
+        preferred = states.get("preferred_timeframes")
+        if isinstance(preferred, str) and preferred.strip():
+            return preferred.strip()
+        if isinstance(preferred, list) and preferred:
+            first = preferred[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+
+        legacy = states.get("timeframe")
+        if isinstance(legacy, str) and legacy.strip():
+            return legacy.strip()
+        if isinstance(legacy, list) and legacy:
+            first = legacy[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+        return "1H"
+
+    def _preferred_indicators_from_tool_states(self, tool_states: Optional[Dict[str, Any]]) -> List[str]:
+        states = tool_states or {}
+        preferred = self._safe_string_list(states.get("preferred_indicators"))
+        if preferred:
+            return preferred
+        # Legacy fallback for older clients.
+        return self._safe_string_list(states.get("indicators"))
+
     def _safe_context(self, payload: Dict[str, Any], tool_states: Optional[Dict[str, Any]]) -> PlanContext:
         tool_states = tool_states or {}
         raw_context = payload.get("context")
         context = raw_context if isinstance(raw_context, dict) else {}
 
-        tf_fallback = "1H"
-        raw_tf = tool_states.get("timeframe")
-        if isinstance(raw_tf, str) and raw_tf.strip():
-            tf_fallback = raw_tf.strip()
-        elif isinstance(raw_tf, list) and raw_tf:
-            first = raw_tf[0]
-            if isinstance(first, str) and first.strip():
-                tf_fallback = first.strip()
+        tf_fallback = self._preferred_timeframe_from_tool_states(tool_states)
 
         side = str(context.get("side") or "").strip().lower() or None
         if side not in {"long", "short", "buy", "sell", None}:
@@ -402,7 +446,7 @@ class ReasoningOrchestrator:
         if not calls:
             return calls
 
-        write_enabled = bool((tool_states or {}).get("write"))
+        write_enabled = self._parse_bool((tool_states or {}).get("write"), default=False)
         active_symbol = self._active_market_symbol(tool_states)
         normalized_symbol = self._normalize_symbol(symbol)
         normalized_timeframe = self._normalize_timeframe(timeframe, fallback="1H")
@@ -527,7 +571,8 @@ class ReasoningOrchestrator:
         asset_type = self._infer_asset_type_from_symbol(symbol)
         tool_symbol = self._symbol_to_tool_symbol(symbol, asset_type) or symbol
 
-        write_enabled = bool(tool_states.get("write"))
+        write_enabled = self._parse_bool(tool_states.get("write"), default=False)
+        execution_enabled = self._parse_bool(tool_states.get("execution"), default=False)
         dropped_write = 0
         repaired_calls: List[ToolCall] = []
         for call in plan.tool_calls:
@@ -535,7 +580,11 @@ class ReasoningOrchestrator:
             if not name:
                 continue
 
-            if name in WRITE_TOOL_NAMES and not write_enabled:
+            if name in CHART_WRITE_TOOL_NAMES and not write_enabled:
+                dropped_write += 1
+                continue
+
+            if name in EXECUTION_WRITE_TOOL_NAMES and not execution_enabled:
                 dropped_write += 1
                 continue
 
@@ -624,14 +673,7 @@ class ReasoningOrchestrator:
 
     def _build_minimal_ai_plan(self, tool_states: Optional[Dict[str, Any]]) -> AgentPlan:
         tool_states = tool_states or {}
-        fallback_timeframe = "1H"
-        raw_tf = tool_states.get("timeframe")
-        if isinstance(raw_tf, str) and raw_tf.strip():
-            fallback_timeframe = raw_tf.strip()
-        elif isinstance(raw_tf, list) and raw_tf:
-            first_tf = raw_tf[0]
-            if isinstance(first_tf, str) and first_tf.strip():
-                fallback_timeframe = first_tf.strip()
+        fallback_timeframe = self._preferred_timeframe_from_tool_states(tool_states)
         return AgentPlan(intent="analysis", context=PlanContext(timeframe=fallback_timeframe))
 
     def _compact_tool_states_for_planner(self, tool_states: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -647,9 +689,13 @@ class ReasoningOrchestrator:
             "market_symbol",
             "market",
             "market_display",
+            "market_timeframe",
+            "market_active_indicators",
+            "preferred_timeframes",
             "timeframe",
-            "indicators",
+            "preferred_indicators",
             "execution",
+            "conversation_style",
             "agent_engine",
             "agent_engine_strict",
             "memory_enabled",
@@ -657,6 +703,8 @@ class ReasoningOrchestrator:
             "web_observation_enabled",
             "web_observation_mode",
             "max_tool_actions",
+            "trading_style",
+            "trading_style_prompt",
         )
         compact: Dict[str, Any] = {}
         for key in keys:
@@ -668,6 +716,10 @@ class ReasoningOrchestrator:
             if isinstance(value, str) and not value.strip():
                 continue
             compact[key] = value
+
+        preferred_indicators = self._preferred_indicators_from_tool_states(states)
+        if preferred_indicators:
+            compact["preferred_indicators"] = preferred_indicators
         return compact
 
     def _build_plan_with_ai(

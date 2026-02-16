@@ -21,10 +21,49 @@ CORE_SNIPPETS: Dict[str, str] = {
         "TOOL USAGE DECISION FRAMEWORK:\n"
         "1) Determine what evidence is needed BEFORE calling tools.\n"
         "2) Prioritize tools by information value: price > technicals > orderbook/funding > news/sentiment.\n"
-        "3) For chart mutation: set_symbol > set_timeframe > action > verify.\n"
+        "3) For TradingView chart mutation: focus_chart(optional) > ensure_mode(optional) > set_symbol > set_timeframe > action > verify.\n"
+        "   - After any TradingView write tool, verify using verify_tradingview_state.\n"
+        "   - Before reading indicator values, verify it exists using verify_indicator_present.\n"
+        "   - If write verification fails, run lightweight recovery (re-sync symbol/timeframe + verify) before continuing.\n"
         "4) If write mode is off, explicitly say Allow Write is required.\n"
         "5) Never call a tool just because it exists. Only call tools that contribute to answering the user.\n"
         "6) After each tool observation, evaluate: do I have enough evidence or do I need more?"
+    ),
+    "playwright_validated_ops": (
+        "PLAYWRIGHT-VALIDATED OPERATIONS POLICY:\n"
+        "- For TradingView write/nav actions, follow the same sequence proven in live browser coverage.\n"
+        "- Pre-check bridge health first: consumer_online must be true; if not, ask user to open /trade.\n"
+        "- Prefer deterministic sequence: set_timeframe -> clear_indicators -> indicator cycle -> draw cycle -> "
+        "setup_trade -> set_symbol check -> alert/session -> nav checks.\n"
+        "- For transient bridge failures (HTTP 5xx / timeout / temporary offline), retry briefly after health check.\n"
+        "- Keep using official tool names from registry only; aliases are inputs, not tool names."
+    ),
+    "tradingview_human_ops": (
+        "TRADINGVIEW HUMAN OPERATION LOGIC (treat it like a real operator, not a bot):\n"
+        "- If user asks about a chart they expect to SEE: first make sure chart is on the right symbol/timeframe.\n"
+        "- Typical human flow for indicators (example RSI):\n"
+        "  1) set_symbol (if currently not the target)\n"
+        "  2) set_timeframe (if needed)\n"
+        "  3) add_indicator\n"
+        "  4) verify_indicator_present (minimize UI/command race conditions)\n"
+        "  5) get_indicators (read values)\n"
+        "  6) remove_indicator or clear_indicators (cleanup)\n"
+        "  7) verify_tradingview_state (ensure cleanup/state is correct)\n"
+        "- Typical human flow to switch symbols:\n"
+        "  1) set_symbol -> verify_tradingview_state(symbol)\n"
+        "  2) do the action (add indicator/draw/setup_trade)\n"
+        "  3) verify_tradingview_state\n"
+        "- If user says: 'now switch from BTC to ETH', you MUST switch symbol first, then re-do indicator/drawing steps.\n"
+    ),
+    "portfolio_tools": (
+        "PORTFOLIO MODIFY TOOLS (require explicit user intent):\n"
+        "- get_positions: read open positions + account summary before any close/reverse/cancel decision.\n"
+        "- adjust_position_tpsl: tp/sl can be absolute price ('123.45') or relative ('3%' or '100USD').\n"
+        "  Optional: size_tokens (fixed close size when TP/SL triggers), tp_limit_price, sl_limit_price.\n"
+        "- close_position: close single symbol (market if price omitted, limit if price provided), supports size_pct.\n"
+        "- close_all_positions: close everything (market).\n"
+        "- reverse_position: reverse one symbol position.\n"
+        "- cancel_order: cancel a pending order id.\n"
     ),
     "evidence": (
         "EVIDENCE RULES:\n"
@@ -143,6 +182,8 @@ def _runtime_defaults_snippet(
     strict_react: bool,
     flow_mode: str,
     rag_mode: str,
+    reliability_mode: str,
+    recovery_mode: str,
 ) -> str:
     return (
         "Runtime defaults: "
@@ -153,6 +194,7 @@ def _runtime_defaults_snippet(
         f"knowledge={'on' if knowledge_enabled else 'off'}, "
         f"strict_react={'on' if strict_react else 'off'}, "
         f"flow_mode={flow_mode}, rag_mode={rag_mode}."
+        f" reliability_mode={reliability_mode}, recovery_mode={recovery_mode}."
     )
 
 
@@ -180,6 +222,8 @@ def build_system_prompt(
     strict_react = _parse_bool(states.get("strict_react"), default=True)
     flow_mode = str(states.get("runtime_flow_mode") or "sync").strip().lower() or "sync"
     rag_mode = str(states.get("rag_mode") or "secondary").strip().lower() or "secondary"
+    reliability_mode = str(states.get("reliability_mode") or "balanced").strip().lower() or "balanced"
+    recovery_mode = str(states.get("recovery_mode") or "recover_then_continue").strip().lower() or "recover_then_continue"
 
     market = states.get("market_symbol") or states.get("market") or states.get("market_display") or "none"
     timeframe = states.get("timeframe")
@@ -200,13 +244,18 @@ def build_system_prompt(
         CORE_SNIPPETS["reasoning_framework"],
         CORE_SNIPPETS["react"],
         CORE_SNIPPETS["tools"],
+        CORE_SNIPPETS["playwright_validated_ops"],
         CORE_SNIPPETS["evidence"],
         CORE_SNIPPETS["trade_decision_framework"],
     ]
 
     # Only include drawing framework when write mode allows chart actions
     if write_enabled:
+        lines.append(CORE_SNIPPETS["tradingview_human_ops"])
         lines.append(CORE_SNIPPETS["drawing_decision_framework"])
+
+    # Portfolio tools can still be relevant even if the user doesn't ask for TradingView chart mutation.
+    lines.append(CORE_SNIPPETS["portfolio_tools"])
 
     lines.extend([
         CORE_SNIPPETS["multi_timeframe"],
@@ -224,6 +273,8 @@ def build_system_prompt(
             strict_react=strict_react,
             flow_mode=flow_mode,
             rag_mode=rag_mode,
+            reliability_mode=reliability_mode,
+            recovery_mode=recovery_mode,
         ),
         f"Reasoning should be concise ({_bullet_hint(reasoning_effort)}).",
         CORE_SNIPPETS["output"],
@@ -239,5 +290,25 @@ def build_system_prompt(
             lines.append("Reasoning effort HIGH: validate assumptions and risks.")
         elif effort == "extra_high":
             lines.append("Reasoning effort EXTRA_HIGH: max validation, still concise.")
+
+    # Conversation style (token-light, omit when normal/unknown)
+    conv_style = str(states.get("conversation_style") or "").strip().lower().replace(" ", "_")
+    conv_map: Dict[str, str] = {
+        "learning": "COMM STYLE: learning. Teach briefly; define jargon; ask 1 clarifying question if needed.",
+        "concise": "COMM STYLE: concise. Short, bullet answers; essentials only; no filler.",
+        "explanatory": "COMM STYLE: explanatory. Explain the 'why' with compact reasoning; avoid long essays.",
+        "formal": "COMM STYLE: formal. Professional tone; precise wording; avoid slang.",
+    }
+    conv_snippet = conv_map.get(conv_style)
+    if conv_snippet:
+        lines.append(conv_snippet)
+
+    # Trading Style Integration
+    style_name = states.get("trading_style")
+    style_prompt = states.get("trading_style_prompt")
+    if style_name and style_prompt:
+        # Token-light: do not include style name (UI already shows it) and avoid encouraging the model
+        # to repeat the name/trader in the answer.
+        lines.append(f"TRADING STYLE:\n{style_prompt}")
 
     return "\n\n".join(lines).strip()

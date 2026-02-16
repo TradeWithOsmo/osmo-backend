@@ -32,7 +32,10 @@ class PriceHistory:
     
     def get_24h_stats(self) -> Dict[str, any]:
         """Calculate 24h statistics"""
-        if not self.prices:
+        # NOTE: This runs concurrently with updates. Snapshot first to avoid races
+        # (e.g. deque emptied between checks and min/max computation).
+        items = list(self.prices)
+        if not items:
             return {
                 "change_24h": 0,
                 "change_percent_24h": 0,
@@ -40,11 +43,19 @@ class PriceHistory:
                 "low_24h": None
             }
         
-        current_price = self.prices[-1][0]
-        prices_only = [p for p, _ in self.prices]
+        current_price = items[-1][0]
+        prices_only = [p for p, _ in items if p is not None]
+        if not prices_only:
+            return {
+                "change_24h": 0,
+                "change_percent_24h": 0,
+                "high_24h": None,
+                "low_24h": None,
+                "data_points": 0,
+            }
         
         # Get 24h ago price (oldest in deque after cleanup)
-        price_24h_ago = self.prices[0][0]
+        price_24h_ago = items[0][0] or 0
         
         # Calculate stats
         change_24h = current_price - price_24h_ago
@@ -57,7 +68,7 @@ class PriceHistory:
             "change_percent_24h": round(change_percent_24h, 2),
             "high_24h": round(high_24h, 6),
             "low_24h": round(low_24h, 6),
-            "data_points": len(self.prices)
+            "data_points": len(items)
         }
 
 

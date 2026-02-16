@@ -25,6 +25,10 @@ class UsageService:
         seen = set()
         for item in values or []:
             value = str(item or "").strip()
+            if "/" in value:
+                prefix, remainder = value.split("/", 1)
+                if prefix.lower() in {"nvidia", "openrouter"} and remainder:
+                    value = remainder.strip()
             if not value or value in seen:
                 continue
             seen.add(value)
@@ -271,30 +275,70 @@ class UsageService:
             logger.error(f"Error saving enabled models: {e}")
             return False
 
+    async def _resolve_live_default_models(self, limit: int = 12) -> List[str]:
+        """Build sane defaults from the current model catalog."""
+        try:
+            from services.openrouter_service import openrouter_service
+
+            live_models = await openrouter_service.get_models()
+        except Exception as e:
+            logger.warning(f"Unable to resolve live default models: {e}")
+            return []
+
+        live_ids = self._normalize_enabled_ids(
+            [str((item or {}).get("id") or "").strip() for item in (live_models or [])]
+        )
+        if not live_ids:
+            return []
+
+        selected: List[str] = []
+
+        def add(model_id: str) -> None:
+            if model_id and model_id in live_ids and model_id not in selected:
+                selected.append(model_id)
+
+        # Include free-tier IDs first when available.
+        for model_id in live_ids:
+            if model_id.endswith(":free"):
+                add(model_id)
+
+        # Then pick a balanced one-per-provider core set.
+        preferred_prefixes = (
+            "anthropic/",
+            "openai/",
+            "google/",
+            "deepseek/",
+            "x-ai/",
+            "qwen/",
+            "moonshot/",
+            "meta/",
+            "mistralai/",
+        )
+        for prefix in preferred_prefixes:
+            hit = next((mid for mid in live_ids if mid.startswith(prefix)), None)
+            if hit:
+                add(hit)
+
+        # Top up with earliest catalog entries to reach target size.
+        for model_id in live_ids:
+            if len(selected) >= max(1, int(limit or 12)):
+                break
+            add(model_id)
+
+        return selected[: max(1, int(limit or 12))]
+
     async def get_default_enabled_models(self) -> List[str]:
         """Get the global default enabled models"""
-        DEFAULT_MODELS = [
-            'anthropic/claude-4.5-sonnet',
-            'deepseek/deepseek-chat-v3.1',
-            'google/gemini-3-pro',
-            'openai/gpt-5.1',
-            'openai/gpt-oss-120b:free',
-            'x-ai/grok-4',
-            'x-ai/grok-420',
-            'moonshot/kimi-k2-thinking',
-            'qwen/qwen-3-max',
-            'nvidia/moonshotai/kimi-k2-thinking',
-            'nvidia/qwen/qwen3-next-80b-a3b-thinking',
-            'nvidia/z-ai/glm4.7',
-            'nvidia/minimaxai/minimax-m2.1',
-            'nvidia/moonshotai/kimi-k2.5',
-            'moonshotai/kimi-k2-thinking',
-            'qwen/qwen3-next-80b-a3b-thinking',
-            'z-ai/glm4.7',
-            'minimaxai/minimax-m2.1',
-            'moonshotai/kimi-k2.5'
+        FALLBACK_DEFAULT_MODELS = [
+            "moonshotai/kimi-k2.5",
+            "qwen/qwen3-next-80b-a3b-thinking",
+            "anthropic/claude-3.5-sonnet",
+            "google/gemini-1.5-pro",
+            "deepseek/deepseek-v3",
+            "openai/gpt-oss-120b:free",
         ]
-        
+        live_defaults = await self._resolve_live_default_models(limit=12)
+
         try:
             async with AsyncSessionLocal() as session:
                 # Use a specific keyword for default settings
@@ -305,12 +349,16 @@ class UsageService:
                 
                 if record and record.model_list:
                     stored = self._normalize_enabled_ids(json.loads(record.model_list))
-                    return self._normalize_enabled_ids([*stored, *DEFAULT_MODELS])
+                    if live_defaults:
+                        return self._normalize_enabled_ids([*stored, *live_defaults])
+                    return self._normalize_enabled_ids([*stored, *FALLBACK_DEFAULT_MODELS])
                 
-                return DEFAULT_MODELS
+                if live_defaults:
+                    return live_defaults
+                return FALLBACK_DEFAULT_MODELS
         except Exception as e:
             logger.error(f"Error getting default enabled models: {e}")
-            return DEFAULT_MODELS
+            return live_defaults or FALLBACK_DEFAULT_MODELS
 
     async def get_enabled_agents(self, user_address: str) -> List[str]:
         """Get list of enabled agents for a user"""

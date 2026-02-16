@@ -20,15 +20,125 @@ def test_build_plan_detects_symbol_and_analysis_tools():
     assert "get_whale_activity" in names
 
 
-def test_build_plan_indicator_flow_add_then_get_when_write_enabled():
+def test_build_plan_uses_preferred_timeframes_hint_when_prompt_has_no_timeframe():
+    plan = build_plan(
+        "analyze BTC with RSI",
+        tool_states={"preferred_timeframes": ["4H"]},
+    )
+    assert plan.context.timeframe == "4H"
+
+
+def test_build_plan_uses_market_timeframe_as_sot_before_preferred_timeframe_hint():
+    plan = build_plan(
+        "analyze BTC with RSI",
+        tool_states={"market_timeframe": "1D", "preferred_timeframes": ["5m"]},
+    )
+    assert plan.context.timeframe == "1D"
+
+
+def test_build_plan_uses_preferred_indicator_hints_for_analysis_reads():
     plan = build_plan(
         "analyze BTC 1h",
-        tool_states={"write": True, "indicators": ["RSI"]},
+        tool_states={"write": True, "preferred_indicators": ["RSI"]},
     )
     names = [c.name for c in plan.tool_calls]
+    assert "get_indicators" in names
+    assert "add_indicator" not in names
+    assert "get_active_indicators" not in names
+
+
+def test_build_plan_legacy_indicators_tool_state_is_hint_only():
+    plan = build_plan(
+        "analyze BTC 1h",
+        tool_states={"write": True, "indicators": ["MACD"]},
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "get_indicators" in names
+    assert "add_indicator" not in names
+    assert "get_active_indicators" not in names
+
+
+def test_build_plan_indicator_sequence_handles_add_get_remove_in_one_prompt():
+    plan = build_plan(
+        "please change timeframe to 1m, add indicator stoch rsi, get indicator, remove indicator",
+        tool_states={"write": True, "market_symbol": "BTC-USD"},
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "set_timeframe" in names
     assert "add_indicator" in names
-    assert "get_active_indicators" in names
-    assert names.index("add_indicator") < names.index("get_active_indicators")
+    assert "get_indicators" in names
+    assert "remove_indicator" in names
+    assert names.index("set_timeframe") < names.index("add_indicator")
+    assert names.index("add_indicator") < names.index("get_indicators")
+    assert names.index("get_indicators") < names.index("remove_indicator")
+
+
+def test_build_plan_chart_sequence_respects_explicit_step_order():
+    plan = build_plan(
+        "set timeframe to 1m > add indicator rsi > get indicators > remove indicator rsi",
+        tool_states={"write": True, "market_symbol": "BTC-USD"},
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "set_timeframe" in names
+    assert "add_indicator" in names
+    assert "get_indicators" in names
+    assert "remove_indicator" in names
+    assert names.index("set_timeframe") < names.index("add_indicator")
+    assert names.index("add_indicator") < names.index("get_indicators")
+    assert names.index("get_indicators") < names.index("remove_indicator")
+
+
+def test_build_plan_chart_sequence_respects_comma_separated_order():
+    plan = build_plan(
+        "remove indicator rsi, set timeframe 1m, add indicator rsi, get indicators",
+        tool_states={"write": True, "market_symbol": "BTC-USD"},
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "remove_indicator" in names
+    assert "set_timeframe" in names
+    assert "add_indicator" in names
+    assert "get_indicators" in names
+    assert names.index("remove_indicator") < names.index("set_timeframe")
+    assert names.index("set_timeframe") < names.index("add_indicator")
+    assert names.index("add_indicator") < names.index("get_indicators")
+
+
+def test_build_plan_chart_sequence_respects_then_order():
+    plan = build_plan(
+        "set timeframe 1m then add indicator rsi then get indicators then remove indicator rsi",
+        tool_states={"write": True, "market_symbol": "BTC-USD"},
+    )
+    names = [c.name for c in plan.tool_calls]
+    assert "set_timeframe" in names
+    assert "add_indicator" in names
+    assert "get_indicators" in names
+    assert "remove_indicator" in names
+    assert names.index("set_timeframe") < names.index("add_indicator")
+    assert names.index("add_indicator") < names.index("get_indicators")
+    assert names.index("get_indicators") < names.index("remove_indicator")
+
+
+def test_build_plan_chart_sequence_supports_multiple_timeframe_steps():
+    plan = build_plan(
+        "set timeframe 1m then set timeframe 5m then get indicators",
+        tool_states={"write": True, "market_symbol": "BTC-USD"},
+    )
+    timeframe_calls = [call for call in plan.tool_calls if call.name == "set_timeframe"]
+    assert len(timeframe_calls) == 2
+    assert timeframe_calls[0].args.get("timeframe") == "1m"
+    assert timeframe_calls[1].args.get("timeframe") == "5m"
+
+
+def test_build_plan_chart_sequence_keeps_interleaved_duplicate_ops_order():
+    plan = build_plan(
+        "set timeframe 1m then add indicator rsi then set timeframe 5m then get indicators",
+        tool_states={"write": True, "market_symbol": "BTC-USD"},
+    )
+    ordered_names = [call.name for call in plan.tool_calls]
+    assert ordered_names.count("set_timeframe") == 2
+
+    op_trace = [f"{call.name}:{(call.args or {}).get('timeframe', '')}" for call in plan.tool_calls if call.name in {"set_timeframe", "add_indicator", "get_indicators"}]
+    assert op_trace[:4] == ["set_timeframe:1m", "add_indicator:", "set_timeframe:5m", "get_indicators:5m"]
 
 
 def test_build_plan_skips_tools_for_smalltalk():
@@ -46,8 +156,8 @@ def test_build_plan_uses_market_microstructure_tools_when_requested():
 
 def test_build_plan_warns_when_chart_write_requested_but_write_disabled():
     plan = build_plan(
-        "analyze BTC and apply RSI",
-        tool_states={"write": False, "indicators": ["RSI"]},
+        "analyze BTC and add indicator RSI",
+        tool_states={"write": False, "preferred_indicators": ["RSI"]},
     )
     names = [c.name for c in plan.tool_calls]
     assert "add_indicator" not in names
@@ -81,17 +191,15 @@ def test_build_plan_auto_sets_symbol_before_price_when_symbol_changes_and_write_
     assert set_symbol_calls[0].args.get("target_symbol") == "SOL-USD"
 
 
-def test_build_plan_indicator_flow_switches_symbol_then_adds_indicator():
+def test_build_plan_preferred_indicator_hint_does_not_force_indicator_write_flow():
     plan = build_plan(
         "analyze SOL 1h",
-        tool_states={"market_symbol": "BTC-USD", "write": True, "indicators": ["RSI"]},
+        tool_states={"market_symbol": "BTC-USD", "write": True, "preferred_indicators": ["RSI"]},
     )
     names = [c.name for c in plan.tool_calls]
-    assert "set_symbol" in names
-    assert "add_indicator" in names
-    assert "get_active_indicators" in names
-    assert names.index("set_symbol") < names.index("add_indicator")
-    assert names.index("add_indicator") < names.index("get_active_indicators")
+    assert "get_indicators" in names
+    assert "add_indicator" not in names
+    assert "get_active_indicators" not in names
 
 
 def test_build_plan_warns_symbol_mismatch_when_write_disabled():
@@ -452,6 +560,8 @@ def test_runtime_executes_registered_tools():
         assert "AGENTIC_TRADING_RUNTIME_CONTEXT" in packet["runtime_context"]
         assert isinstance(packet.get("phases"), list)
         assert len(packet.get("phases") or []) > 0
+        assert isinstance(packet.get("execution_graph"), dict)
+        assert len((packet.get("execution_graph") or {}).get("nodes") or []) > 0
 
     asyncio.run(_run())
 
@@ -1067,6 +1177,549 @@ def test_runtime_write_tool_retry_can_be_enabled_with_mode_override():
             for item in (packet.get("phases") or [])
         )
         assert retry_running
+
+    asyncio.run(_run())
+
+
+def test_runtime_write_transport_5xx_gets_one_retry_without_write_retry_override():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+        attempts = {"set_timeframe": 0}
+
+        async def flaky_set_timeframe(symbol: str, timeframe: str):
+            attempts["set_timeframe"] += 1
+            if attempts["set_timeframe"] == 1:
+                raise RuntimeError("TradingView command HTTP 504")
+            return {"status": "completed", "symbol": symbol, "timeframe": timeframe}
+
+        runtime._registry = {"set_timeframe": flaky_set_timeframe}
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="set_timeframe",
+                    args={"symbol": "BTC-USD", "timeframe": "1m"},
+                    reason="test",
+                )
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "set timeframe 1m",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "retry_failed_tools": True,
+                "max_tool_calls": 5,
+            },
+        )
+
+        assert attempts["set_timeframe"] == 2
+        assert [item.name for item in packet["tool_results"]].count("set_timeframe") == 2
+        retry_running = any(
+            item.get("name") == "tool_retry_scheduled" and item.get("status") == "running"
+            for item in (packet.get("phases") or [])
+        )
+        assert retry_running
+
+    asyncio.run(_run())
+
+
+def test_runtime_write_flow_raises_budget_floor_for_human_ops_guards():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_set_symbol(symbol: str, target_symbol: str):
+            return {"status": "completed", "symbol": symbol, "target_symbol": target_symbol}
+
+        async def fake_set_timeframe(symbol: str, timeframe: str):
+            return {"status": "completed", "symbol": symbol, "timeframe": timeframe}
+
+        async def fake_add_indicator(symbol: str, name: str, inputs=None, force_overlay: bool = True):
+            return {"status": "completed", "symbol": symbol, "name": name}
+
+        async def fake_get_indicators(symbol: str, timeframe: str = "1H", asset_type: str = "crypto"):
+            return {"data": {"symbol": symbol, "timeframe": timeframe, "asset_type": asset_type, "RSI": 51.2}}
+
+        async def fake_remove_indicator(symbol: str, name: str):
+            return {"status": "completed", "symbol": symbol, "name": name}
+
+        async def fake_verify_tradingview_state(
+            symbol: str,
+            timeframe: str = "1H",
+            require_indicators=None,
+            forbid_indicators=None,
+        ):
+            return {
+                "verified": True,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "require_indicators": require_indicators or [],
+                "forbid_indicators": forbid_indicators or [],
+            }
+
+        async def fake_verify_indicator_present(symbol: str, name: str, timeframe: str = "1H"):
+            return {"present": True, "symbol": symbol, "name": name, "timeframe": timeframe}
+
+        runtime._registry = {
+            "set_symbol": fake_set_symbol,
+            "set_timeframe": fake_set_timeframe,
+            "add_indicator": fake_add_indicator,
+            "get_indicators": fake_get_indicators,
+            "remove_indicator": fake_remove_indicator,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+            "verify_indicator_present": fake_verify_indicator_present,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="set_symbol",
+                    args={"symbol": "BTC-USD", "target_symbol": "BTC-USD"},
+                    reason="test",
+                ),
+                ToolCall(
+                    name="set_timeframe",
+                    args={"symbol": "BTC-USD", "timeframe": "1m"},
+                    reason="test",
+                ),
+                ToolCall(
+                    name="add_indicator",
+                    args={"symbol": "BTC-USD", "name": "RSI"},
+                    reason="test",
+                ),
+                ToolCall(
+                    name="get_indicators",
+                    args={"symbol": "BTC-USD", "timeframe": "1m", "asset_type": "crypto"},
+                    reason="test",
+                ),
+                ToolCall(
+                    name="remove_indicator",
+                    args={"symbol": "BTC-USD", "name": "RSI"},
+                    reason="test",
+                ),
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "set symbol > set timeframe > add rsi > get indicators > remove rsi",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "market_symbol": "BTC-USD",
+                "retry_failed_tools": True,
+                "max_tool_calls": 4,
+                "reliability_mode": "balanced",
+            },
+        )
+
+        budget_phase = next(
+            (item for item in (packet.get("phases") or []) if item.get("name") == "write_budget_floor"),
+            None,
+        )
+        assert budget_phase is not None
+        assert len(packet["tool_results"]) > 4
+
+    asyncio.run(_run())
+
+
+def test_runtime_recovery_mode_resyncs_and_continues_after_write_failure():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+        attempts = {"set_timeframe": 0}
+
+        async def flaky_set_timeframe(symbol: str, timeframe: str):
+            attempts["set_timeframe"] += 1
+            if attempts["set_timeframe"] == 1:
+                raise RuntimeError("write verification failed (mismatch=timeframe)")
+            return {"status": "completed", "symbol": symbol, "timeframe": timeframe}
+
+        async def fake_verify_tradingview_state(symbol: str, timeframe: str = "1H"):
+            return {"verified": True, "symbol": symbol, "timeframe": timeframe}
+
+        runtime._registry = {
+            "set_timeframe": flaky_set_timeframe,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="set_timeframe",
+                    args={"symbol": "BTC-USD", "timeframe": "1m"},
+                    reason="test",
+                )
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "set timeframe 1m",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "market_symbol": "BTC-USD",
+                "retry_failed_tools": True,
+                "reliability_mode": "balanced",
+                "recovery_mode": "recover_then_continue",
+                "max_tool_calls": 6,
+            },
+        )
+
+        assert attempts["set_timeframe"] == 2
+        names = [item.name for item in packet["tool_results"]]
+        assert names.count("set_timeframe") == 2
+        assert "verify_tradingview_state" in names
+        recovery_scheduled = any(
+            item.get("name") == "tool_recovery_scheduled" and item.get("status") == "running"
+            for item in (packet.get("phases") or [])
+        )
+        assert recovery_scheduled
+
+    asyncio.run(_run())
+
+
+def test_runtime_recovery_can_reexecute_previously_failed_verify_call():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+        attempts = {"verify": 0, "set_timeframe": 0}
+
+        async def flaky_verify_tradingview_state(symbol: str, timeframe: str = "1H"):
+            attempts["verify"] += 1
+            if attempts["verify"] == 1:
+                raise RuntimeError("TradingView state not verified within 6.0s.")
+            return {"verified": True, "symbol": symbol, "timeframe": timeframe}
+
+        async def flaky_set_timeframe(symbol: str, timeframe: str):
+            attempts["set_timeframe"] += 1
+            if attempts["set_timeframe"] == 1:
+                raise RuntimeError("write verification failed (mismatch=timeframe)")
+            return {"status": "completed", "symbol": symbol, "timeframe": timeframe}
+
+        runtime._registry = {
+            "verify_tradingview_state": flaky_verify_tradingview_state,
+            "set_timeframe": flaky_set_timeframe,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="verify_tradingview_state",
+                    args={"symbol": "BTC-USD", "timeframe": "1m"},
+                    reason="pre-check",
+                ),
+                ToolCall(
+                    name="set_timeframe",
+                    args={"symbol": "BTC-USD", "timeframe": "1m"},
+                    reason="set-tf",
+                ),
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "verify then set timeframe",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "market_symbol": "BTC-USD",
+                "retry_failed_tools": True,
+                "reliability_mode": "balanced",
+                "recovery_mode": "recover_then_continue",
+                "max_tool_calls": 8,
+            },
+        )
+        # verify should run at least twice: initial failure + recovery recheck
+        assert attempts["verify"] >= 2
+        recovery_scheduled = any(
+            item.get("name") == "tool_recovery_scheduled" and item.get("status") == "running"
+            for item in (packet.get("phases") or [])
+        )
+        assert recovery_scheduled
+
+    asyncio.run(_run())
+
+
+def test_runtime_injects_verify_guard_after_chart_write_when_available():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_set_timeframe(symbol: str, timeframe: str):
+            return {"status": "completed", "symbol": symbol, "timeframe": timeframe}
+
+        async def fake_verify_tradingview_state(symbol: str, timeframe: str = "1H"):
+            return {"verified": True, "symbol": symbol, "timeframe": timeframe}
+
+        runtime._registry = {
+            "set_timeframe": fake_set_timeframe,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="set_timeframe",
+                    args={"symbol": "BTC-USD", "timeframe": "1m"},
+                    reason="test",
+                )
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "set timeframe 1m",
+            tool_states={"plan_mode": True, "strict_react": True, "write": True, "market_symbol": "BTC-USD"},
+        )
+        names = [item.name for item in packet["tool_results"]]
+        assert names[:2] == ["set_timeframe", "verify_tradingview_state"]
+
+    asyncio.run(_run())
+
+
+def test_runtime_verify_guard_does_not_use_context_timeframe_for_symbol_only_write():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_set_symbol(symbol: str, target_symbol: str):
+            return {"status": "completed", "symbol": symbol, "target_symbol": target_symbol}
+
+        async def fake_verify_tradingview_state(symbol: str, **kwargs):
+            return {"verified": True, "symbol": symbol, "kwargs": kwargs}
+
+        runtime._registry = {
+            "set_symbol": fake_set_symbol,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1D"),
+            tool_calls=[
+                ToolCall(
+                    name="set_symbol",
+                    args={"symbol": "BTC-USD", "target_symbol": "SOL-USD"},
+                    reason="test",
+                )
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "set symbol sol",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "market_symbol": "BTC-USD",
+                "timeframe": ["1D"],  # UI chip hint (must not become verify SoT)
+            },
+        )
+        verify_results = [item for item in packet["tool_results"] if item.name == "verify_tradingview_state"]
+        assert len(verify_results) == 1
+        assert "timeframe" not in (verify_results[0].args or {})
+
+    asyncio.run(_run())
+
+
+def test_runtime_warns_when_verifier_timeframe_mismatches_market_sot():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_verify_tradingview_state(symbol: str, timeframe: str = "1H"):
+            return {"verified": True, "symbol": symbol, "timeframe": timeframe}
+
+        runtime._registry = {
+            "verify_tradingview_state": fake_verify_tradingview_state,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1D"),
+            tool_calls=[
+                ToolCall(
+                    name="verify_tradingview_state",
+                    args={"symbol": "BTC-USD", "timeframe": "1D"},
+                    reason="test",
+                )
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "verify chart state",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "market_symbol": "BTC-USD",
+                "market_timeframe": "5m",
+            },
+        )
+        warnings = packet["plan"].warnings or []
+        assert any("verifier sot mismatch" in item.lower() and "timeframe" in item.lower() for item in warnings)
+
+    asyncio.run(_run())
+
+
+def test_runtime_injects_indicator_presence_guard_before_indicator_read():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_add_indicator(symbol: str, name: str, inputs=None, force_overlay: bool = True):
+            return {"status": "completed", "symbol": symbol, "name": name}
+
+        async def fake_verify_tradingview_state(
+            symbol: str,
+            timeframe: str = "1H",
+            require_indicators=None,
+            forbid_indicators=None,
+        ):
+            return {
+                "verified": True,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "require_indicators": require_indicators or [],
+                "forbid_indicators": forbid_indicators or [],
+            }
+
+        async def fake_verify_indicator_present(symbol: str, name: str, timeframe: str = "1H"):
+            return {"present": True, "symbol": symbol, "name": name, "timeframe": timeframe}
+
+        async def fake_get_indicators(symbol: str, timeframe: str = "1H", asset_type: str = "crypto"):
+            return {"RSI": 57.0, "symbol": symbol, "timeframe": timeframe, "asset_type": asset_type}
+
+        runtime._registry = {
+            "add_indicator": fake_add_indicator,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+            "verify_indicator_present": fake_verify_indicator_present,
+            "get_indicators": fake_get_indicators,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="add_indicator",
+                    args={"symbol": "BTC-USD", "name": "RSI"},
+                    reason="test",
+                ),
+                ToolCall(
+                    name="get_indicators",
+                    args={"symbol": "BTC-USD", "timeframe": "1m", "asset_type": "crypto"},
+                    reason="test",
+                ),
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "add rsi then get indicators",
+            tool_states={"plan_mode": True, "strict_react": True, "write": True, "market_symbol": "BTC-USD"},
+        )
+        names = [item.name for item in packet["tool_results"]]
+        assert "verify_indicator_present" in names
+        assert names.index("verify_indicator_present") < names.index("get_indicators")
+
+    asyncio.run(_run())
+
+
+def test_runtime_injects_indicator_absence_guard_after_remove_indicator():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def fake_remove_indicator(symbol: str, name: str):
+            return {"status": "completed", "symbol": symbol, "name": name}
+
+        async def fake_verify_tradingview_state(
+            symbol: str,
+            timeframe: str = "1H",
+            require_indicators=None,
+            forbid_indicators=None,
+        ):
+            return {
+                "verified": True,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "require_indicators": require_indicators or [],
+                "forbid_indicators": forbid_indicators or [],
+            }
+
+        runtime._registry = {
+            "remove_indicator": fake_remove_indicator,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1m"),
+            tool_calls=[
+                ToolCall(
+                    name="remove_indicator",
+                    args={"symbol": "BTC-USD", "name": "RSI"},
+                    reason="test",
+                ),
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "remove rsi",
+            tool_states={"plan_mode": True, "strict_react": True, "write": True, "market_symbol": "BTC-USD"},
+        )
+        verify_results = [item for item in packet["tool_results"] if item.name == "verify_tradingview_state"]
+        assert len(verify_results) == 1
+        assert (verify_results[0].args or {}).get("forbid_indicators") == ["RSI"]
+
+    asyncio.run(_run())
+
+
+def test_runtime_recovery_for_indicator_write_does_not_force_set_timeframe_from_context_only():
+    async def _run():
+        runtime = AgenticTradingRuntime()
+
+        async def failing_add_indicator(symbol: str, name: str):
+            raise RuntimeError("write verification failed (mismatch=timeframe)")
+
+        async def fake_verify_tradingview_state(symbol: str, **kwargs):
+            return {"verified": True, "symbol": symbol, "kwargs": kwargs}
+
+        runtime._registry = {
+            "add_indicator": failing_add_indicator,
+            "verify_tradingview_state": fake_verify_tradingview_state,
+        }
+        runtime._build_plan_phase = lambda **_: AgentPlan(
+            intent="analysis",
+            context=PlanContext(symbol="BTC-USD", timeframe="1D"),
+            tool_calls=[
+                ToolCall(
+                    name="add_indicator",
+                    args={"symbol": "BTC-USD", "name": "RSI"},
+                    reason="test",
+                )
+            ],
+        )
+
+        packet = await runtime.prepare(
+            "add rsi",
+            tool_states={
+                "plan_mode": True,
+                "strict_react": True,
+                "write": True,
+                "market_symbol": "BTC-USD",
+                "retry_failed_tools": False,
+                "reliability_mode": "balanced",
+                "recovery_mode": "recover_then_continue",
+                "timeframe": ["1D"],  # UI chip hint only
+                "max_tool_calls": 6,
+            },
+        )
+
+        recovery_phase = next(
+            (item for item in (packet.get("phases") or []) if item.get("name") == "tool_recovery_scheduled"),
+            None,
+        )
+        assert recovery_phase is not None
+        recovery_tools = ((recovery_phase.get("meta") or {}).get("recovery_tools") or [])
+        assert "set_timeframe" not in recovery_tools
 
     asyncio.run(_run())
 

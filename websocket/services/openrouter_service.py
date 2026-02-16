@@ -11,7 +11,7 @@ class OpenRouterService:
     BASE_URL = "https://openrouter.ai/api/v1"
 
     PRIORITY_ORDER = [
-        "google", "anthropic", "deepseek", "openai", "nvidia", "qwen",
+        "google", "anthropic", "deepseek", "openai", "qwen",
         "mistral", "z-ai", "moonshot", "x-ai", "meta"
     ]
     
@@ -33,13 +33,6 @@ class OpenRouterService:
             models_list = self._models_cache
         else:
             try:
-                nvidia_models = [
-                    {"id": "nvidia/moonshotai/kimi-k2-thinking", "name": "NVIDIA Kimi K2 Thinking", "input_cost": 0, "output_cost": 0, "context": 131072},
-                    {"id": "nvidia/qwen/qwen3-next-80b-a3b-thinking", "name": "NVIDIA Qwen3 Next 80B A3B Thinking", "input_cost": 0, "output_cost": 0, "context": 131072},
-                    {"id": "nvidia/z-ai/glm4.7", "name": "NVIDIA GLM 4.7", "input_cost": 0, "output_cost": 0, "context": 131072},
-                    {"id": "nvidia/minimaxai/minimax-m2.1", "name": "NVIDIA Minimax M2.1", "input_cost": 0, "output_cost": 0, "context": 131072},
-                    {"id": "nvidia/moonshotai/kimi-k2.5", "name": "NVIDIA Kimi K2.5", "input_cost": 0, "output_cost": 0, "context": 131072},
-                ]
                 free_models = [
                     {"id": "openai/gpt-oss-120b:free", "name": "GPT-OSS 120B (Free)", "input_cost": 0, "output_cost": 0, "context": 131072},
                 ]
@@ -55,51 +48,21 @@ class OpenRouterService:
                     
                     models = data.get("data", [])
                     
-                    # Transform to a cleaner format for our frontend
+                    # Transform to a cleaner format for our frontend.
+                    # Keep IDs aligned with real providers only (no hardcoded futuristic aliases).
                     formatted_models = []
-                    
-                    # --- MOCK/FUTURISTIC MODELS INJECTION ---
-                    # These models are requested by the user for the 'Active Models' view.
-                    # We inject them to ensure they appear in the UI selection.
-                    mock_models = [
-                        {"id": "anthropic/claude-4.5-sonnet", "name": "Claude 4.5 Sonnet", "input_cost": 3.0, "output_cost": 15.0, "context": 200000},
-                        {"id": "openai/gpt-5.1", "name": "GPT-5.1", "input_cost": 5.0, "output_cost": 25.0, "context": 1000000},
-                        {"id": "deepseek/deepseek-chat-v3.1", "name": "DeepSeek Chat v3.1", "input_cost": 0.1, "output_cost": 0.5, "context": 128000},
-                        {"id": "google/gemini-3-pro", "name": "Gemini 3 Pro", "input_cost": 1.2, "output_cost": 4.5, "context": 2000000},
-                        {"id": "x-ai/grok-4", "name": "Grok 4", "input_cost": 2.5, "output_cost": 10.0, "context": 128000},
-                        {"id": "x-ai/grok-420", "name": "Grok 420", "input_cost": 0.69, "output_cost": 4.20, "context": 420000},
-                        {"id": "moonshot/kimi-k2-thinking", "name": "Kimi K2 Thinking", "input_cost": 0.5, "output_cost": 2.0, "context": 128000},
-                        {"id": "qwen/qwen-3-max", "name": "Qwen 3 Max", "input_cost": 1.5, "output_cost": 6.0, "context": 128000}
-                    ]
-                    
-                    # Add Mock Models
-                    for mock in mock_models:
-                        formatted_models.append({
-                            "id": mock["id"],
-                            "name": mock["name"],
-                            "input_cost": mock["input_cost"],
-                            "output_cost": mock["output_cost"],
-                            "includes_markup": False,
-                            "context_length": mock["context"],
-                            "description": f"Next-gen reasoning model from {mock['id'].split('/')[0].capitalize()}",
-                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
-                        })
+                    seen_ids = set()
 
-                    for nvidia_m in nvidia_models:
-                        formatted_models.append({
-                            "id": nvidia_m["id"],
-                            "name": nvidia_m["name"],
-                            "input_cost": nvidia_m["input_cost"],
-                            "output_cost": nvidia_m["output_cost"],
-                            "includes_markup": False,
-                            "context_length": nvidia_m["context"],
-                            "description": "Direct NVIDIA inference endpoint model",
-                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
-                        })
+                    def append_model(payload: Dict[str, Any]) -> None:
+                        model_id = str(payload.get("id") or "").strip()
+                        if not model_id or model_id in seen_ids:
+                            return
+                        seen_ids.add(model_id)
+                        formatted_models.append(payload)
 
                     # Add OpenRouter free models
                     for free_m in free_models:
-                        formatted_models.append({
+                        append_model({
                             "id": free_m["id"],
                             "name": free_m["name"],
                             "input_cost": free_m["input_cost"],
@@ -112,11 +75,8 @@ class OpenRouterService:
                         
                     for m in models:
                         m_id = m.get("id", "")
-                        # Skip if we already added a mock version or if it's an NVIDIA model (already injected).
-                        if (
-                            any(mock["id"] == m_id for mock in mock_models)
-                            or m_id.startswith("nvidia/")
-                        ):
+                        # OpenRouter-only mode: hide nvidia/* aliases.
+                        if m_id.startswith("nvidia/"):
                             continue
 
                         pricing = m.get("pricing", {})
@@ -138,7 +98,7 @@ class OpenRouterService:
                         trusted_families = [
                             "anthropic/", "openai/", "google/", "deepseek/", 
                             "meta/llama-3", "mistralai/mistral-large", "qwen/qwen-2.5",
-                            "x-ai/", "moonshot/", "perplexity/", "nvidia/"
+                            "x-ai/", "moonshot/", "perplexity/"
                         ]
                         
                         is_trusted = any(m_id.startswith(family) for family in trusted_families)
@@ -149,7 +109,7 @@ class OpenRouterService:
                         if any(word in m_id.lower() for word in blacklist):
                             continue
 
-                        formatted_models.append({
+                        append_model({
                             "id": m_id,
                             "name": name,
                             "input_cost": input_cost,
@@ -175,53 +135,43 @@ class OpenRouterService:
                 else:
                     models_list = [
                         {
-                            "id": "nvidia/moonshotai/kimi-k2-thinking",
-                            "name": "NVIDIA Kimi K2 Thinking",
+                            "id": "anthropic/claude-3.5-sonnet",
+                            "name": "Claude 3.5 Sonnet",
                             "input_cost": 0,
                             "output_cost": 0,
                             "includes_markup": False,
                             "context_length": 131072,
-                            "description": "Direct NVIDIA inference endpoint model",
+                            "description": "Fallback model from OpenRouter catalog",
                             "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
                         },
                         {
-                            "id": "nvidia/qwen/qwen3-next-80b-a3b-thinking",
-                            "name": "NVIDIA Qwen3 Next 80B A3B Thinking",
+                            "id": "google/gemini-1.5-pro",
+                            "name": "Gemini 1.5 Pro",
                             "input_cost": 0,
                             "output_cost": 0,
                             "includes_markup": False,
                             "context_length": 131072,
-                            "description": "Direct NVIDIA inference endpoint model",
+                            "description": "Fallback model from OpenRouter catalog",
                             "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
                         },
                         {
-                            "id": "nvidia/z-ai/glm4.7",
-                            "name": "NVIDIA GLM 4.7",
+                            "id": "deepseek/deepseek-v3",
+                            "name": "DeepSeek V3",
                             "input_cost": 0,
                             "output_cost": 0,
                             "includes_markup": False,
                             "context_length": 131072,
-                            "description": "Direct NVIDIA inference endpoint model",
+                            "description": "Fallback model from OpenRouter catalog",
                             "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
                         },
                         {
-                            "id": "nvidia/minimaxai/minimax-m2.1",
-                            "name": "NVIDIA Minimax M2.1",
+                            "id": "moonshotai/kimi-k2.5",
+                            "name": "Kimi K2.5",
                             "input_cost": 0,
                             "output_cost": 0,
                             "includes_markup": False,
                             "context_length": 131072,
-                            "description": "Direct NVIDIA inference endpoint model",
-                            "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
-                        },
-                        {
-                            "id": "nvidia/moonshotai/kimi-k2.5",
-                            "name": "NVIDIA Kimi K2.5",
-                            "input_cost": 0,
-                            "output_cost": 0,
-                            "includes_markup": False,
-                            "context_length": 131072,
-                            "description": "Direct NVIDIA inference endpoint model",
+                            "description": "Fallback model from OpenRouter catalog",
                             "capabilities": {"tool_use": True, "reasoning": True, "rag": True},
                         },
                         {

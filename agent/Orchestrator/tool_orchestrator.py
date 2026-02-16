@@ -5,7 +5,14 @@ import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 from .tool_registry import get_tool_registry
-from .tool_modes import DECISION_TOOL_NAMES, NAV_TOOL_NAMES, WRITE_TOOL_NAMES, classify_tool_mode
+from .tool_modes import (
+    CHART_WRITE_TOOL_NAMES,
+    EXECUTION_WRITE_TOOL_NAMES,
+    DECISION_TOOL_NAMES,
+    NAV_TOOL_NAMES,
+    WRITE_TOOL_NAMES,
+    classify_tool_mode,
+)
 from ..Config.tools_config import TRADE_DECISION_COMPARATORS, TRADE_DECISION_FIELD_ALIASES
 from ..Schema.agent_runtime import AgentPlan, ToolCall, ToolResult
 
@@ -31,6 +38,19 @@ class ToolOrchestrator:
     def set_registry(self, registry: Dict[str, ToolFunc]) -> None:
         self.registry = dict(registry or {})
 
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "on", "yes"}:
+                return True
+            if normalized in {"0", "false", "off", "no"}:
+                return False
+            return default
+        return bool(value)
+
     def _resolve_tool(self, tool_name: str) -> Tuple[Optional[ToolFunc], str]:
         fn = self.registry.get(tool_name)
         if fn is not None:
@@ -53,12 +73,49 @@ class ToolOrchestrator:
         mode = self.classify_tool_mode(resolved_name)
         if mode != "write":
             return None
-        write_enabled = bool((tool_states or {}).get("write"))
+
+        states = tool_states or {}
+        write_enabled = self._parse_bool(states.get("write"), default=False)
+        execution_enabled = self._parse_bool(states.get("execution"), default=False)
+
+        # Chart write tools are gated by Allow Write.
+        if resolved_name in CHART_WRITE_TOOL_NAMES:
+            if write_enabled:
+                return None
+            message = (
+                f"Tool '{resolved_name}' requires write mode. "
+                "Enable 'Allow Write' to run TradingView chart mutation tools."
+            )
+            return ToolResult(
+                name=resolved_name,
+                args={},
+                ok=False,
+                error=message,
+                data={"error": message, "required_mode": "write"},
+            )
+
+        # Portfolio/order execution tools are gated by execution flag.
+        if resolved_name in EXECUTION_WRITE_TOOL_NAMES:
+            if execution_enabled:
+                return None
+            message = (
+                f"Tool '{resolved_name}' requires execution mode. "
+                "Enable 'execution' to run portfolio/order mutation tools."
+            )
+            return ToolResult(
+                name=resolved_name,
+                args={},
+                ok=False,
+                error=message,
+                data={"error": message, "required_mode": "execution"},
+            )
+
+        # Conservative default: treat unknown write tools as chart write tools.
         if write_enabled:
             return None
         message = (
             f"Tool '{resolved_name}' requires write mode. "
-            "Enable 'Allow Write' to run chart mutation tools."
+            "Enable 'Allow Write' to run write tools."
         )
         return ToolResult(
             name=resolved_name,

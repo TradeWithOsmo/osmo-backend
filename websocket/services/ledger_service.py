@@ -137,6 +137,13 @@ class LedgerService:
             position = result.scalar_one_or_none()
             
             if position:
+                # For now, we don't net opposite-direction opens into an existing position via OrderService.
+                # Users should close/reverse explicitly so margin/PnL accounting stays predictable.
+                if position.side != norm_side:
+                    raise ValueError(
+                        f"Opposite-side position exists for {symbol} ({position.side}). Close or reverse first."
+                    )
+
                 # Merge logic (weighted avg entry)
                 total_size = position.size + size_token
                 new_entry = ((position.entry_price * position.size) + (entry_price * size_token)) / total_size
@@ -144,6 +151,15 @@ class LedgerService:
                 position.entry_price = new_entry
                 position.size = total_size
                 position.margin_used += margin_used
+
+                # Keep leverage internally consistent with notional/margin after merges.
+                try:
+                    notional = position.size * position.entry_price
+                    if position.margin_used and position.margin_used > 0 and notional > 0:
+                        effective = notional / position.margin_used
+                        position.leverage = max(1, int(round(effective)))
+                except Exception:
+                    pass
                 if tp is not None:
                     position.tp = str(tp)
                 if sl is not None:
@@ -279,7 +295,8 @@ class LedgerService:
         user_address: str,
         symbol: str,
         close_price: float,
-        size_to_close: float = 0
+        size_to_close: float = 0,
+        exchange: str = 'simulation'
     ):
         """Calculate PnL, unlock margin, update balance"""
         async with AsyncSessionLocal() as session:
@@ -289,15 +306,25 @@ class LedgerService:
                 select(Position).where(
                     Position.user_address == user_address.lower(),
                     Position.symbol == symbol,
+                    Position.exchange == exchange,
                     Position.status == 'OPEN'
                 )
             )
-            position = result.scalar_one_or_none()
-            
-            if not position:
+            positions = result.scalars().all()
+            if not positions:
                 print(f"[Ledger] No open position found for {symbol}")
                 return
 
+            if len(positions) > 1:
+                # Defensive: DB may contain duplicate OPEN rows; pick the newest.
+                positions = sorted(
+                    positions,
+                    key=lambda p: ((p.opened_at or datetime.min), (p.id or 0)),
+                    reverse=True
+                )
+
+            position = positions[0]
+            
             # Determine size
             close_size = size_to_close if size_to_close > 0 else position.size
             if close_size > position.size:

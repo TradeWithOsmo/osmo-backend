@@ -1,9 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
-import time
+from typing import Any, Dict, Optional
 
 from ..Orchestrator.execution_adapter import ExecutionAdapter
+
+
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "on", "yes"}:
+            return True
+        if normalized in {"0", "false", "off", "no"}:
+            return False
+        return default
+    return bool(value)
+
 
 async def place_order(
     symbol: str,
@@ -18,6 +31,10 @@ async def place_order(
     sl: Optional[float] = None,
     user_address: Optional[str] = None,
     exchange: Optional[str] = None,
+    reduce_only: bool = False,
+    post_only: bool = False,
+    time_in_force: str = "GTC",
+    trigger_condition: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
@@ -28,11 +45,11 @@ async def place_order(
 
     Args:
         symbol: The trading pair symbol (e.g. BTC-USD).
-        side: "long" (buy) or "short" (sell).
+        side: "buy"/"long" or "sell"/"short".
         amount_usd: Position size in USD.
         tool_states: Runtime configuration states (injected by orchestrator).
         leverage: Leverage multiplier (default 1).
-        order_type: "market", "limit", or "stop_limit".
+        order_type: "market", "limit", "stop_market", or "stop_limit".
         price: Limit price (required for limit orders).
         stop_price: Trigger price (required for stop orders).
         tp: Take profit price.
@@ -44,14 +61,23 @@ async def place_order(
     
     # Normalize inputs
     symbol = str(symbol).strip().upper()
-    side = str(side).strip().lower()
-    if side == "buy": side = "long"
-    if side == "sell": side = "short"
+    raw_side = str(side).strip().lower()
+    if raw_side in {"buy", "long"}:
+        side = "buy"
+    elif raw_side in {"sell", "short"}:
+        side = "sell"
+    else:
+        return {"error": "Invalid side. Use buy/sell or long/short."}
     
     # Resolve configuration
     policy_mode = str(tool_states.get("policy_mode", "advice_only")).lower()
-    execution_enabled = bool(tool_states.get("execution"))
+    execution_enabled = _parse_bool(tool_states.get("execution"), default=False)
     can_auto_execute = policy_mode == "auto_exec" and execution_enabled
+
+    # Hard gate: if execution tools are disabled, block order placement entirely.
+    # Frontend uses the "Auto Execution" toggle to control this.
+    if not execution_enabled:
+        return {"error": "Execution disabled. Enable Auto Execution to allow placing orders."}
     
     # Resolve user address: prefer explicit arg, then tool_states
     resolved_address = user_address or tool_states.get("user_address")
@@ -83,6 +109,10 @@ async def place_order(
         "leverage": int(leverage),
         "order_type": order_type,
         "exchange": resolved_exchange,
+        "reduce_only": bool(reduce_only),
+        "post_only": bool(post_only),
+        "time_in_force": str(time_in_force or "GTC"),
+        "trigger_condition": trigger_condition,
     }
     if price is not None:
         order_args["price"] = float(price)

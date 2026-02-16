@@ -617,16 +617,18 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(bootstrap_hyperliquid_history())
 
     if settings.SECONDARY_HISTORY_ENABLED and settings.SECONDARY_HISTORY_PREWARM:
-        try:
-            logger.info("Prewarming in-memory session candle cache...")
-            await asyncio.wait_for(session_candle_cache.prewarm_default_symbols(), timeout=60.0)
-            logger.info("In-memory session candle cache prewarmed")
-        except asyncio.TimeoutError:
-            logger.warning("Session candle cache prewarm timeout; continuing in background")
-            asyncio.create_task(session_candle_cache.prewarm_default_symbols())
-        except Exception as prewarm_err:
-            logger.warning(f"Session candle cache prewarm failed: {prewarm_err}")
-            asyncio.create_task(session_candle_cache.prewarm_default_symbols())
+        # Never block app startup on optional secondary history prewarm. Some fetch paths can be slow or
+        # use blocking I/O in dependencies, which would prevent Uvicorn from completing startup.
+        logger.info("Prewarming in-memory session candle cache in background...")
+
+        def _run_prewarm() -> None:
+            try:
+                asyncio.run(session_candle_cache.prewarm_default_symbols())
+                logger.info("In-memory session candle cache prewarmed (background)")
+            except Exception as prewarm_err:
+                logger.warning(f"Session candle cache prewarm failed (background): {prewarm_err}")
+
+        asyncio.create_task(asyncio.to_thread(_run_prewarm))
     
     # Start Ostium API poller
     try:
@@ -674,7 +676,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Connector System
     try:
-        await connector_registry.initialize(redis_url=settings.REDIS_URL)
+        asyncio.create_task(connector_registry.initialize(redis_url=settings.REDIS_URL))
         logger.info("✅ Connector system initialized")
     except Exception as e:
         logger.error(f"❌ Failed to initialize connector system: {e}")
@@ -1208,14 +1210,10 @@ async def notification_websocket(websocket: WebSocket, address: str):
             redis_task.cancel()
 
 
-# Graceful shutdown handler
-def handle_shutdown(signum, frame):
-    logger.info(f"Received signal {signum}, initiating shutdown...")
-    sys.exit(0)
-
-
-signal.signal(signal.SIGTERM, handle_shutdown)
-signal.signal(signal.SIGINT, handle_shutdown)
+# IMPORTANT:
+# Do not register process-level signal handlers at import time.
+# Uvicorn manages SIGTERM/SIGINT for graceful shutdown; overriding them here
+# causes noisy SystemExit/CancelledError tracebacks in Docker restarts.
 
 
 if __name__ == "__main__":

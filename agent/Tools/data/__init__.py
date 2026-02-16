@@ -49,8 +49,13 @@ from .knowledge import (
 )
 
 from .trade import (
+    get_positions,
     adjust_position_tpsl,
     adjust_all_positions_tpsl,
+    close_position,
+    close_all_positions,
+    reverse_position,
+    cancel_order,
 )
 
 from .research import (
@@ -72,7 +77,8 @@ __all__ = [
     # Frontend
     'get_active_indicators',
     # Trade actions
-    'adjust_position_tpsl', 'adjust_all_positions_tpsl',
+    'get_positions', 'adjust_position_tpsl', 'adjust_all_positions_tpsl',
+    'close_position', 'close_all_positions', 'reverse_position', 'cancel_order',
     # Memory
     'add_memory', 'search_memory', 'get_recent_history',
     # Knowledge

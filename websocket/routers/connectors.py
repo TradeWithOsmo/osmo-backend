@@ -89,6 +89,9 @@ class IndicatorData(BaseModel):
     timeframe: str
     indicators: Dict[str, Any]
     chart_screenshot: Optional[str] = None
+    active_indicators: Optional[List[str]] = None
+    drawing_tags: Optional[List[str]] = None
+    trade_setup: Optional[Dict[str, Any]] = None
     timestamp: Optional[int] = None
 
 
@@ -344,6 +347,29 @@ async def get_tradingview_commands(symbol: str):
     try:
         tv = _require_connector("tradingview")
         return await tv.get_pending_commands(symbol)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/tradingview/consumer-status")
+async def get_tradingview_consumer_status(
+    symbol: Optional[str] = Query(None),
+    stale_after_sec: float = Query(6.0, ge=1.0, le=120.0),
+):
+    """
+    Return TradingView frontend command-consumer heartbeat.
+    """
+    try:
+        tv = _require_connector("tradingview")
+        if not hasattr(tv, "get_consumer_status"):
+            return {
+                "consumer_online": False,
+                "reason": "consumer_status_not_supported",
+                "requested_symbol": str(symbol or "").strip() or None,
+            }
+        return await tv.get_consumer_status(symbol=str(symbol or ""), stale_after_sec=stale_after_sec)
     except HTTPException:
         raise
     except Exception as exc:

@@ -1,6 +1,8 @@
 
 """Ostium Subgraph Client using Official SDK"""
 import logging
+import os
+import time
 from typing import Dict, Any, List
 from ostium_python_sdk import NetworkConfig, OstiumSDK
 from decimal import Decimal
@@ -9,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class OstiumSubgraphClient:
     """Wrapper around Official Ostium SDK"""
-    
+     
     def __init__(self):
         # Use Mainnet config from SDK
         self.config = NetworkConfig.mainnet()
@@ -37,12 +39,19 @@ class OstiumSubgraphClient:
         
         # Initialize SubgraphClient directly
         from ostium_python_sdk.subgraph import SubgraphClient
-        
-        self.subgraph = SubgraphClient(url=self.config.graph_url)
-        
+         
+        # SDK default graph URL can go stale (e.g. 404 "Subgraph not found").
+        # Allow overriding without code changes.
+        self.graph_url = os.getenv("OSTIUM_SUBGRAPH_URL") or self.config.graph_url
+        self.subgraph = SubgraphClient(url=self.graph_url)
+
+        # Rate-limit repeated network/config errors to avoid log spam.
+        self._last_error_log_at: float = 0.0
+        self._last_error_sig: str | None = None
+         
         # We also need PriceClient for the SDK's get_formatted_pairs_details logic
         # But we only care about VOLUME/OI here.
-        
+         
     async def get_formatted_pairs_details(self) -> List[Dict[str, Any]]:
         """
         Fetch pair details manually using SubgraphClient, optimizing to avoid sequential requests
@@ -85,7 +94,25 @@ class OstiumSubgraphClient:
             return formatted
             
         except Exception as e:
-            logger.error(f"Failed to fetch pairs from Subgraph: {e}")
+            msg = str(e)
+            # Goldsky/graph endpoint missing is common when the SDK default URL is outdated.
+            is_missing = ("404" in msg) or ("Not Found" in msg) or ("Subgraph not found" in msg)
+
+            # Avoid spamming the same error every poll tick.
+            now = time.time()
+            sig = ("missing" if is_missing else "error") + ":" + msg[:200]
+            should_log = (sig != self._last_error_sig) or ((now - self._last_error_log_at) > 600)
+
+            if should_log:
+                self._last_error_log_at = now
+                self._last_error_sig = sig
+                if is_missing:
+                    logger.warning(
+                        "Ostium subgraph endpoint returned 404/missing. "
+                        f"Set OSTIUM_SUBGRAPH_URL to override. url={self.graph_url!r} err={msg}"
+                    )
+                else:
+                    logger.error(f"Failed to fetch pairs from Subgraph: {e}")
             return []
 
     async def close(self):

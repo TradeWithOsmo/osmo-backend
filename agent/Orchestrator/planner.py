@@ -14,6 +14,7 @@ SYMBOL_RE = re.compile(r"\$?([A-Za-z]{2,12})(?:[-_/](USD|USDT|PERP))?\b", re.IGN
 USD_AMOUNT_RE = re.compile(r"\$?\s*(\d+(?:\.\d+)?)\s*(usd|usdt|\$)?\b", re.IGNORECASE)
 LEVERAGE_RE = re.compile(r"\b(\d{1,3})\s*x\b", re.IGNORECASE)
 PRICE_RE = re.compile(r"\b(?:at|price|entry|limit|stop)\s*\$?\s*(\d+(?:\.\d+)?)\b", re.IGNORECASE)
+ORDER_ID_RE = re.compile(r"\b(ord[_-][A-Za-z0-9_-]{4,80})\b", re.IGNORECASE)
 TP_TARGET_RE = re.compile(
     r"\b(?:tp|take\s*profit)\b\s*(?:to|=|:)?\s*(-?\d+(?:\.\d+)?\s*(?:%|USD|\$)?)",
     re.IGNORECASE,
@@ -92,6 +93,12 @@ SYMBOL_STOPWORDS: Set[str] = {
     "HELLO",
     "HI",
     "CHECK",
+    "POSITION",
+    "POSITIONS",
+    "PORTFOLIO",
+    "EXPOSURE",
+    "MY",
+    "YOUR",
     "OSTIUM",
     "HYPERLIQUID",
 }
@@ -157,6 +164,73 @@ def _normalize_timeframe(raw: Optional[str]) -> str:
         "1W": "1W",
     }
     return replacements.get(value, value)
+
+
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "on", "yes"}:
+            return True
+        if normalized in {"0", "false", "off", "no"}:
+            return False
+        return default
+    return bool(value)
+
+
+def _preferred_timeframe_from_tool_states(tool_states: Optional[Dict[str, Any]]) -> Optional[str]:
+    states = tool_states or {}
+    market_timeframe = states.get("market_timeframe")
+    if isinstance(market_timeframe, str) and market_timeframe.strip():
+        return market_timeframe.strip()
+
+    preferred = states.get("preferred_timeframes")
+    if isinstance(preferred, str) and preferred.strip():
+        return preferred.strip()
+    if isinstance(preferred, list) and preferred:
+        first = preferred[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+
+    legacy = states.get("timeframe")
+    if isinstance(legacy, str) and legacy.strip():
+        return legacy.strip()
+    if isinstance(legacy, list) and legacy:
+        first = legacy[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+    return None
+
+
+def _preferred_indicators_from_tool_states(tool_states: Optional[Dict[str, Any]]) -> List[str]:
+    states = tool_states or {}
+
+    def _collect(raw: Any) -> List[str]:
+        values: List[str] = []
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text:
+                values.append(text)
+        elif isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, str):
+                    continue
+                text = item.strip()
+                if text:
+                    values.append(text)
+
+        deduped: List[str] = []
+        for item in values:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped[:6]
+
+    preferred = _collect(states.get("preferred_indicators"))
+    if preferred:
+        return preferred
+    # Legacy fallback for older clients that still send `indicators`.
+    return _collect(states.get("indicators"))
 
 
 def _canonical_base(
@@ -371,6 +445,276 @@ def _contains_any(text: str, words: List[str]) -> bool:
     return any(w in lower for w in words)
 
 
+def _first_match_index(text: str, words: List[str]) -> int:
+    lower = (text or "").lower()
+    indexes = [lower.find(word) for word in words if word and lower.find(word) >= 0]
+    return min(indexes) if indexes else -1
+
+
+def _chart_sequence_op_patterns() -> Dict[str, List[str]]:
+    return {
+        "set_symbol": ["set symbol", "change symbol", "switch symbol"],
+        "set_timeframe": [
+            "set timeframe",
+            "change timeframe",
+            "set time frame",
+            "change time frame",
+            "ubah timeframe",
+            "ganti timeframe",
+            "ubah time frame",
+            "ganti time frame",
+        ],
+        "add_indicator": [
+            "add indicator",
+            "add indicators",
+            "apply indicator",
+            "apply indicators",
+            "tambah indicator",
+            "tambahkan indicator",
+        ],
+        "get_active_indicators": [
+            "get active indicators",
+            "active indicators",
+            "current indicators",
+        ],
+        "get_indicators": [
+            "get indicator",
+            "get indicators",
+            "show indicator",
+            "show indicators",
+            "list indicators",
+            "cek indicator",
+            "check indicator",
+            "check indicators",
+            "get indikator",
+            "cek indikator",
+        ],
+        "remove_indicator": ["remove indicator", "delete indicator", "hapus indicator"],
+        "clear_indicators": [
+            "clear indicators",
+            "clear indicator",
+            "clear all indicators",
+            "delete all indicators",
+            "remove all indicators",
+            "reset indicators",
+        ],
+    }
+
+
+def _split_chart_sequence_segments(text: str) -> List[str]:
+    lower = (text or "").lower()
+    if not lower.strip():
+        return []
+    normalized = re.sub(r"\s+", " ", lower).strip()
+    normalized = re.sub(r"\s*(?:>|->|;)\s*", " | ", normalized)
+    normalized = re.sub(r"\b(?:then|lalu|kemudian|next)\b", " | ", normalized)
+
+    # In command-like prompts, commas often separate sequential instructions.
+    op_count = len(_extract_ordered_chart_sequence_ops_from_mentions(normalized))
+    if "," in normalized and op_count >= 2:
+        normalized = normalized.replace(",", " | ")
+
+    segments = [seg.strip() for seg in normalized.split("|") if seg.strip()]
+    return segments
+
+
+def _extract_ordered_chart_sequence_ops_from_mentions(text: str) -> List[str]:
+    lower = (text or "").lower()
+    patterns = _chart_sequence_op_patterns()
+    matches: List[Tuple[int, str]] = []
+    for op_name, aliases in patterns.items():
+        idx = _first_match_index(lower, aliases)
+        if idx >= 0:
+            matches.append((idx, op_name))
+    matches.sort(key=lambda item: item[0])
+    ordered: List[str] = []
+    for _, op_name in matches:
+        if op_name not in ordered:
+            ordered.append(op_name)
+    return ordered
+
+
+def _extract_segment_ops(segment: str) -> List[str]:
+    patterns = _chart_sequence_op_patterns()
+    matches: List[Tuple[int, str]] = []
+    for op_name, aliases in patterns.items():
+        idx = _first_match_index(segment, aliases)
+        if idx >= 0:
+            matches.append((idx, op_name))
+    matches.sort(key=lambda item: item[0])
+    ordered: List[str] = []
+    for _, op_name in matches:
+        if op_name not in ordered:
+            ordered.append(op_name)
+    return ordered
+
+
+def _extract_chart_sequence_op_instances(text: str) -> List[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    segments = _split_chart_sequence_segments(raw)
+    if len(segments) <= 1:
+        return _extract_ordered_chart_sequence_ops_from_mentions(raw)
+
+    ordered: List[str] = []
+    for segment in segments:
+        ordered.extend(_extract_segment_ops(segment))
+    return ordered
+
+
+def _extract_timeframe_command_sequence(text: str) -> List[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    patterns = _chart_sequence_op_patterns()
+    timeframe_aliases = patterns.get("set_timeframe", [])
+
+    segments = _split_chart_sequence_segments(raw)
+    sequence: List[str] = []
+    for segment in segments:
+        if _first_match_index(segment, timeframe_aliases) < 0:
+            continue
+        match = TIMEFRAME_RE.search(segment)
+        if not match:
+            continue
+        sequence.append(_normalize_timeframe(match.group(1)))
+
+    if sequence:
+        return sequence
+
+    # Fallback for non-segmented commands:
+    # "set timeframe 1m and set timeframe 5m"
+    lower = raw.lower()
+    if any(alias in lower for alias in timeframe_aliases):
+        return [_normalize_timeframe(match.group(1)) for match in TIMEFRAME_RE.finditer(raw)]
+    return []
+
+
+def _toposort_ops_with_stable_seed(nodes: List[str], edges: Dict[str, Set[str]], seed_order: List[str]) -> List[str]:
+    indegree: Dict[str, int] = {node: 0 for node in nodes}
+    for src, targets in edges.items():
+        for dst in targets:
+            if dst in indegree:
+                indegree[dst] += 1
+
+    queue: List[str] = [node for node in seed_order if node in indegree and indegree[node] == 0]
+    visited: Set[str] = set()
+    ordered: List[str] = []
+    while queue:
+        node = queue.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        ordered.append(node)
+        for target in edges.get(node, set()):
+            if target not in indegree:
+                continue
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                queue.append(target)
+
+    # Cycle fallback: preserve original mention order for remaining nodes.
+    for node in seed_order:
+        if node in indegree and node not in visited:
+            ordered.append(node)
+    return ordered
+
+
+def _extract_ordered_chart_sequence_ops(text: str) -> List[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    segments = _split_chart_sequence_segments(raw)
+    mention_seed: List[str] = _extract_ordered_chart_sequence_ops_from_mentions(raw)
+    if len(mention_seed) < 2:
+        return []
+
+    if len(segments) <= 1:
+        return mention_seed
+
+    nodes: Set[str] = set()
+    edges: Dict[str, Set[str]] = {}
+    previous_tail: Optional[str] = None
+
+    for segment in segments:
+        ops = _extract_segment_ops(segment)
+        if not ops:
+            continue
+        for op in ops:
+            nodes.add(op)
+            edges.setdefault(op, set())
+        for idx in range(len(ops) - 1):
+            edges.setdefault(ops[idx], set()).add(ops[idx + 1])
+        if previous_tail and previous_tail != ops[0]:
+            edges.setdefault(previous_tail, set()).add(ops[0])
+        previous_tail = ops[-1]
+
+    if len(nodes) < 2:
+        return mention_seed
+
+    return _toposort_ops_with_stable_seed(list(nodes), edges, mention_seed)
+
+
+def _looks_like_chart_command_sequence(text: str) -> bool:
+    lower = (text or "").lower()
+    if not lower.strip():
+        return False
+    hard_delimiter = ">" in lower or " then " in lower or " lalu " in lower or " kemudian " in lower or ";" in lower
+    comma_delimiter = "," in lower
+    ordered = _extract_ordered_chart_sequence_ops(lower)
+    if len(ordered) < 2:
+        return False
+    if hard_delimiter:
+        return True
+    # Fallback: accept comma-separated command chains with >=2 explicit chart ops.
+    return comma_delimiter and len(ordered) >= 2
+
+
+def _apply_chart_sequence_order(plan: AgentPlan, text: str) -> None:
+    if not isinstance(plan, AgentPlan) or not isinstance(plan.tool_calls, list) or len(plan.tool_calls) <= 1:
+        return
+    if not _looks_like_chart_command_sequence(text):
+        return
+
+    ordered_ops = _extract_chart_sequence_op_instances(text)
+    if len(ordered_ops) < 2:
+        return
+    sequenced_names = set(ordered_ops)
+    original_calls = list(plan.tool_calls)
+
+    sequenced_calls: List[Tuple[int, ToolCall]] = []
+    non_sequenced_calls: List[ToolCall] = []
+    for idx, call in enumerate(original_calls):
+        if call.name in sequenced_names:
+            sequenced_calls.append((idx, call))
+        else:
+            non_sequenced_calls.append(call)
+    if len(sequenced_calls) < 2:
+        return
+
+    op_positions: Dict[str, List[int]] = {}
+    for idx, op_name in enumerate(ordered_ops):
+        op_positions.setdefault(op_name, []).append(idx)
+
+    ranked_calls: List[Tuple[int, int, ToolCall]] = []
+    fallback_rank_base = len(ordered_ops)
+    for original_idx, call in sequenced_calls:
+        queue = op_positions.get(call.name) or []
+        if queue:
+            rank = queue.pop(0)
+        else:
+            rank = fallback_rank_base + original_idx
+        ranked_calls.append((rank, original_idx, call))
+
+    ranked_calls.sort(key=lambda item: (item[0], item[1]))
+    reordered = [call for _, _, call in ranked_calls] + non_sequenced_calls
+    plan.tool_calls = reordered
+
+
 def _is_smalltalk(text: str) -> bool:
     lower = (text or "").strip().lower()
     if not lower:
@@ -463,6 +807,22 @@ def _extract_prices(text: str) -> Dict[str, Optional[float]]:
             except Exception:
                 pass
     return value_map
+
+
+def _extract_order_id(text: str) -> Optional[str]:
+    raw_text = text or ""
+    direct = ORDER_ID_RE.search(raw_text)
+    if direct:
+        return str(direct.group(1)).strip()
+
+    contextual = re.search(
+        r"\b(?:order\s*id|order)\b\s*[:=]?\s*([A-Za-z0-9_-]{6,80})\b",
+        raw_text,
+        re.IGNORECASE,
+    )
+    if contextual:
+        return str(contextual.group(1)).strip()
+    return None
 
 
 def _normalize_tpsl_input_token(raw: Optional[str]) -> Tuple[Optional[str], Optional[float]]:
@@ -579,12 +939,9 @@ def build_plan(
     additional_symbols = [item for item in extracted_symbols if item and item != symbol]
     requested_chart_source = _infer_requested_chart_source(text)
 
-    timeframe_match = TIMEFRAME_RE.search(text)
-    default_tf = None
-    if isinstance(tool_states.get("timeframe"), str):
-        default_tf = tool_states.get("timeframe")
-    elif isinstance(tool_states.get("timeframe"), list) and tool_states.get("timeframe"):
-        default_tf = tool_states["timeframe"][0]
+    timeframe_matches = list(TIMEFRAME_RE.finditer(text))
+    timeframe_match = timeframe_matches[-1] if timeframe_matches else None
+    default_tf = _preferred_timeframe_from_tool_states(tool_states)
     timeframe = _normalize_timeframe(timeframe_match.group(1) if timeframe_match else default_tf)
 
     wants_execution = RiskGate.wants_execution(text)
@@ -602,7 +959,24 @@ def build_plan(
     wants_stats = _contains_any(text, ["24h", "high low", "volume", "ticker stats", "stats"])
     wants_chainlink = _contains_any(text, ["chainlink", "oracle price"])
     wants_patterns = _contains_any(text, ["pattern", "patterns"])
-    wants_indicator_values = _contains_any(text, ["indicator values", "indicator value", "indicator reading"])
+    wants_indicator_values = _contains_any(
+        text,
+        [
+            "indicator values",
+            "indicator value",
+            "indicator reading",
+            "get indicator",
+            "get indicators",
+            "show indicator",
+            "show indicators",
+            "list indicators",
+            "cek indicator",
+            "check indicator",
+            "check indicators",
+            "get indikator",
+            "cek indikator",
+        ],
+    )
     wants_technical_summary = _contains_any(text, ["technical summary", "summarize technical", "summary technical"])
     wants_distribution = _contains_any(text, ["token distribution", "holder distribution", "distribution"])
     wants_active_indicators = _contains_any(text, ["active indicator", "active indicators", "current indicators"])
@@ -616,8 +990,80 @@ def build_plan(
     wants_cursor_inspect = _contains_any(text, ["inspect cursor", "cursor data"])
     wants_reset_view = _contains_any(text, ["reset view", "reset chart"])
     wants_focus_latest = _contains_any(text, ["focus latest", "latest candle"])
-    wants_set_timeframe = _contains_any(text, ["set timeframe", "change timeframe"])
+    wants_set_timeframe = _contains_any(
+        text,
+        [
+            "set timeframe",
+            "change timeframe",
+            "set time frame",
+            "change time frame",
+            "ubah timeframe",
+            "ganti timeframe",
+            "ubah time frame",
+            "ganti time frame",
+        ],
+    )
+    timeframe_command_sequence = _extract_timeframe_command_sequence(text)
     wants_set_symbol = _contains_any(text, ["set symbol", "change symbol", "switch symbol"])
+    wants_positions = _contains_any(
+        text,
+        [
+            "check position",
+            "check positions",
+            "my position",
+            "my positions",
+            "open position",
+            "open positions",
+            "current positions",
+            "portfolio exposure",
+            "lihat posisi",
+            "cek posisi",
+        ],
+    )
+    wants_close_all_positions = _contains_any(
+        text,
+        [
+            "close all positions",
+            "close all",
+            "flatten all",
+            "exit all positions",
+            "exit all",
+            "close everything",
+            "tutup semua posisi",
+        ],
+    )
+    wants_reverse_position = _contains_any(
+        text,
+        [
+            "reverse position",
+            "reverse trade",
+            "flip position",
+            "flip side",
+        ],
+    )
+    wants_cancel_order = _contains_any(
+        text,
+        [
+            "cancel order",
+            "cancel pending",
+            "cancel my order",
+            "batalkan order",
+        ],
+    )
+    wants_close_position = (
+        _contains_any(
+            text,
+            [
+                "close position",
+                "close trade",
+                "exit position",
+                "exit trade",
+                "tutup posisi",
+            ],
+        )
+        and not wants_close_all_positions
+        and not wants_reverse_position
+    )
     wants_clear_indicators = _contains_any(
         text,
         [
@@ -628,6 +1074,17 @@ def build_plan(
             "remove all indicators",
 
             "reset indicators",
+        ],
+    )
+    wants_add_indicator = _contains_any(
+        text,
+        [
+            "add indicator",
+            "add indicators",
+            "apply indicator",
+            "apply indicators",
+            "tambah indicator",
+            "tambahkan indicator",
         ],
     )
     wants_remove_indicator = _contains_any(
@@ -703,6 +1160,16 @@ def build_plan(
         text,
         ["all positions", "all open positions", "all trades", "all symbols"],
     )
+    has_portfolio_action = any(
+        [
+            wants_positions,
+            wants_close_position,
+            wants_close_all_positions,
+            wants_reverse_position,
+            wants_cancel_order,
+            wants_tpsl_adjust,
+        ]
+    )
     tpsl_targets = _extract_tpsl_targets(text)
     lookback_candles = _extract_lookback_candles(text, default=7)
     has_symbol_hint_request = _contains_any(
@@ -741,18 +1208,13 @@ def build_plan(
     amount_usd = _extract_amount_usd(text) if wants_execution else None
     leverage = _extract_leverage(text) if wants_execution else 1
     prices = _extract_prices(text)
-    write_enabled = bool(tool_states.get("write"))
+    order_id = _extract_order_id(text)
+    write_enabled = _parse_bool(tool_states.get("write"), default=False)
     symbol_changed = bool(symbol and tool_state_symbol and symbol != tool_state_symbol)
     auto_set_symbol = symbol_changed and bool(extracted_symbol)
 
-    selected_indicators: List[str] = []
-    raw_indicators = tool_states.get("indicators")
-    if isinstance(raw_indicators, list):
-        selected_indicators = [
-            str(item).strip()
-            for item in raw_indicators
-            if isinstance(item, str) and str(item).strip()
-        ]
+    preferred_indicators = _preferred_indicators_from_tool_states(tool_states)
+    requested_indicators: List[str] = []
 
     indicator_name_hints = {
         "rsi": "RSI",
@@ -772,8 +1234,13 @@ def build_plan(
     }
     text_lower = (text or "").lower()
     for key, label in indicator_name_hints.items():
-        if key in text_lower and label not in selected_indicators:
-            selected_indicators.append(label)
+        if key in text_lower and label not in requested_indicators:
+            requested_indicators.append(label)
+
+    analysis_indicator_hints: List[str] = []
+    for indicator_name in [*requested_indicators, *preferred_indicators]:
+        if indicator_name not in analysis_indicator_hints:
+            analysis_indicator_hints.append(indicator_name)
 
     context = PlanContext(
         symbol=symbol,
@@ -796,15 +1263,27 @@ def build_plan(
     if _is_smalltalk(text):
         return plan
 
-    if not symbol and (wants_execution or wants_technical) and not wants_tpsl_adjust_all:
+    if (
+        not symbol
+        and (wants_execution or wants_technical)
+        and not wants_tpsl_adjust_all
+        and not wants_positions
+        and not wants_close_all_positions
+        and not wants_cancel_order
+    ):
         plan.warnings.append("No symbol detected. Provide a ticker (example: BTC, ETH, SOL).")
         return plan
 
-    if wants_execution and side is None:
+    if wants_execution and side is None and not has_portfolio_action:
         plan.warnings.append("Execution intent detected but side is unclear. Specify buy/long or sell/short.")
 
     if wants_execution and amount_usd is None:
-        plan.warnings.append("Execution intent detected but amount is missing. Specify size in USD.")
+        if not has_portfolio_action:
+            plan.warnings.append("Execution intent detected but amount is missing. Specify size in USD.")
+
+    if not symbol and (wants_close_position or wants_reverse_position):
+        plan.warnings.append("No symbol detected for close/reverse action. Provide ticker (example: BTC).")
+        return plan
 
     if wants_tpsl_adjust and (
         tpsl_targets.get("tp") is None
@@ -840,6 +1319,35 @@ def build_plan(
                 args=all_args,
                 reason="Bulk adjust TP/SL across open positions per user request.",
             )
+
+    if wants_positions and not symbol:
+        _append_tool_call(
+            plan,
+            name="get_positions",
+            args={},
+            reason="User requested open positions / portfolio exposure.",
+        )
+
+    if wants_close_all_positions:
+        _append_tool_call(
+            plan,
+            name="close_all_positions",
+            args={},
+            reason="User requested to close all open positions.",
+        )
+
+    if wants_cancel_order:
+        cancel_args: Dict[str, Any] = {}
+        if order_id:
+            cancel_args["order_id"] = order_id
+        _append_tool_call(
+            plan,
+            name="cancel_order",
+            args=cancel_args,
+            reason="User requested to cancel a pending order.",
+        )
+        if not order_id:
+            plan.warnings.append("Cancel-order intent detected but order_id was not found in request.")
 
     # Research agent: cross-market / multi-market tools
     if wants_research:
@@ -920,6 +1428,20 @@ def build_plan(
                     "Enable 'Allow Write' to sync chart symbol automatically."
                 )
 
+        if write_enabled and wants_set_timeframe:
+            sequence = timeframe_command_sequence or ([timeframe] if timeframe else [])
+            for idx, target_timeframe in enumerate(sequence):
+                _append_tool_call(
+                    plan,
+                    name="set_timeframe",
+                    args={"symbol": symbol, "timeframe": target_timeframe},
+                    reason=(
+                        "Align chart timeframe with current request."
+                        if idx == 0
+                        else "Continue timeframe sequence as requested."
+                    ),
+                )
+
         tool_symbol = _symbol_to_tool_symbol(symbol) or symbol
         if requested_chart_source == "ostium":
             asset_type = "rwa"
@@ -958,6 +1480,14 @@ def build_plan(
                     args={"symbol": extra_tool_symbol, "asset_type": extra_asset_type},
                     reason=f"Fetch live reference price for additional requested symbol {extra_symbol}.",
                 )
+
+        if wants_positions:
+            _append_tool_call(
+                plan,
+                name="get_positions",
+                args={},
+                reason="Fetch current positions before/for portfolio action.",
+            )
 
         if wants_candles:
             _append_tool_call(
@@ -1020,9 +1550,14 @@ def build_plan(
                 reason="Cross-check reference oracle pricing.",
             )
 
-        if selected_indicators and not wants_remove_indicator and not wants_clear_indicators:
+        should_add_indicators = (
+            wants_add_indicator
+            and bool(requested_indicators)
+            and not wants_clear_indicators
+        )
+        if should_add_indicators:
             if write_enabled:
-                for indicator_name in selected_indicators[:2]:
+                for indicator_name in requested_indicators[:2]:
                     _append_tool_call(
                         plan,
                         name="add_indicator",
@@ -1031,7 +1566,7 @@ def build_plan(
                     )
             else:
                 plan.warnings.append(
-                    "Indicators selected, but write mode is disabled. Enable 'Allow Write' to add indicators on chart."
+                    "Add-indicator request detected, but write mode is disabled. Enable 'Allow Write' first."
                 )
             _append_tool_call(
                 plan,
@@ -1045,6 +1580,22 @@ def build_plan(
                 name="get_active_indicators",
                 args={"symbol": symbol, "timeframe": timeframe},
                 reason="Inspect currently active chart indicators.",
+            )
+
+        if wants_indicator_values:
+            _append_tool_call(
+                plan,
+                name="get_indicators",
+                args={"symbol": symbol, "timeframe": timeframe, "asset_type": asset_type},
+                reason="Fetch indicator values for quantitative confirmation.",
+            )
+        elif analysis_indicator_hints and not any([wants_add_indicator, wants_remove_indicator, wants_clear_indicators]):
+            hint_text = ", ".join(analysis_indicator_hints[:3])
+            _append_tool_call(
+                plan,
+                name="get_indicators",
+                args={"symbol": symbol, "timeframe": timeframe, "asset_type": asset_type},
+                reason=f"Fetch indicator values aligned with preferred indicator hints ({hint_text}).",
             )
 
         if wants_clear_indicators:
@@ -1061,8 +1612,8 @@ def build_plan(
                 )
         elif wants_remove_indicator:
             if write_enabled:
-                if selected_indicators:
-                    for indicator_name in selected_indicators[:2]:
+                if requested_indicators:
+                    for indicator_name in requested_indicators[:2]:
                         _append_tool_call(
                             plan,
                             name="remove_indicator",
@@ -1130,13 +1681,6 @@ def build_plan(
                 args={"symbol": symbol, "timeframe": timeframe, "asset_type": asset_type},
                 reason="Extract pattern candidates from current market structure.",
             )
-        if wants_indicator_values:
-            _append_tool_call(
-                plan,
-                name="get_indicators",
-                args={"symbol": symbol, "timeframe": timeframe, "asset_type": asset_type},
-                reason="Fetch indicator values for quantitative confirmation.",
-            )
         if wants_technical_summary:
             _append_tool_call(
                 plan,
@@ -1195,20 +1739,13 @@ def build_plan(
             wants_reset_view,
             wants_focus_latest,
             wants_drawing_guidance,
-            bool(selected_indicators),
+            wants_add_indicator,
         ])
         if has_write_intent and not write_enabled:
             plan.warnings.append(
                 "Chart action requested, but write mode is disabled. Enable 'Allow Write' to run TradingView commands."
             )
         elif write_enabled:
-            if wants_set_timeframe:
-                _append_tool_call(
-                    plan,
-                    name="set_timeframe",
-                    args={"symbol": symbol, "timeframe": timeframe},
-                    reason="Align chart timeframe with current request.",
-                )
             if wants_set_symbol:
                 source_symbol = tool_state_symbol or symbol
                 set_symbol_args: Dict[str, Any] = {
@@ -1288,6 +1825,22 @@ def build_plan(
                         reason="Adjust TP/SL for requested symbol position.",
                     )
 
+        if wants_close_position:
+            _append_tool_call(
+                plan,
+                name="close_position",
+                args={"symbol": symbol},
+                reason="User requested to close the symbol position.",
+            )
+
+        if wants_reverse_position:
+            _append_tool_call(
+                plan,
+                name="reverse_position",
+                args={"symbol": symbol},
+                reason="User requested to reverse/flip current symbol position.",
+            )
+
     elif wants_news:
         _append_tool_call(
             plan,
@@ -1352,6 +1905,6 @@ def build_plan(
                 reason="Retrieve strategy guidance from knowledge base.",
             )
 
+    _apply_chart_sequence_order(plan, text)
     _finalize_tool_calls(plan, max_calls=8)
     return plan
-

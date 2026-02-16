@@ -6,12 +6,23 @@ import json
 import re
 import uuid
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from typing import get_type_hints
 
 from ..Orchestrator.tool_orchestrator import ToolOrchestrator
 from ..Orchestrator.tool_registry import get_tool_registry
-from ..Orchestrator.tool_modes import WRITE_TOOL_NAMES, NAV_TOOL_NAMES, classify_tool_mode
+from ..Orchestrator.human_ops_policy import (
+    default_max_tool_actions_for_mode,
+    default_tool_retry_attempts_for_mode,
+    normalize_reliability_mode,
+)
+from ..Orchestrator.tool_modes import (
+    CHART_WRITE_TOOL_NAMES,
+    EXECUTION_WRITE_TOOL_NAMES,
+    WRITE_TOOL_NAMES,
+    NAV_TOOL_NAMES,
+    classify_tool_mode,
+)
 from ..Schema.agent_runtime import ToolCall, ToolResult
 
 try:
@@ -31,7 +42,8 @@ class DeepAgentsRuntime:
         if name not in {"mouse_move", "mouse_press", "pan", "zoom", "press_key", "set_crosshair", "move_crosshair"}
     }
     _MEMORY_TOOL_NAMES = {"add_memory", "search_memory", "get_recent_history"}
-    _EXECUTION_TOOL_NAMES = {"place_order"}
+    _EXECUTION_TOOL_NAMES = set(EXECUTION_WRITE_TOOL_NAMES)
+    _PORTFOLIO_READ_TOOL_NAMES = {"get_positions"}
     _NON_RETRYABLE_MARKERS = (
         "unknown tool",
         "requires write mode",
@@ -74,6 +86,15 @@ class DeepAgentsRuntime:
         "research_market": ("research", "cross-market", "multi-market", "compare price", "market comparison", "across markets"),
         "compare_markets": ("compare", "comparison", "scan symbols", "batch research", "screening"),
         "scan_market_overview": ("overview", "market scan", "top movers", "opportunities", "broad scan"),
+        "get_positions": (
+            "position",
+            "positions",
+            "portfolio",
+            "exposure",
+            "open position",
+            "open positions",
+            "active position",
+        ),
     }
     _TRADINGVIEW_INTENT_KEYWORDS = (
         "tradingview",
@@ -100,6 +121,17 @@ class DeepAgentsRuntime:
         "stop",
         "risk",
     )
+    _WRITE_INTENT_PATTERNS = (
+        re.compile(r"\b(set|change|switch|update|ubah|ganti|atur)\s+(symbol|simbol|time\s*frame|timeframe)\b"),
+        re.compile(r"\b(add|remove|hapus|tambahkan)\s+(indicator|indikator)\b"),
+        re.compile(r"\b(draw|gambar|mark|clear|hapus)\s+(drawing|line|level|chart)\b"),
+        re.compile(
+            r"\b("
+            r"set_symbol|set_timeframe|add_indicator|remove_indicator|draw|update_drawing|"
+            r"clear_drawings|clear_indicators|mark_trading_session|setup_trade|add_price_alert"
+            r")\b"
+        ),
+    )
     _CRYPTO_BASES = {
         "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "MATIC",
         "LINK", "SUI", "APT", "ARB", "ARK", "BERA", "OP",
@@ -112,6 +144,7 @@ class DeepAgentsRuntime:
         system_prompt: str,
         tool_states: Optional[Dict[str, Any]] = None,
         tool_timeout_sec: float = 8.0,
+        phase_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         self.llm = llm
         self.system_prompt = str(system_prompt or "").strip()
@@ -128,6 +161,7 @@ class DeepAgentsRuntime:
         self._max_tool_actions: Optional[int] = self._resolve_max_tool_actions()
         self._model_timeout_sec: float = self._resolve_model_timeout_sec()
         self._write_txn_id: Optional[str] = None
+        self._phase_callback = phase_callback
         # Strict sequential enforcement: only 1 tool can execute at a time
         self._tool_execution_lock: asyncio.Semaphore = asyncio.Semaphore(1)
 
@@ -136,10 +170,49 @@ class DeepAgentsRuntime:
         return create_deep_agent is not None
 
     def _phase(self, name: str, details: Optional[Dict[str, Any]] = None) -> None:
-        item: Dict[str, Any] = {"name": name}
+        item: Dict[str, Any] = {"name": name, "seq": len(self._phases) + 1}
         if details:
             item.update(details)
         self._phases.append(item)
+        if self._phase_callback:
+            try:
+                self._phase_callback(dict(item))
+            except Exception:
+                # Phase callback is best effort and must not break runtime flow.
+                pass
+
+    def _build_execution_graph(self) -> Dict[str, Any]:
+        phases = list(self._phases or [])
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+
+        for idx, item in enumerate(phases, start=1):
+            phase = item if isinstance(item, dict) else {"name": str(item)}
+            node_id = f"phase_{idx}"
+            nodes.append(
+                {
+                    "id": node_id,
+                    "seq": idx,
+                    "name": str(phase.get("name") or f"phase_{idx}"),
+                    "detail": str(phase.get("detail") or ""),
+                    "meta": {
+                        key: value
+                        for key, value in phase.items()
+                        if key not in {"name", "seq", "detail"}
+                    },
+                }
+            )
+            if idx > 1:
+                edges.append({"source": f"phase_{idx - 1}", "target": node_id, "type": "next"})
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "summary": {
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+            },
+        }
 
     def _parse_bool(self, value: Any, default: bool = False) -> bool:
         if value is None:
@@ -156,15 +229,23 @@ class DeepAgentsRuntime:
     def _should_expose_tool(self, tool_name: str) -> bool:
         write_enabled = self._parse_bool(self.tool_states.get("write"), default=False)
         memory_enabled = self._parse_bool(self.tool_states.get("memory_enabled"), default=False)
-        if not write_enabled and classify_tool_mode(tool_name) == "write":
+
+        execution_enabled = self._parse_bool(self.tool_states.get("execution"), default=False)
+
+        # Gate TradingView chart mutation tools by Allow Write.
+        if tool_name in CHART_WRITE_TOOL_NAMES and not write_enabled:
+            return False
+
+        # Gate portfolio/order mutation tools by execution mode.
+        if tool_name in EXECUTION_WRITE_TOOL_NAMES and not execution_enabled:
+            return False
+
+        # Backward compat for legacy execution-only list.
+        if tool_name in self._EXECUTION_TOOL_NAMES and not execution_enabled:
             return False
         if not memory_enabled and tool_name in self._MEMORY_TOOL_NAMES:
             return False
-            
-        execution_enabled = self._parse_bool(self.tool_states.get("execution"), default=False)
-        if tool_name in self._EXECUTION_TOOL_NAMES:
-            return execution_enabled
-            
+
         return True
 
     def _is_retryable_error(self, error: Optional[str]) -> bool:
@@ -190,18 +271,24 @@ class DeepAgentsRuntime:
         raw = (
             self.tool_states.get("tool_retry_max")
             or self.tool_states.get("max_tool_retries")
-            or 2
+            or default_tool_retry_attempts_for_mode(
+                normalize_reliability_mode(self.tool_states.get("reliability_mode"))
+            )
         )
         try:
             value = int(raw)
         except Exception:
-            value = 2
+            value = default_tool_retry_attempts_for_mode(
+                normalize_reliability_mode(self.tool_states.get("reliability_mode"))
+            )
         return max(1, min(value, 4))
 
     def _resolve_max_tool_actions(self) -> Optional[int]:
         raw = self.tool_states.get("max_tool_actions")
         if raw is None:
-            return None
+            return default_max_tool_actions_for_mode(
+                normalize_reliability_mode(self.tool_states.get("reliability_mode"))
+            )
         if isinstance(raw, str):
             normalized = raw.strip().lower()
             if normalized in {"none", "unlimited", "inf", "infinite", "0", "-1"}:
@@ -266,7 +353,8 @@ class DeepAgentsRuntime:
         if str(result.data.get("transport") or "").strip().lower() != "tradingview_command":
             return result
 
-        strict = self._parse_bool(self.tool_states.get("strict_write_verification"), default=True)
+        strict_default = normalize_reliability_mode(self.tool_states.get("reliability_mode")) == "strict"
+        strict = self._parse_bool(self.tool_states.get("strict_write_verification"), default=strict_default)
         if not strict:
             return result
 
@@ -368,11 +456,13 @@ class DeepAgentsRuntime:
         if self._parse_bool(self.tool_states.get("memory_enabled"), default=False):
             selected.update(self._MEMORY_TOOL_NAMES)
 
-        if self._parse_bool(self.tool_states.get("write"), default=False):
+        write_enabled = self._parse_bool(self.tool_states.get("write"), default=False)
+        if write_enabled and any(pattern.search(text) for pattern in self._WRITE_INTENT_PATTERNS):
             selected.update(self._WRITE_TOOL_NAMES)
 
         if self._parse_bool(self.tool_states.get("execution"), default=False):
             selected.update(self._EXECUTION_TOOL_NAMES)
+            selected.update(self._PORTFOLIO_READ_TOOL_NAMES)
 
         # Expanded TradingView intent detection
         tradingview_keywords = list(self._TRADINGVIEW_INTENT_KEYWORDS) + [
@@ -513,22 +603,26 @@ class DeepAgentsRuntime:
             timeframe_text = str(timeframe or "none").strip()
         write_enabled = self._parse_bool(self.tool_states.get("write"), default=False)
         execution_enabled = self._parse_bool(self.tool_states.get("execution"), default=False)
+        reliability_mode = str(self.tool_states.get("reliability_mode") or "balanced").strip().lower() or "balanced"
+        recovery_mode = str(self.tool_states.get("recovery_mode") or "recover_then_continue").strip().lower() or "recover_then_continue"
 
         runtime_prompt = (
             "DEEP AGENTS RUNTIME\n"
             f"Active chart: market={market}, timeframe={timeframe_text}\n"
             f"Write mode: {'ON' if write_enabled else 'OFF'} | "
             f"Execution: {'ON' if execution_enabled else 'OFF'} | "
-            f"Profile: {'compact' if compact else 'full'}\n"
+            f"Profile: {'compact' if compact else 'full'} | "
+            f"Reliability: {reliability_mode} | Recovery: {recovery_mode}\n"
             "Treat active chart as default scope unless user explicitly changes it.\n"
             "\n"
             "--- ReAct ENFORCEMENT ---\n"
+            "Sequential execution is ENFORCED at system level.\n"
         )
 
         if strict_react:
             runtime_prompt += (
                 "MODE: STRICT SEQUENTIAL\n"
-                "You CANNOT call multiple tools in parallel. Each call blocks until completion.\n"
+                "You CANNOT call multiple tools in parallel. Each call will block until completion.\n"
                 "\n"
                 "At each step, follow this EXACT template:\n"
                 "\n"
@@ -608,9 +702,13 @@ class DeepAgentsRuntime:
         value = str(raw or "").strip().upper().replace("_", "-").replace("/", "-")
         if not value:
             return None
+        if value in {"RUNTIME-CONTEXT", "RUNTIME", "CONTEXT", "FRONTEND-TOOLBAR", "FRONTEND"}:
+            return None
         if "-" in value:
             base, quote = value.split("-", 1)
             if not base or not quote:
+                return None
+            if base in {"RUNTIME", "CONTEXT", "FRONTEND"} or quote in {"RUNTIME", "CONTEXT", "FRONTEND"}:
                 return None
             return f"{base}-{quote}"
         if value.endswith("USDT") and len(value) > 4:
@@ -633,7 +731,13 @@ class DeepAgentsRuntime:
         return "rwa"
 
     def _extract_symbols(self, user_message: str) -> List[str]:
-        text = str(user_message or "").upper().replace("_", "-")
+        cleaned = re.sub(
+            r"\[RUNTIME_CONTEXT\].*?\[/RUNTIME_CONTEXT\]",
+            " ",
+            str(user_message or ""),
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        text = cleaned.upper().replace("_", "-")
         found: List[str] = []
 
         pair_pattern = re.compile(r"\b([A-Z]{2,6})[/-]([A-Z]{2,6})\b")
@@ -1065,6 +1169,7 @@ class DeepAgentsRuntime:
                         "plan": None,
                         "tool_results": [asdict(item) for item in self._captured_results],
                         "phases": list(self._phases),
+                        "execution_graph": self._build_execution_graph(),
                     },
                 }
         elif self._requires_market_evidence(user_message):
@@ -1136,5 +1241,6 @@ class DeepAgentsRuntime:
                 "plan": None,
                 "tool_results": [asdict(item) for item in self._captured_results],
                 "phases": list(self._phases),
+                "execution_graph": self._build_execution_graph(),
             },
         }

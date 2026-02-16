@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Dict
 
 from ..Tools.data import (
+    get_positions,
     get_price,
     get_candles,
     get_orderbook,
@@ -21,6 +22,10 @@ from ..Tools.data import (
     get_active_indicators,
     adjust_position_tpsl,
     adjust_all_positions_tpsl,
+    close_position,
+    close_all_positions,
+    reverse_position,
+    cancel_order,
     add_memory,
     search_memory,
     get_recent_history,
@@ -41,12 +46,14 @@ from ..Tools.tradingview.actions import (
     add_indicator,
     remove_indicator,
     clear_indicators,
+    verify_indicator_present,
     set_timeframe,
     set_symbol,
     setup_trade,
     add_price_alert,
     mark_trading_session,
 )
+from ..Tools.tradingview.verify import verify_tradingview_state
 from ..Tools.tradingview.drawing.actions import (
     draw,
     update_drawing,
@@ -102,8 +109,13 @@ def get_tool_registry() -> Dict[str, ToolFunc]:
 
         # Data / chart context
         "get_active_indicators": get_active_indicators,
+        "get_positions": get_positions,
         "adjust_position_tpsl": adjust_position_tpsl,
         "adjust_all_positions_tpsl": adjust_all_positions_tpsl,
+        "close_position": close_position,
+        "close_all_positions": close_all_positions,
+        "reverse_position": reverse_position,
+        "cancel_order": cancel_order,
 
         # Memory + knowledge
         "add_memory": add_memory,
@@ -125,6 +137,8 @@ def get_tool_registry() -> Dict[str, ToolFunc]:
         "add_indicator": add_indicator,
         "remove_indicator": remove_indicator,
         "clear_indicators": clear_indicators,
+        "verify_indicator_present": verify_indicator_present,
+        "verify_tradingview_state": verify_tradingview_state,
         "set_timeframe": set_timeframe,
         "set_symbol": set_symbol,
         # setup_trade supports gp/gl aliases and validation/invalidation aliases.

@@ -267,9 +267,31 @@ class LeaderboardService:
         """Get trader leaderboard from snapshots"""
         if snapshot_date is None:
             snapshot_date = date.today()
+
+        # If today's snapshots aren't generated yet, fall back to the latest available snapshot date
+        # so the UI doesn't look "broken" after midnight / when cron hasn't run.
+        effective_date = snapshot_date
+        base_count_stmt = select(func.count()).select_from(LeaderboardSnapshot).where(
+            LeaderboardSnapshot.snapshot_date == effective_date,
+            LeaderboardSnapshot.timeframe == timeframe
+        )
+        if ai_only:
+            base_count_stmt = base_count_stmt.where(LeaderboardSnapshot.agent_model.isnot(None))
+        base_count = (await self.db.execute(base_count_stmt)).scalar() or 0
+
+        if base_count == 0:
+            latest_date_stmt = select(func.max(LeaderboardSnapshot.snapshot_date)).where(
+                LeaderboardSnapshot.timeframe == timeframe,
+                LeaderboardSnapshot.snapshot_date <= snapshot_date
+            )
+            if ai_only:
+                latest_date_stmt = latest_date_stmt.where(LeaderboardSnapshot.agent_model.isnot(None))
+            latest_date = (await self.db.execute(latest_date_stmt)).scalar()
+            if latest_date:
+                effective_date = latest_date
         
         stmt = select(LeaderboardSnapshot).where(
-            LeaderboardSnapshot.snapshot_date == snapshot_date,
+            LeaderboardSnapshot.snapshot_date == effective_date,
             LeaderboardSnapshot.timeframe == timeframe
         )
         
@@ -291,6 +313,7 @@ class LeaderboardService:
         snapshots = result.scalars().all()
         
         return {
+            'snapshotDate': effective_date.isoformat() if effective_date else None,
             'data': [
                 {
                     'rank': s.rank,
@@ -323,9 +346,25 @@ class LeaderboardService:
         """Get model leaderboard from snapshots"""
         if snapshot_date is None:
             snapshot_date = date.today()
-        
+
+        effective_date = snapshot_date
+        base_count_stmt = select(func.count()).select_from(ModelLeaderboardSnapshot).where(
+            ModelLeaderboardSnapshot.snapshot_date == effective_date,
+            ModelLeaderboardSnapshot.timeframe == timeframe
+        )
+        base_count = (await self.db.execute(base_count_stmt)).scalar() or 0
+
+        if base_count == 0:
+            latest_date_stmt = select(func.max(ModelLeaderboardSnapshot.snapshot_date)).where(
+                ModelLeaderboardSnapshot.timeframe == timeframe,
+                ModelLeaderboardSnapshot.snapshot_date <= snapshot_date
+            )
+            latest_date = (await self.db.execute(latest_date_stmt)).scalar()
+            if latest_date:
+                effective_date = latest_date
+
         stmt = select(ModelLeaderboardSnapshot).where(
-            ModelLeaderboardSnapshot.snapshot_date == snapshot_date,
+            ModelLeaderboardSnapshot.snapshot_date == effective_date,
             ModelLeaderboardSnapshot.timeframe == timeframe
         ).order_by(ModelLeaderboardSnapshot.rank)
         
@@ -341,6 +380,7 @@ class LeaderboardService:
         snapshots = result.scalars().all()
         
         return {
+            'snapshotDate': effective_date.isoformat() if effective_date else None,
             'data': [
                 {
                     'rank': s.rank,

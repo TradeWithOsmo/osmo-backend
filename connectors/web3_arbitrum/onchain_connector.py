@@ -190,14 +190,16 @@ class OnchainConnector(BaseConnector):
             # Side: 0=BUY, 1=SELL
             side_enum = 0 if side.lower() == 'buy' else 1
             
-            # OrderType: 0=MARKET, 1=LIMIT, 2=STOP_LIMIT (Assuming standard mapping, verify ABI)
+            # OrderType in contracts: MARKET=0, LIMIT=1, STOP=2 (see OsmoTypes.sol)
+            ot_norm = (order_type or "").strip().lower().replace(" ", "_")
             order_type_map = {
-                'market': 0,
-                'limit': 1,
-                'stop_limit': 2,
-                'stop': 2 # Handle 'stop' as stop_limit or separate? Assuming stop_limit for now
+                "market": 0,
+                "limit": 1,
+                "stop": 2,
+                "stop_limit": 2,
+                "stop_market": 2,
             }
-            order_type_enum = order_type_map.get(order_type.lower(), 0)
+            order_type_enum = order_type_map.get(ot_norm, 0)
             
             # Decimals handling
             # amountUsd is usually 18 or 6 decimals? USDC is 6.
@@ -222,18 +224,31 @@ class OnchainConnector(BaseConnector):
             reduce_only = bool(kwargs.get('reduce_only', False))
             post_only = bool(kwargs.get('post_only', False))
             
-            # Map trigger condition strings to integers
+            # Map trigger condition strings to integers (OsmoTypes.TriggerCondition: ABOVE=0, BELOW=1)
             tc_raw = kwargs.get('trigger_condition', 0)
             if isinstance(tc_raw, str):
-                tc_map = {'above': 1, 'below': 2, 'none': 0}
-                trigger_condition = tc_map.get(tc_raw.lower(), 0)
+                tc_map = {'above': 0, 'below': 1, 'none': 0}
+                trigger_condition = tc_map.get(tc_raw.strip().lower(), 0)
             else:
                 trigger_condition = int(tc_raw or 0)
 
             tif_raw = kwargs.get('time_in_force', 0)
             if isinstance(tif_raw, str):
-                tif_map = {'gtc': 0, 'ioc': 1, 'fok': 2}
-                time_in_force = tif_map.get(tif_raw.lower(), 0)
+                # Contract currently treats timeInForce as 0=GTC, >0=expiry timestamp.
+                s = tif_raw.strip().lower().replace(" ", "_")
+                if s.isdigit():
+                    time_in_force = int(s)
+                else:
+                    tif_map = {
+                        'gtc': 0,
+                        'good_til_cancelled': 0,
+                        'good_til_date': 0,
+                        'ioc': 0,  # Not supported onchain today; treat as GTC
+                        'immediate_or_cancel': 0,
+                        'fok': 0,  # Not supported onchain today; treat as GTC
+                        'fill_or_kill': 0,
+                    }
+                    time_in_force = tif_map.get(s, 0)
             else:
                 time_in_force = int(tif_raw or 0)
             

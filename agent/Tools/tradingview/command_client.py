@@ -25,6 +25,21 @@ TRADINGVIEW_STRICT_WRITE_VERIFICATION = os.getenv("TRADINGVIEW_STRICT_WRITE_VERI
     "off",
     "no",
 }
+TRADINGVIEW_HTTP_TIMEOUT_SEC = max(
+    8.0,
+    float(os.getenv("TRADINGVIEW_HTTP_TIMEOUT_SEC", str(TRADINGVIEW_WAIT_TIMEOUT_SEC + 2.0))),
+)
+TRADINGVIEW_REQUIRE_CONSUMER_ONLINE = os.getenv("TRADINGVIEW_REQUIRE_CONSUMER_ONLINE", "true").strip().lower() not in {
+    "0",
+    "false",
+    "off",
+    "no",
+}
+TRADINGVIEW_CONSUMER_STALE_SEC = max(1.0, float(os.getenv("TRADINGVIEW_CONSUMER_STALE_SEC", "6.0")))
+TRADINGVIEW_CONSUMER_STATUS_TIMEOUT_SEC = max(
+    0.5,
+    float(os.getenv("TRADINGVIEW_CONSUMER_STATUS_TIMEOUT_SEC", "2.0")),
+)
 
 
 def _command_query_params() -> Dict[str, Any]:
@@ -32,6 +47,27 @@ def _command_query_params() -> Dict[str, Any]:
         "wait_for_completion": "true" if TRADINGVIEW_WAIT_FOR_COMPLETION else "false",
         "timeout_sec": TRADINGVIEW_WAIT_TIMEOUT_SEC,
     }
+
+
+async def _fetch_consumer_status(client: httpx.AsyncClient, symbol: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    try:
+        resp = await client.get(
+            f"{CONNECTORS_API}/tradingview/consumer-status",
+            params={
+                "symbol": symbol,
+                "stale_after_sec": TRADINGVIEW_CONSUMER_STALE_SEC,
+            },
+            timeout=TRADINGVIEW_CONSUMER_STATUS_TIMEOUT_SEC,
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+    body = _to_json_or_text(resp)
+    if resp.status_code >= 400:
+        return None, f"HTTP {resp.status_code}"
+    if isinstance(body, dict):
+        return body, None
+    return None, "Malformed consumer status payload"
 
 
 def _to_json_or_text(resp: httpx.Response) -> Any:
@@ -122,6 +158,25 @@ def _compare_state(expected_state: Dict[str, Any], state_evidence: Dict[str, Any
         return True, [], []
     missing: List[str] = []
     mismatch: List[str] = []
+
+    def _as_float(v: Any) -> Optional[float]:
+        try:
+            if v is None:
+                return None
+            if isinstance(v, bool):
+                return float(int(v))
+            return float(v)
+        except Exception:
+            return None
+
+    def _float_equal(a: Any, b: Any) -> bool:
+        fa = _as_float(a)
+        fb = _as_float(b)
+        if fa is None or fb is None:
+            return False
+        tol = max(1e-6, abs(fb) * 1e-6)
+        return abs(fa - fb) <= tol
+
     for key, expected_value in expected_state.items():
         if key not in state_evidence:
             missing.append(key)
@@ -133,6 +188,9 @@ def _compare_state(expected_state: Dict[str, Any], state_evidence: Dict[str, Any
         elif key == "timeframe":
             if _norm_timeframe(actual) != _norm_timeframe(expected_value):
                 mismatch.append(f"{key}: expected={_norm_timeframe(expected_value)} actual={_norm_timeframe(actual)}")
+        elif _as_float(actual) is not None and _as_float(expected_value) is not None:
+            if not _float_equal(actual, expected_value):
+                mismatch.append(f"{key}: expected={_as_text(expected_value)} actual={_as_text(actual)}")
         else:
             if _as_text(actual).lower() != _as_text(expected_value).lower():
                 mismatch.append(f"{key}: expected={_as_text(expected_value)} actual={_as_text(actual)}")
@@ -158,7 +216,33 @@ async def send_tradingview_command(
     strict = TRADINGVIEW_STRICT_WRITE_VERIFICATION if strict_write_verification is None else bool(strict_write_verification)
     expected = dict(expected_state or {})
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=TRADINGVIEW_HTTP_TIMEOUT_SEC) as client:
+        if mode == "write" and TRADINGVIEW_REQUIRE_CONSUMER_ONLINE:
+            consumer_status, consumer_status_error = await _fetch_consumer_status(client, symbol)
+            if isinstance(consumer_status, dict):
+                consumer_online = bool(consumer_status.get("consumer_online"))
+            else:
+                consumer_online = True
+            if not consumer_online:
+                detail = (
+                    "TradingView write bridge is offline. "
+                    "Open chart interface and keep it active, then retry."
+                )
+                if consumer_status_error:
+                    detail = f"{detail} (status check failed: {consumer_status_error})"
+                return {
+                    "status": "error",
+                    "transport": "tradingview_command",
+                    "mode": mode,
+                    "symbol": symbol,
+                    "action": action,
+                    "expected_state": expected,
+                    "state_evidence": {},
+                    "state_verified": False,
+                    "error": detail,
+                    "consumer_status": consumer_status or {},
+                }
+
         try:
             resp = await client.post(url, json=request_payload, params=_command_query_params())
         except Exception as exc:
