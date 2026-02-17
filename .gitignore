@@ -50,3 +50,7 @@ ostium_test_output.txt
 docker-data/
 .pytest_cache/
 websocket/foundry_project/
+
+# Local resource artifacts
+agent/Resources/
+websocket/Resources/
