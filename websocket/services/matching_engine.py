@@ -255,43 +255,47 @@ class SimulationMatchingEngine:
 
     async def _execute_fill(self, order_id, user, symbol, side, size, leverage, price):
         logger.info(f"Filling Order {order_id} {side} {symbol} @ {price}")
-        norm_side = 'long' if side.lower() in ['buy', 'long'] else 'short'
-        margin = (size * price) / leverage
         
-        await ledger_service.process_trade_open(
-             user, symbol, norm_side, size, price, leverage, margin, order_id
-        )
-
-        # Mark the pending order as filled so UI/queries stop treating it as cancellable/open.
-        try:
-            async with AsyncSessionLocal() as session:
-                stmt = select(Order).where(
-                    Order.id == order_id,
-                    Order.user_address == str(user).lower(),
+        async with AsyncSessionLocal() as session:
+            stmt = select(Order).where(
+                Order.id == order_id,
+                Order.user_address == str(user).lower(),
+            )
+            res = await session.execute(stmt)
+            o = res.scalar_one_or_none()
+            
+            is_reduce_only = getattr(o, "reduce_only", False) if o else False
+            
+            if is_reduce_only:
+                await ledger_service.process_trade_close(
+                    user, symbol, price, size, exchange="simulation"
                 )
-                res = await session.execute(stmt)
-                o = res.scalar_one_or_none()
-                if o:
-                    now = datetime.utcnow()
-                    o.status = "filled"
-                    if hasattr(o, "filled_at"):
-                        o.filled_at = now
-                    if hasattr(o, "updated_at"):
-                        o.updated_at = now
-                    if hasattr(o, "filled_size"):
-                        try:
-                            o.filled_size = float(size) if size is not None else o.filled_size
-                        except Exception:
-                            pass
-                    if hasattr(o, "avg_fill_price"):
-                        try:
-                            o.avg_fill_price = float(price) if price is not None else o.avg_fill_price
-                        except Exception:
-                            pass
-                    if hasattr(o, "exchange_order_id") and not getattr(o, "exchange_order_id", None):
-                        o.exchange_order_id = f"sim_{str(order_id)[:8]}"
-                    await session.commit()
-        except Exception as e:
-            logger.error(f"Failed to update filled order status for {order_id}: {e}")
+            else:
+                norm_side = 'long' if side.lower() in ['buy', 'long'] else 'short'
+                margin = (size * price) / leverage
+                await ledger_service.process_trade_open(
+                    user, symbol, norm_side, size, price, leverage, margin, order_id
+                )
+            
+            if o:
+                now = datetime.utcnow()
+                o.status = "filled"
+                if hasattr(o, "filled_at"):
+                    o.filled_at = now
+                if hasattr(o, "updated_at"):
+                    o.updated_at = now
+                if hasattr(o, "filled_size"):
+                    try:
+                        o.filled_size = float(size) if size is not None else o.filled_size
+                    except Exception:
+                        pass
+                if hasattr(o, "avg_fill_price"):
+                    try:
+                        o.avg_fill_price = float(price) if price is not None else o.avg_fill_price
+                    except Exception:
+                        pass
+                if hasattr(o, "exchange_order_id") and not getattr(o, "exchange_order_id", None):
+                    o.exchange_order_id = f"sim_{str(order_id)[:8]}"
+                await session.commit()
 
 simulation_matching_engine = SimulationMatchingEngine()

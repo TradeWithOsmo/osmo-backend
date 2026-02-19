@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   backend:
@@ -25,6 +25,7 @@ services:
       - KB_EMBEDDING_PROVIDER=${KB_EMBEDDING_PROVIDER:-openrouter}
       - KB_EMBEDDING_MODEL=${KB_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
       - KB_EMBEDDING_DIMS=${KB_EMBEDDING_DIMS:-0}
+      - FORCE_EXECUTION_MODE=${FORCE_EXECUTION_MODE:-auto}
     depends_on:
       - db
       - redis
@@ -54,7 +55,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "pg_isready", "-q", "-d", "osmo_db", "-U", "osmo_user" ]
+      test: ["CMD", "pg_isready", "-q", "-d", "osmo_db", "-U", "osmo_user"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -288,7 +289,11 @@ services:
       --requirepass ${LANGFUSE_REDIS_AUTH:-myredissecret}
       --maxmemory-policy noeviction
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${LANGFUSE_REDIS_AUTH:-myredissecret} ping | grep PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a ${LANGFUSE_REDIS_AUTH:-myredissecret} ping | grep PONG",
+        ]
       interval: 3s
       timeout: 10s
       retries: 20
@@ -324,7 +329,6 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
-
 
 networks:
   osmo-network:

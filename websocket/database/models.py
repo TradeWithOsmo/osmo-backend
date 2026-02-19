@@ -143,6 +143,12 @@ class Position(Base):
     tp = Column(String, nullable=True) # "Take Profit" price/value
     sl = Column(String, nullable=True) # "Stop Loss" price/value
     
+    # Validation/Invalidation levels (GP/GL) for AI-triggered decisions
+    gp = Column(Float, nullable=True)  # Validation level (Green Point)
+    gl = Column(Float, nullable=True)  # Invalidation level (Red Line)
+    gp_triggered = Column(Boolean, default=False)  # Flag if GP was triggered
+    gl_triggered = Column(Boolean, default=False)  # Flag if GL was triggered
+    
     # Status
     status = Column(String, default='OPEN') # 'OPEN', 'CLOSED'
     
@@ -184,6 +190,61 @@ class PositionRiskConfig(Base):
 
     __table_args__ = (
         Index('idx_risk_user_symbol', 'user_address', 'symbol', 'exchange', unique=True),
+    )
+
+
+class TradeSetup(Base):
+    """
+    Trade setup with validation (GP) and invalidation (GL) levels.
+    Used for AI-triggered follow-up decisions when price crosses these levels.
+    """
+    __tablename__ = "trade_setups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_address = Column(String, index=True, nullable=False)
+    session_id = Column(String, nullable=True, index=True)  # AI session ID
+    
+    # Position reference
+    position_id = Column(Integer, nullable=True)  # Link to Position
+    exchange = Column(String, nullable=False)
+    symbol = Column(String, nullable=False)
+    side = Column(String, nullable=False)  # 'long' | 'short'
+    
+    # Entry and targets
+    entry_price = Column(Float, nullable=False)
+    tp = Column(Float, nullable=True)  # Take profit
+    tp2 = Column(Float, nullable=True)
+    tp3 = Column(Float, nullable=True)
+    sl = Column(Float, nullable=True)  # Stop loss
+    
+    # Validation/Invalidation (GP/GL)
+    gp = Column(Float, nullable=True)  # Validation level
+    gl = Column(Float, nullable=True)  # Invalidation level
+    gp_note = Column(Text, nullable=True)  # AI note for validation trigger
+    gl_note = Column(Text, nullable=True)  # AI note for invalidation trigger
+    
+    # Trigger tracking
+    gp_triggered = Column(Boolean, default=False)
+    gl_triggered = Column(Boolean, default=False)
+    gp_triggered_at = Column(DateTime, nullable=True)
+    gl_triggered_at = Column(DateTime, nullable=True)
+    gp_trigger_price = Column(Float, nullable=True)  # Price when GP triggered
+    gl_trigger_price = Column(Float, nullable=True)  # Price when GL triggered
+    
+    # AI decision follow-up
+    gp_decision_triggered = Column(Boolean, default=False)  # AI follow-up done?
+    gl_decision_triggered = Column(Boolean, default=False)  # AI follow-up done?
+    
+    # Status
+    status = Column(String, default='active')  # 'active', 'completed', 'cancelled'
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow, nullable=True)
+    
+    __table_args__ = (
+        Index('idx_setup_user_symbol', 'user_address', 'symbol', 'exchange'),
+        Index('idx_setup_active', 'user_address', 'status'),
     )
 
 class LeaderboardSnapshot(Base):

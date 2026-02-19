@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from database.connection import get_db
 from database.arena_models import ArenaPick, ArenaReward, ArenaLeaderboard
 from pydantic import BaseModel
@@ -21,10 +21,21 @@ class UserStatsResponse(BaseModel):
     roi: float = 0.0
     wager: float = 0.0
     points: float = 0.0
+    account_value: float = 0.0
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    user_address: str
+    pnl: float
+    roi: float
+    volume: float
+
+class LeaderboardResponse(BaseModel):
+    data: List[LeaderboardEntry]
+    pagination: dict
 
 @router.post("/pick")
 async def sync_pick(req: PickRequest, db: AsyncSession = Depends(get_db)):
-    # Check current pick
     stmt = select(ArenaPick).where(ArenaPick.user_address == req.user_address)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -57,18 +68,17 @@ async def sync_pick(req: PickRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/stats/{address}", response_model=UserStatsResponse)
 async def get_user_stats(address: str, db: AsyncSession = Depends(get_db)):
-    # 1. Get Pick Info
-    pick_stmt = select(ArenaPick).where(ArenaPick.user_address == address)
+    address_lower = address.lower()
+    
+    pick_stmt = select(ArenaPick).where(ArenaPick.user_address == address_lower)
     pick_res = await db.execute(pick_stmt)
     pick = pick_res.scalar_one_or_none()
 
-    # 2. Get Leaderboard Info
-    lb_stmt = select(ArenaLeaderboard).where(ArenaLeaderboard.user_address == address)
+    lb_stmt = select(ArenaLeaderboard).where(ArenaLeaderboard.user_address == address_lower)
     lb_res = await db.execute(lb_stmt)
     lb = lb_res.scalar_one_or_none()
 
-    # 3. Get Points (Rewards)
-    rew_stmt = select(ArenaReward).where(ArenaReward.user_address == address)
+    rew_stmt = select(ArenaReward).where(ArenaReward.user_address == address_lower)
     rew_res = await db.execute(rew_stmt)
     rewards = rew_res.scalars().all()
     total_points = sum(r.amount for r in rewards)
@@ -78,11 +88,80 @@ async def get_user_stats(address: str, db: AsyncSession = Depends(get_db)):
         pnl=lb.pnl if lb else 0.0,
         roi=lb.roi if lb else 0.0,
         wager=pick.wager if pick else 0.0,
-        points=total_points
+        points=total_points,
+        account_value=1000.0 + (lb.pnl if lb else 0.0)
     )
 
-@router.get("/leaderboard")
-async def get_arena_leaderboard(side: str = "human", db: AsyncSession = Depends(get_db)):
-    stmt = select(ArenaLeaderboard).where(ArenaLeaderboard.side == side).order_by(ArenaLeaderboard.rank.asc()).limit(100)
+@router.get("/rank/{address}")
+async def get_user_rank(address: str, side: str = "human", db: AsyncSession = Depends(get_db)):
+    address_lower = address.lower()
+    
+    lb_stmt = select(ArenaLeaderboard).where(
+        ArenaLeaderboard.user_address == address_lower,
+        ArenaLeaderboard.side == side
+    )
+    lb_res = await db.execute(lb_stmt)
+    lb = lb_res.scalar_one_or_none()
+    
+    if lb:
+        return {
+            "rank": lb.rank,
+            "pnl": lb.pnl,
+            "roi": lb.roi,
+            "volume": lb.volume
+        }
+    
+    total_stmt = select(func.count()).select_from(ArenaLeaderboard).where(ArenaLeaderboard.side == side)
+    total_res = await db.execute(total_stmt)
+    total = total_res.scalar() or 0
+    
+    return {
+        "rank": total + 1,
+        "pnl": 0.0,
+        "roi": 0.0,
+        "volume": 0.0
+    }
+
+@router.get("/leaderboard", response_model=LeaderboardResponse)
+async def get_arena_leaderboard(
+    side: str = "human", 
+    page: int = 1, 
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    offset = (page - 1) * limit
+    
+    count_stmt = select(func.count()).select_from(ArenaLeaderboard).where(ArenaLeaderboard.side == side)
+    count_res = await db.execute(count_stmt)
+    total = count_res.scalar() or 0
+    
+    stmt = (
+        select(ArenaLeaderboard)
+        .where(ArenaLeaderboard.side == side)
+        .order_by(ArenaLeaderboard.pnl.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(stmt)
-    return result.scalars().all()
+    rows = result.scalars().all()
+    
+    data = []
+    for idx, row in enumerate(rows):
+        actual_rank = offset + idx + 1
+        data.append(LeaderboardEntry(
+            rank=actual_rank,
+            user_address=row.user_address,
+            pnl=row.pnl,
+            roi=row.roi,
+            volume=row.volume
+        ))
+    
+    return LeaderboardResponse(
+        data=data,
+        pagination={
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit if limit > 0 else 1
+        }
+    )

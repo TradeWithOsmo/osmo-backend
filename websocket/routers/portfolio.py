@@ -147,11 +147,18 @@ async def get_trade_history(
             notional = o.get('notional_usd', 0)
             fee = (notional * builder_fee_bps) / 10000
             
+            is_close_order = o['id'].startswith('sim_close_') or o['id'].startswith('close_')
+            side_lower = o['side'].lower()
+            if is_close_order:
+                direction = side_lower.capitalize()
+            else:
+                direction = "Long" if side_lower in ('buy', 'long') else "Short"
+            
             trades.append({
                 "id": o['id'],
                 "time": o['filled_at'] or o['created_at'] or datetime.utcnow().isoformat(),
                 "symbol": o['symbol'],
-                "direction": "Long" if o['side'].lower() == 'buy' else "Short",
+                "direction": direction,
                 "price": o['avg_fill_price'] or o['price'] or 0,
                 "size": o['size'],
                 "sizeAsset": o['symbol'].split('-')[0] if '-' in o['symbol'] else o['symbol'],

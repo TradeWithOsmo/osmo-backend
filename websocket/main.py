@@ -38,6 +38,8 @@ from connectors.hyperliquid.category_map import get_category  # Import category 
 # Import orders API
 from routers.orders import router as orders_router
 from services.price_pusher import price_pusher
+from services.price_monitor_service import price_monitor_service
+from services.ai_trigger_service import ai_trigger_service
 from services.session_candle_cache import (
     session_candle_cache,
     to_timeframe,
@@ -137,6 +139,9 @@ async def handle_hyperliquid_message(data: dict):
             data["change_24h"] = 0
             data["change_percent_24h"] = 0
             latest_prices[symbol] = data
+    
+    # Update price monitor service with latest prices
+    price_monitor_service.update_prices(latest_prices)
     
     # Broadcast to "ALL" subscribers (global stream)
     if "ALL" in connected_clients and normalized:
@@ -671,6 +676,16 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(simulation_matching_engine.start())
         logger.info("✅ Simulation Matching Engine started")
         
+        # Start Price Monitor Service (GP/GL monitoring)
+        try:
+            from services.ai_trigger_service import ai_trigger_service
+            ai_callback = await ai_trigger_service.create_ai_trigger_callback()
+            price_monitor_service.set_ai_trigger_callback(ai_callback)
+            await price_monitor_service.start(latest_prices)
+            logger.info("✅ Price Monitor Service started (GP/GL monitoring)")
+        except Exception as e:
+            logger.error(f"❌ Failed to start Price Monitor Service: {e}")
+        
     except Exception as e:
         logger.error(f"❌ Failed to start Indexer/Matching Services: {e}")
 
@@ -733,6 +748,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown connector system
     await connector_registry.shutdown()
+    
+    # Stop price monitor service
+    await price_monitor_service.stop()
     
     if hyperliquid_client:
         await hyperliquid_client.disconnect()
@@ -797,6 +815,7 @@ from routers.history import router as history_router # NEW
 from routers.watchlist import router as watchlist_router # NEW
 from routers.tools import router as tools_router
 from routers.arena import router as arena_router
+from routers.trade_setups import router as trade_setups_router  # NEW: GP/GL monitoring
 
 app.include_router(user_router, prefix="/api/user", tags=["user"])
 app.include_router(leaderboard_router, prefix="/api/leaderboard", tags=["leaderboard"])
@@ -812,6 +831,7 @@ app.include_router(connectors_router, prefix="/api/connectors", tags=["connector
 app.include_router(history_router, prefix="/api/history", tags=["history"]) # NEW: /api/history
 app.include_router(watchlist_router, tags=["watchlist"]) # NEW: /api/watchlist (prefix already in router)
 app.include_router(tools_router)
+app.include_router(trade_setups_router)  # NEW: /api/trade-setups (GP/GL monitoring)
 
 
 
