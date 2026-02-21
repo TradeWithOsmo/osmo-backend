@@ -1,0 +1,1432 @@
+{
+  "summary": {
+    "total": 203,
+    "ok": 203,
+    "failed": 0,
+    "pass_rate_pct": 100.0
+  },
+  "failed": [],
+  "records": [
+    {
+      "module": "agent.Tools",
+      "name": "place_order",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.01
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_price",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_candles",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_orderbook",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_funding_rate",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_ticker_stats",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_chainlink_price",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_high_low_levels",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_technical_analysis",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_patterns",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_technical_summary",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.01
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_whale_activity",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_token_distribution",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "search_news",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "search_sentiment",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "search_web_hybrid",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_active_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "add_indicator",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "remove_indicator",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "clear_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "set_timeframe",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "set_symbol",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "setup_trade",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "add_price_alert",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "mark_trading_session",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "verify_indicator_present",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "list_supported_indicator_aliases",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "focus_chart",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "ensure_mode",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "pan",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "zoom",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "press_key",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "reset_view",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "focus_latest",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_screenshot",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_photo_chart",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "hover_candle",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "mouse_move",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "mouse_press",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "set_crosshair",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "move_crosshair",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_canvas",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_box",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "inspect_cursor",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "draw",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "update_drawing",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "clear_drawings",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "list_supported_draw_tools",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_positions",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "adjust_position_tpsl",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "adjust_all_positions_tpsl",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "close_position",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "close_all_positions",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "reverse_position",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "cancel_order",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "add_memory",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "search_memory",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "get_recent_history",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "search_knowledge_base",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "research_market",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "compare_markets",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools",
+      "name": "scan_market_overview",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.trade_execution",
+      "name": "place_order",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_candles",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_chainlink_price",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_funding_rate",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_high_low_levels",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_orderbook",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_price",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.market",
+      "name": "get_ticker_stats",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.analysis",
+      "name": "get_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.analysis",
+      "name": "get_patterns",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.analysis",
+      "name": "get_technical_analysis",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.analysis",
+      "name": "get_technical_summary",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.analytics",
+      "name": "get_token_distribution",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.analytics",
+      "name": "get_whale_activity",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.web",
+      "name": "search_news",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.web",
+      "name": "search_sentiment",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.web",
+      "name": "search_web_hybrid",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.memory",
+      "name": "add_memory",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.memory",
+      "name": "add_memory_messages",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.memory",
+      "name": "get_recent_history",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.memory",
+      "name": "search_memory",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.knowledge",
+      "name": "search_knowledge_base",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.knowledge",
+      "name": "get_drawing_guidance",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.knowledge",
+      "name": "get_trade_management_guidance",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.knowledge",
+      "name": "get_market_context_guidance",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.knowledge",
+      "name": "consult_strategy",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.research",
+      "name": "compare_markets",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.research",
+      "name": "research_market",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.research",
+      "name": "scan_market_overview",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "adjust_all_positions_tpsl",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "adjust_position_tpsl",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "cancel_order",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "close_all_positions",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "close_position",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "get_positions",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.trade",
+      "name": "reverse_position",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.data.tradingview",
+      "name": "get_active_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "add_indicator",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "add_price_alert",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "clear_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "list_supported_indicator_aliases",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "mark_trading_session",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "remove_indicator",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "set_symbol",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "set_timeframe",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "setup_trade",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.actions",
+      "name": "verify_indicator_present",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.verify",
+      "name": "verify_tradingview_state",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "capture_moment",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "ensure_mode",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "focus_chart",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "focus_latest",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "get_box",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "get_canvas",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "get_photo_chart",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "get_screenshot",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "hover_candle",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "inspect_cursor",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "mouse_move",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "mouse_press",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "move_crosshair",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "pan",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "press_key",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "reset_view",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "set_crosshair",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.nav.actions",
+      "name": "zoom",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.drawing.actions",
+      "name": "clear_drawings",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.drawing.actions",
+      "name": "draw",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.drawing.actions",
+      "name": "list_supported_draw_tools",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.Tools.tradingview.drawing.actions",
+      "name": "update_drawing",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.trade_execution",
+      "name": "place_order",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.01
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_price",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_candles",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_orderbook",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_funding_rate",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_ticker_stats",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_chainlink_price",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.market",
+      "name": "get_high_low_levels",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.analysis",
+      "name": "get_technical_analysis",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.analysis",
+      "name": "get_patterns",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.analysis",
+      "name": "get_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.analysis",
+      "name": "get_technical_summary",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.01
+    },
+    {
+      "module": "agent.src.tools.legacy.data.analytics",
+      "name": "get_whale_activity",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.analytics",
+      "name": "get_token_distribution",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.web",
+      "name": "search_news",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.web",
+      "name": "search_sentiment",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.web",
+      "name": "search_web_hybrid",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.memory",
+      "name": "add_memory_messages",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.memory",
+      "name": "add_memory",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.memory",
+      "name": "search_memory",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.memory",
+      "name": "get_recent_history",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.knowledge",
+      "name": "search_knowledge_base",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.knowledge",
+      "name": "get_drawing_guidance",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.knowledge",
+      "name": "get_trade_management_guidance",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.knowledge",
+      "name": "get_market_context_guidance",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.knowledge",
+      "name": "consult_strategy",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.research",
+      "name": "research_market",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.research",
+      "name": "compare_markets",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.research",
+      "name": "scan_market_overview",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "get_positions",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "adjust_position_tpsl",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "adjust_all_positions_tpsl",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "close_position",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "close_all_positions",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "reverse_position",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.trade",
+      "name": "cancel_order",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.data.tradingview",
+      "name": "get_active_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "add_indicator",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.03
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "remove_indicator",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "clear_indicators",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "set_timeframe",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "set_symbol",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "setup_trade",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "add_price_alert",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "mark_trading_session",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "verify_indicator_present",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.actions",
+      "name": "list_supported_indicator_aliases",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.verify",
+      "name": "verify_tradingview_state",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.command_client",
+      "name": "send_tradingview_command",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "focus_chart",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.01
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "ensure_mode",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "mouse_move",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "mouse_press",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "pan",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "zoom",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "press_key",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "reset_view",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "focus_latest",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "set_crosshair",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "move_crosshair",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "get_canvas",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "get_box",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "get_screenshot",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "get_photo_chart",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "hover_candle",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.nav.actions",
+      "name": "inspect_cursor",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.drawing.actions",
+      "name": "draw",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.04
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.drawing.actions",
+      "name": "update_drawing",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.drawing.actions",
+      "name": "clear_drawings",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    },
+    {
+      "module": "agent.src.tools.legacy.tradingview.drawing.actions",
+      "name": "list_supported_draw_tools",
+      "status": "ok",
+      "error": "",
+      "elapsed_ms": 0.0
+    }
+  ]
+}

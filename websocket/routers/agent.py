@@ -4,19 +4,30 @@ Handles AI Chat interactions and model discovery.
 """
 
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, Body
-from fastapi.responses import StreamingResponse
 import json
+import logging
 from dataclasses import asdict
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+
 from auth.dependencies import get_current_user
+from config import settings
 from database.connection import get_db
-from sqlalchemy.orm import Session
-from services.portfolio_service import PortfolioService
+from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from services.agent_runtime_utils import (
+    bill_usage_with_timeout as bill_usage_with_timeout_util,
+)
+from services.agent_runtime_utils import (
+    persist_ai_output as persist_ai_output_util,
+)
 from services.langfuse_service import langfuse_service
-from agent.Core.agent_brain import AgentBrain
+from services.portfolio_service import PortfolioService
+from sqlalchemy.orm import Session
+
 from agent.Config.models_config import get_available_models, get_model_config
+from agent.Core.agent_brain import AgentBrain
+
 try:
     from agent.Orchestrator.trace_store import runtime_trace_store
 except Exception:
@@ -26,9 +37,8 @@ try:
 except Exception:
     from backend.agent.Orchestrator.reasoning_orchestrator import ReasoningOrchestrator
 
-router = APIRouter(
-    tags=["Agent"]
-)
+router = APIRouter(tags=["Agent"])
+logger = logging.getLogger(__name__)
 
 _ACTIVE_STREAMS: Dict[tuple[str, str], asyncio.Task] = {}
 
@@ -37,7 +47,9 @@ def _stream_key(user_id: str, session_id: str) -> tuple[str, str]:
     return (str(user_id or "").strip(), str(session_id or "").strip())
 
 
-def _register_active_stream(user_id: str, session_id: str, task: Optional[asyncio.Task]) -> None:
+def _register_active_stream(
+    user_id: str, session_id: str, task: Optional[asyncio.Task]
+) -> None:
     if task is None:
         return
     key = _stream_key(user_id, session_id)
@@ -46,7 +58,9 @@ def _register_active_stream(user_id: str, session_id: str, task: Optional[asynci
     _ACTIVE_STREAMS[key] = task
 
 
-def _unregister_active_stream(user_id: str, session_id: str, task: Optional[asyncio.Task] = None) -> None:
+def _unregister_active_stream(
+    user_id: str, session_id: str, task: Optional[asyncio.Task] = None
+) -> None:
     key = _stream_key(user_id, session_id)
     existing = _ACTIVE_STREAMS.get(key)
     if existing is None:
@@ -66,9 +80,134 @@ def _interrupt_active_stream(user_id: str, session_id: str) -> bool:
     task.cancel()
     return True
 
+
+def _start_background_task(
+    coro: "asyncio.Future[Any] | asyncio.Task[Any] | Any",
+) -> None:
+    """Schedule a background coroutine and surface uncaught exceptions in logs."""
+    task = asyncio.create_task(coro)
+
+    def _on_done(done_task: asyncio.Task) -> None:
+        try:
+            done_task.result()
+        except Exception as exc:
+            logger.warning("Background task failed: %s", exc)
+
+    task.add_done_callback(_on_done)
+
+
+def _billing_timeout_seconds(tool_states: Optional[Dict[str, Any]]) -> float:
+    raw = (
+        (tool_states or {}).get("billing_timeout_sec")
+        if isinstance(tool_states, dict)
+        else None
+    )
+    if raw is None:
+        raw = getattr(settings, "AI_BILLING_REQUEST_TIMEOUT_SECONDS", 20)
+    try:
+        value = float(raw)
+    except Exception:
+        value = 20.0
+    return max(1.0, min(value, 120.0))
+
+
+async def _bill_usage_with_timeout(
+    ai_billing_service: Any,
+    *,
+    user_address: str,
+    model_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    model_info: Dict[str, Any],
+    tool_states: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return await bill_usage_with_timeout_util(
+        ai_billing_service,
+        user_address=user_address,
+        model_id=model_id,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        model_info=model_info,
+        tool_states=tool_states,
+        default_timeout_seconds=float(
+            getattr(settings, "AI_BILLING_REQUEST_TIMEOUT_SECONDS", 20)
+        ),
+    )
+
+
+async def _persist_ai_output(
+    *,
+    chat_service: Any,
+    usage_service: Any,
+    user_address: str,
+    auth_user_id: str,
+    session_id: str,
+    model_id: str,
+    content: str,
+    input_tokens: int,
+    output_tokens: int,
+    total_cost: float,
+) -> None:
+    await persist_ai_output_util(
+        chat_service=chat_service,
+        usage_service=usage_service,
+        user_address=user_address,
+        auth_user_id=auth_user_id,
+        session_id=session_id,
+        model_id=model_id,
+        content=content,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_cost=total_cost,
+    )
+
+
+def _log_langfuse_success_async(
+    trace_ctx: Dict[str, Any],
+    *,
+    model_id: str,
+    input_text: str,
+    output_text: str,
+    usage: Dict[str, Any],
+    metadata: Dict[str, Any],
+) -> None:
+    _start_background_task(
+        asyncio.to_thread(
+            langfuse_service.log_success,
+            trace_ctx,
+            model_id=model_id,
+            input_text=input_text,
+            output_text=output_text,
+            usage=usage,
+            metadata=metadata,
+        )
+    )
+
+
+def _log_langfuse_error_async(
+    trace_ctx: Dict[str, Any],
+    *,
+    model_id: Optional[str],
+    input_text: str,
+    error_message: str,
+    metadata: Dict[str, Any],
+) -> None:
+    _start_background_task(
+        asyncio.to_thread(
+            langfuse_service.log_error,
+            trace_ctx,
+            model_id=model_id,
+            input_text=input_text,
+            error_message=error_message,
+            metadata=metadata,
+        )
+    )
+
+
 def _model_base_id(model_id: Optional[str]) -> str:
     raw = (model_id or "").strip()
     return raw.split(":", 1)[0] if raw else ""
+
 
 def _normalize_model_id_for_runtime(model_id: str) -> str:
     """
@@ -76,10 +215,12 @@ def _normalize_model_id_for_runtime(model_id: str) -> str:
     """
     raw = str(model_id or "").strip()
     if "/" not in raw:
-        return raw
+        return raw[:-5] if raw.lower().endswith(":free") else raw
     prefix, remainder = raw.split("/", 1)
     if prefix.lower() in {"nvidia", "openrouter"} and remainder:
-        return remainder
+        raw = remainder
+    if raw.lower().endswith(":free"):
+        raw = raw[:-5]
     return raw
 
 
@@ -125,6 +266,31 @@ def _require_wallet_address(user: Dict[str, Any]) -> str:
             detail="Wallet address not found in authentication context. Please reconnect wallet.",
         )
     return wallet.lower()
+
+
+def _billing_failure_message(billing: Dict[str, Any]) -> str:
+    onchain = billing.get("onchain") if isinstance(billing, dict) else {}
+    if not isinstance(onchain, dict):
+        onchain = {}
+    reason = str(onchain.get("reason") or "unknown")
+    return (
+        f"AI Vault charge failed ({reason}). "
+        "Chat was not saved and usage was not recorded."
+    )
+
+
+def _require_successful_billing(billing: Dict[str, Any]) -> None:
+    total_cost = (
+        float(billing.get("total_cost_usd") or 0.0)
+        if isinstance(billing, dict)
+        else 0.0
+    )
+    if total_cost <= 0:
+        return
+    onchain = billing.get("onchain") if isinstance(billing, dict) else {}
+    if isinstance(onchain, dict) and bool(onchain.get("charged")):
+        return
+    raise HTTPException(status_code=402, detail=_billing_failure_message(billing))
 
 
 def _is_model_enabled(model_id: str, enabled_models: Optional[List[str]]) -> bool:
@@ -187,6 +353,30 @@ def _extract_active_context(tool_states: Optional[Dict[str, Any]]) -> Dict[str, 
     return payload
 
 
+def _trim_history_for_runtime(
+    history: Optional[List[Dict[str, str]]],
+    *,
+    max_messages: int = 30,
+    max_chars_per_message: int = 4000,
+) -> List[Dict[str, str]]:
+    if not isinstance(history, list):
+        return []
+    trimmed: List[Dict[str, str]] = []
+    for item in history[-max_messages:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "user").strip().lower()
+        if role not in {"system", "assistant", "user"}:
+            role = "user"
+        content = str(item.get("content") or "")
+        if len(content) > max_chars_per_message:
+            content = content[:max_chars_per_message]
+        if not content.strip():
+            continue
+        trimmed.append({"role": role, "content": content})
+    return trimmed
+
+
 def _parse_bool_flag(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -217,12 +407,16 @@ def _build_runtime_context_block(tool_states: Optional[Dict[str, Any]]) -> List[
     lines.append(f"write_mode={'on' if write_enabled else 'off'}")
     lines.append(f"plan_mode={'on' if plan_enabled else 'off'}")
     lines.append(f"strict_react={'on' if strict_react else 'off'}")
-    lines.append("instruction=Treat market/timeframe above as default active scope unless user explicitly changes it.")
+    lines.append(
+        "instruction=Treat market/timeframe above as default active scope unless user explicitly changes it."
+    )
     lines.append("[/RUNTIME_CONTEXT]")
     return lines
 
 
-def _augment_message_with_active_context(message: str, tool_states: Optional[Dict[str, Any]]) -> str:
+def _augment_message_with_active_context(
+    message: str, tool_states: Optional[Dict[str, Any]]
+) -> str:
     text = str(message or "")
     if "[RUNTIME_CONTEXT]" in text:
         return text
@@ -268,13 +462,26 @@ async def agent_plan_preview(
         }
 
     orchestrator = ReasoningOrchestrator()
-    plan = orchestrator.build_plan(user_message=message, history=history, tool_states=safe_tool_states)
+    runtime_history = _trim_history_for_runtime(history)
+    plan = orchestrator.build_plan(
+        user_message=message, history=runtime_history, tool_states=safe_tool_states
+    )
 
     steps: List[Dict[str, Any]] = []
     if plan.context.symbol:
-        steps.append({"id": "ctx_symbol", "label": f"Understand market context for {plan.context.symbol}"})
+        steps.append(
+            {
+                "id": "ctx_symbol",
+                "label": f"Understand market context for {plan.context.symbol}",
+            }
+        )
     if plan.context.timeframe:
-        steps.append({"id": "ctx_timeframe", "label": f"Scope analysis timeframe: {plan.context.timeframe}"})
+        steps.append(
+            {
+                "id": "ctx_timeframe",
+                "label": f"Scope analysis timeframe: {plan.context.timeframe}",
+            }
+        )
     for idx, call in enumerate(plan.tool_calls, start=1):
         steps.append(
             {
@@ -303,24 +510,24 @@ async def agent_plan_preview(
         },
     }
 
+
 @router.get("/models")
 async def list_models(
-    user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    user: dict = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
     Get list of AI models available to the current user.
     Sources data directly from OpenRouter for flexibility.
     """
     from services.openrouter_service import openrouter_service
+
     all_models = await openrouter_service.get_models()
-    
+
     # Inject dynamic specialized models
     specialized = get_available_models()
-    
-    return {
-        "models": specialized + all_models
-    }
+
+    return {"models": specialized + all_models}
+
 
 @router.post("/chat")
 async def agent_chat(
@@ -332,7 +539,7 @@ async def agent_chat(
     tool_states: Optional[Dict[str, Any]] = Body(None),
     attachments: Optional[List[Dict[str, Any]]] = Body(None),
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Send a message to the AI agent.
@@ -340,14 +547,15 @@ async def agent_chat(
     """
     user_address = _require_wallet_address(user)
     auth_user_id = user_address
+    from services.ai_billing_service import ai_billing_service
+    from services.chat_service import chat_service
     from services.openrouter_service import openrouter_service
     from services.usage_service import usage_service
-    from services.chat_service import chat_service
-    from services.ai_billing_service import ai_billing_service
 
     # 0. Handle "new-chat" placeholder (force generate new ID)
     if not session_id or session_id == "new-chat":
         import uuid
+
         session_id = f"s-{uuid.uuid4().hex[:8]}"
     model_id = _normalize_model_id_for_runtime(model_id)
 
@@ -356,40 +564,42 @@ async def agent_chat(
     if not model_info:
         config = get_model_config(model_id)
         if not config:
-            raise HTTPException(status_code=404, detail=f"Model {model_id} not found in registry.")
+            raise HTTPException(
+                status_code=404, detail=f"Model {model_id} not found in registry."
+            )
         model_info = {
             "id": model_id,
             "name": config.get("name"),
             "input_cost": config.get("input_fee", 1.0),
             "output_cost": config.get("output_fee", 2.0),
-            "includes_markup": False
+            "includes_markup": False,
         }
-    
+
     # 2. Check if model is enabled
     is_mock = user_address.startswith("0x") and user.get("name") == "Test User"
-    
+
     enabled_models = await usage_service.get_enabled_models(user_address)
     if not enabled_models:
         enabled_models = await usage_service.get_default_enabled_models()
-        
+
     is_groq = model_id.startswith("groq/")
-    is_free_model = model_id.endswith(":free")
-    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_free_model:
+    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq:
         raise HTTPException(
-            status_code=403, 
-            detail=f"Model {model_id} is not enabled in your settings."
+            status_code=403, detail=f"Model {model_id} is not enabled in your settings."
         )
-    
+
     if is_mock:
-        print(f"[AgentRouter] DEBUG: Mock user detected, bypassing enablement check for {model_id}")
-        
+        print(
+            f"[AgentRouter] DEBUG: Mock user detected, bypassing enablement check for {model_id}"
+        )
+
     # 3. Save User Message
     await chat_service.save_message(
         user_address=auth_user_id,
         session_id=session_id,
         role="user",
         content=message,
-        model_id=model_id
+        model_id=model_id,
     )
     trace_ctx = langfuse_service.start_trace(
         name="agent.chat",
@@ -403,64 +613,63 @@ async def agent_chat(
         },
     )
 
-    # 4. Process with AgentBrain
+    # 4. Process with AgentBrain compatibility wrapper (Reflexion runtime)
     try:
         ai_message = _augment_message_with_active_context(message, tool_states)
         runtime_tool_states = dict(tool_states or {})
-        runtime_tool_states["agent_engine"] = "deepagents"
+        runtime_tool_states["agent_engine"] = "reflexion"
         runtime_tool_states["agent_engine_strict"] = True
-        runtime_tool_states["knowledge_enabled"] = True
-        runtime_tool_states["rag_mode"] = "secondary"
+        runtime_tool_states["knowledge_enabled"] = False
+        runtime_tool_states["rag_mode"] = "disabled"
         brain = AgentBrain(
             model_id=model_id,
             reasoning_effort=reasoning_effort,
             tool_states=runtime_tool_states,
             user_context={"user_address": user_address, "session_id": session_id},
         )
-        result = await brain.chat(user_message=ai_message, history=history, attachments=attachments)
-        
+        runtime_history = _trim_history_for_runtime(history)
+        result = await brain.chat(
+            user_message=ai_message,
+            history=runtime_history,
+            attachments=attachments,
+        )
+
         response_content = result.get("content", "")
         usage = result.get("usage", {})
         thoughts = result.get("thoughts", [])
         runtime = result.get("runtime", {})
-        
+
         # Calculate cost based on actual usage or fallbacks
         in_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
         out_tokens = usage.get("completion_tokens") or usage.get("output_tokens") or 0
-        
+
         # Ensure we have integers for math
         in_tokens = int(in_tokens)
         out_tokens = int(out_tokens)
-        
-        billing = await ai_billing_service.bill_usage(
+
+        billing = await _bill_usage_with_timeout(
+            ai_billing_service,
             user_address=user_address,
             model_id=model_id,
             input_tokens=in_tokens,
             output_tokens=out_tokens,
-            model_info=model_info
+            model_info=model_info,
+            tool_states=tool_states,
         )
+        _require_successful_billing(billing)
         total_cost = float(billing.get("total_cost_usd", 0.0))
 
-        # 5. Save AI Response
-        await chat_service.save_message(
-            user_address=auth_user_id,
+        await _persist_ai_output(
+            chat_service=chat_service,
+            usage_service=usage_service,
+            user_address=user_address,
+            auth_user_id=auth_user_id,
             session_id=session_id,
-            role="assistant",
             content=response_content,
             model_id=model_id,
             input_tokens=in_tokens,
             output_tokens=out_tokens,
-            cost=total_cost
-        )
-
-        # 6. Log to Global Usage (Async background-like)
-        await usage_service.log_usage(
-            user_address=user_address,
-            model=model_id,
-            input_tokens=in_tokens,
-            output_tokens=out_tokens,
-            cost=total_cost,
-            session_id=session_id
+            total_cost=total_cost,
         )
 
         runtime_trace_store.add(
@@ -472,7 +681,7 @@ async def agent_chat(
                 "runtime": runtime,
             },
         )
-        langfuse_service.log_success(
+        _log_langfuse_success_async(
             trace_ctx,
             model_id=model_id,
             input_text=message,
@@ -484,7 +693,7 @@ async def agent_chat(
                 "billing_total_cost_usd": float(billing.get("total_cost_usd", 0.0)),
             },
         )
-        
+
         return {
             "status": "success",
             "model": model_id,
@@ -493,10 +702,19 @@ async def agent_chat(
             "usage": usage,
             "thoughts": thoughts,
             "runtime": runtime,
-            "billing": billing
+            "billing": billing,
         }
+    except HTTPException as e:
+        _log_langfuse_error_async(
+            trace_ctx,
+            model_id=model_id,
+            input_text=message,
+            error_message=str(e.detail),
+            metadata={"reasoning_effort": reasoning_effort, "stream": False},
+        )
+        raise
     except Exception as e:
-        langfuse_service.log_error(
+        _log_langfuse_error_async(
             trace_ctx,
             model_id=model_id,
             input_text=message,
@@ -540,7 +758,7 @@ async def agent_chat_stream(
     tool_states: Optional[Dict[str, Any]] = Body(None),
     attachments: Optional[List[Dict[str, Any]]] = Body(None),
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Stream a message to the AI agent.
@@ -548,13 +766,14 @@ async def agent_chat_stream(
     """
     user_address = _require_wallet_address(user)
     auth_user_id = user_address
+    from services.ai_billing_service import ai_billing_service
+    from services.chat_service import chat_service
     from services.openrouter_service import openrouter_service
     from services.usage_service import usage_service
-    from services.chat_service import chat_service
-    from services.ai_billing_service import ai_billing_service
 
     if not session_id or session_id == "new-chat":
         import uuid
+
         session_id = f"s-{uuid.uuid4().hex[:8]}"
     model_id = _normalize_model_id_for_runtime(model_id)
 
@@ -562,13 +781,15 @@ async def agent_chat_stream(
     if not model_info:
         config = get_model_config(model_id)
         if not config:
-            raise HTTPException(status_code=404, detail=f"Model {model_id} not found in registry.")
+            raise HTTPException(
+                status_code=404, detail=f"Model {model_id} not found in registry."
+            )
         model_info = {
             "id": model_id,
             "name": config.get("name"),
             "input_cost": config.get("input_fee", 1.0),
             "output_cost": config.get("output_fee", 2.0),
-            "includes_markup": False
+            "includes_markup": False,
         }
 
     is_mock = user_address.startswith("0x") and user.get("name") == "Test User"
@@ -577,11 +798,9 @@ async def agent_chat_stream(
         enabled_models = await usage_service.get_default_enabled_models()
 
     is_groq = model_id.startswith("groq/")
-    is_free_model = model_id.endswith(":free")
-    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq and not is_free_model:
+    if not _is_model_enabled(model_id, enabled_models) and not is_mock and not is_groq:
         raise HTTPException(
-            status_code=403,
-            detail=f"Model {model_id} is not enabled in your settings."
+            status_code=403, detail=f"Model {model_id} is not enabled in your settings."
         )
 
     await chat_service.save_message(
@@ -589,7 +808,7 @@ async def agent_chat_stream(
         session_id=session_id,
         role="user",
         content=message,
-        model_id=model_id
+        model_id=model_id,
     )
     trace_ctx = langfuse_service.start_trace(
         name="agent.chat.stream",
@@ -615,17 +834,18 @@ async def agent_chat_stream(
 
             ai_message = _augment_message_with_active_context(message, tool_states)
             runtime_tool_states = dict(tool_states or {})
-            runtime_tool_states["agent_engine"] = "deepagents"
+            runtime_tool_states["agent_engine"] = "reflexion"
             runtime_tool_states["agent_engine_strict"] = True
-            runtime_tool_states["knowledge_enabled"] = True
-            runtime_tool_states["rag_mode"] = "secondary"
+            runtime_tool_states["knowledge_enabled"] = False
+            runtime_tool_states["rag_mode"] = "disabled"
             brain = AgentBrain(
                 model_id=model_id,
                 reasoning_effort=reasoning_effort,
                 tool_states=runtime_tool_states,
                 user_context={"user_address": user_address, "session_id": session_id},
             )
-            full_content = ""
+            runtime_history = _trim_history_for_runtime(history)
+            full_content_parts: List[str] = []
             thoughts: List[str] = []
             usage: Dict[str, Any] = {}
             runtime: Dict[str, Any] = {}
@@ -637,15 +857,23 @@ async def agent_chat_stream(
                 if isinstance(tool_states, dict):
                     model_timeout_raw = tool_states.get("model_timeout_sec")
                 try:
-                    model_timeout_sec = float(model_timeout_raw) if model_timeout_raw is not None else 120.0
+                    model_timeout_sec = (
+                        float(model_timeout_raw)
+                        if model_timeout_raw is not None
+                        else 120.0
+                    )
                 except Exception:
                     model_timeout_sec = 120.0
                 stream_timeout_sec = max(30.0, min(model_timeout_sec + 30.0, 360.0))
 
                 async with asyncio.timeout(stream_timeout_sec):
-                    async for event in brain.stream(user_message=ai_message, history=history, attachments=attachments):
+                    async for event in brain.stream(
+                        user_message=ai_message,
+                        history=runtime_history,
+                        attachments=attachments,
+                    ):
                         if event.get("type") == "delta":
-                            full_content += event.get("content", "")
+                            full_content_parts.append(event.get("content", ""))
                         elif event.get("type") == "thoughts":
                             thoughts = event.get("thoughts", [])
                         elif event.get("type") == "runtime":
@@ -657,6 +885,10 @@ async def agent_chat_stream(
                                 thoughts = event.get("thoughts", [])
                         elif event.get("type") == "error":
                             saw_error_event = True
+
+                        # Hold terminal done until billing succeeds.
+                        if event.get("type") == "done":
+                            continue
 
                         yield sse(event)
             except asyncio.TimeoutError:
@@ -674,46 +906,38 @@ async def agent_chat_stream(
             if saw_error_event:
                 return
 
-            if not saw_done_event:
-                yield sse(
-                    {
-                        "type": "done",
-                        "content": full_content,
-                        "usage": usage or {},
-                        "thoughts": thoughts or [],
-                    }
-                )
+            full_content = "".join(full_content_parts)
 
-            in_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-            out_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+            in_tokens = int(
+                usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+            )
+            out_tokens = int(
+                usage.get("completion_tokens") or usage.get("output_tokens") or 0
+            )
 
-            billing = await ai_billing_service.bill_usage(
+            billing = await _bill_usage_with_timeout(
+                ai_billing_service,
                 user_address=user_address,
                 model_id=model_id,
                 input_tokens=in_tokens,
                 output_tokens=out_tokens,
-                model_info=model_info
+                model_info=model_info,
+                tool_states=tool_states,
             )
+            _require_successful_billing(billing)
             total_cost = float(billing.get("total_cost_usd", 0.0))
 
-            await chat_service.save_message(
-                user_address=auth_user_id,
+            await _persist_ai_output(
+                chat_service=chat_service,
+                usage_service=usage_service,
+                user_address=user_address,
+                auth_user_id=auth_user_id,
                 session_id=session_id,
-                role="assistant",
                 content=full_content,
                 model_id=model_id,
                 input_tokens=in_tokens,
                 output_tokens=out_tokens,
-                cost=total_cost
-            )
-
-            await usage_service.log_usage(
-                user_address=user_address,
-                model=model_id,
-                input_tokens=in_tokens,
-                output_tokens=out_tokens,
-                cost=total_cost,
-                session_id=session_id
+                total_cost=total_cost,
             )
 
             runtime_trace_store.add(
@@ -725,7 +949,7 @@ async def agent_chat_stream(
                     "runtime": runtime,
                 },
             )
-            langfuse_service.log_success(
+            _log_langfuse_success_async(
                 trace_ctx,
                 model_id=model_id,
                 input_text=message,
@@ -739,11 +963,29 @@ async def agent_chat_stream(
                 },
             )
             yield sse({"type": "billing", "billing": billing})
+            yield sse(
+                {
+                    "type": "done",
+                    "content": full_content,
+                    "usage": usage or {},
+                    "thoughts": thoughts or [],
+                }
+            )
 
         except asyncio.CancelledError:
             raise
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, str) else "Billing failed"
+            _log_langfuse_error_async(
+                trace_ctx,
+                model_id=model_id,
+                input_text=message,
+                error_message=detail,
+                metadata={"reasoning_effort": reasoning_effort, "stream": True},
+            )
+            yield sse({"type": "error", "message": detail})
         except Exception as e:
-            langfuse_service.log_error(
+            _log_langfuse_error_async(
                 trace_ctx,
                 model_id=model_id,
                 input_text=message,
@@ -764,90 +1006,97 @@ async def agent_chat_stream(
         },
     )
 
+
 @router.get("/sessions")
-async def get_my_sessions(
-    limit: int = 20,
-    user: dict = Depends(get_current_user)
-):
+async def get_my_sessions(limit: int = 20, user: dict = Depends(get_current_user)):
     """Get recent chat sessions for the current user"""
     from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     return await chat_service.get_user_sessions(user_address, limit)
 
+
 @router.get("/history/{session_id}")
-async def get_chat_history(
-    session_id: str,
-    user: dict = Depends(get_current_user)
-):
+async def get_chat_history(session_id: str, user: dict = Depends(get_current_user)):
     """Get messages for a specific session"""
     from services.chat_service import chat_service
+
     # Optional: Validate ownership here if needed
     return await chat_service.get_session_history(session_id)
 
+
 @router.get("/runtime-trace/{session_id}")
 async def get_runtime_trace(
-    session_id: str,
-    limit: int = 20,
-    user: dict = Depends(get_current_user)
+    session_id: str, limit: int = 20, user: dict = Depends(get_current_user)
 ):
     """Get recent runtime traces (plan/tool outputs) for a chat session."""
     user_address = _require_wallet_address(user)
     return {
         "status": "success",
         "session_id": session_id,
-        "traces": runtime_trace_store.list(user_address=user_address, session_id=session_id, limit=limit),
+        "traces": runtime_trace_store.list(
+            user_address=user_address, session_id=session_id, limit=limit
+        ),
     }
+
 
 @router.patch("/session/{session_id}")
 async def update_session_title(
     session_id: str,
     title: str = Body(..., embed=True),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
 ):
     """Update session title (rename)"""
     from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     success = await chat_service.update_session(session_id, user_address, title)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update session title")
     return {"status": "success"}
 
+
 @router.delete("/session/{session_id}")
-async def delete_chat_session(
-    session_id: str,
-    user: dict = Depends(get_current_user)
-):
+async def delete_chat_session(session_id: str, user: dict = Depends(get_current_user)):
     """Delete a chat session and its history"""
     from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     success = await chat_service.delete_session(session_id, user_address)
     if not success:
-        raise HTTPException(status_code=403, detail="Failed to delete session (unauthorized or not found)")
+        raise HTTPException(
+            status_code=403,
+            detail="Failed to delete session (unauthorized or not found)",
+        )
     return {"status": "success"}
+
 
 # --- Workspace Endpoints ---
 
+
 @router.get("/workspaces")
-async def get_workspaces(
-    user: dict = Depends(get_current_user)
-):
+async def get_workspaces(user: dict = Depends(get_current_user)):
     """Get all workspaces for the current user"""
     from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     return await chat_service.get_user_workspaces(user_address)
+
 
 class WorkspaceCreateRequest(BaseModel):
     name: str
     workspace_id: Optional[str] = None
 
+
 @router.post("/workspaces")
 async def create_workspace(
-    request: WorkspaceCreateRequest,
-    user: dict = Depends(get_current_user)
+    request: WorkspaceCreateRequest, user: dict = Depends(get_current_user)
 ):
     """Create a new workspace"""
-    from services.chat_service import chat_service
     import uuid
+
+    from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     ws_id = request.workspace_id or f"ws-{uuid.uuid4().hex[:8]}"
     success = await chat_service.create_workspace(user_address, ws_id, request.name)
@@ -855,19 +1104,22 @@ async def create_workspace(
         raise HTTPException(status_code=500, detail="Failed to create workspace")
     return {"status": "success", "id": ws_id}
 
+
 @router.patch("/session/{session_id}/move")
 async def move_session(
     session_id: str,
     workspace_id: Optional[str] = Body(None, embed=True),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
 ):
     """Move session to a workspace (or null for inbox)"""
     from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     success = await chat_service.move_session(session_id, user_address, workspace_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to move session")
     return {"status": "success"}
+
 
 @router.patch("/workspace/{workspace_id}")
 async def update_workspace(
@@ -875,14 +1127,14 @@ async def update_workspace(
     name: Optional[str] = Body(None),
     icon: Optional[str] = Body(None),
     is_expanded: Optional[bool] = Body(None),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
 ):
     """Update workspace properties"""
     from services.chat_service import chat_service
+
     user_address = _require_wallet_address(user)
     success = await chat_service.update_workspace(
-        workspace_id, user_address, 
-        name=name, icon=icon, is_expanded=is_expanded
+        workspace_id, user_address, name=name, icon=icon, is_expanded=is_expanded
     )
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update workspace")

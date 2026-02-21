@@ -1,0 +1,796 @@
+{
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "iterations": 80,
+    "warmup": 8,
+    "categories": [
+      "all"
+    ],
+    "cases": [
+      "data.price",
+      "data.candles",
+      "research.market",
+      "web.search",
+      "tv.focus_chart",
+      "tv.get_screenshot",
+      "exec.get_positions",
+      "exec.cancel_order"
+    ]
+  },
+  "overall": {
+    "requests": 80,
+    "success_rate_pct": 75.0,
+    "avg_ms": 4.2,
+    "p50_ms": 3.96,
+    "p95_ms": 5.3,
+    "p99_ms": 7.41,
+    "max_ms": 7.73,
+    "min_ms": 3.04
+  },
+  "by_category": {
+    "execution": {
+      "requests": 20,
+      "success_rate_pct": 0.0,
+      "avg_ms": 4.08,
+      "p50_ms": 3.81,
+      "p95_ms": 5.21,
+      "p99_ms": 6.9,
+      "max_ms": 7.33,
+      "min_ms": 3.04
+    },
+    "market": {
+      "requests": 20,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.49,
+      "p50_ms": 4.29,
+      "p95_ms": 5.54,
+      "p99_ms": 7.29,
+      "max_ms": 7.73,
+      "min_ms": 3.06
+    },
+    "research": {
+      "requests": 20,
+      "success_rate_pct": 100.0,
+      "avg_ms": 3.89,
+      "p50_ms": 3.69,
+      "p95_ms": 4.79,
+      "p99_ms": 5.19,
+      "max_ms": 5.29,
+      "min_ms": 3.26
+    },
+    "tradingview": {
+      "requests": 20,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.34,
+      "p50_ms": 4.23,
+      "p95_ms": 5.33,
+      "p99_ms": 6.9,
+      "max_ms": 7.3,
+      "min_ms": 3.17
+    }
+  },
+  "by_case": {
+    "data.candles": {
+      "requests": 10,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.68,
+      "p50_ms": 4.83,
+      "p95_ms": 5.32,
+      "p99_ms": 5.41,
+      "max_ms": 5.43,
+      "min_ms": 3.55
+    },
+    "data.price": {
+      "requests": 10,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.29,
+      "p50_ms": 3.92,
+      "p95_ms": 6.33,
+      "p99_ms": 7.45,
+      "max_ms": 7.73,
+      "min_ms": 3.06
+    },
+    "exec.cancel_order": {
+      "requests": 10,
+      "success_rate_pct": 0.0,
+      "avg_ms": 3.59,
+      "p50_ms": 3.5,
+      "p95_ms": 4.24,
+      "p99_ms": 4.5,
+      "max_ms": 4.56,
+      "min_ms": 3.04
+    },
+    "exec.get_positions": {
+      "requests": 10,
+      "success_rate_pct": 0.0,
+      "avg_ms": 4.57,
+      "p50_ms": 4.38,
+      "p95_ms": 6.32,
+      "p99_ms": 7.13,
+      "max_ms": 7.33,
+      "min_ms": 3.22
+    },
+    "research.market": {
+      "requests": 10,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.18,
+      "p50_ms": 3.94,
+      "p95_ms": 5.05,
+      "p99_ms": 5.24,
+      "max_ms": 5.29,
+      "min_ms": 3.53
+    },
+    "tv.focus_chart": {
+      "requests": 10,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.18,
+      "p50_ms": 3.87,
+      "p95_ms": 6.07,
+      "p99_ms": 7.05,
+      "max_ms": 7.3,
+      "min_ms": 3.17
+    },
+    "tv.get_screenshot": {
+      "requests": 10,
+      "success_rate_pct": 100.0,
+      "avg_ms": 4.51,
+      "p50_ms": 4.48,
+      "p95_ms": 5.1,
+      "p99_ms": 5.2,
+      "max_ms": 5.22,
+      "min_ms": 3.86
+    },
+    "web.search": {
+      "requests": 10,
+      "success_rate_pct": 100.0,
+      "avg_ms": 3.6,
+      "p50_ms": 3.55,
+      "p95_ms": 4.11,
+      "p99_ms": 4.34,
+      "max_ms": 4.4,
+      "min_ms": 3.26
+    }
+  },
+  "samples": [
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.939000016544014,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.552099980879575,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 5.289799999445677,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.7490999966394156,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 7.299299992155284,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.240700014634058,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 7.327100000111386,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.454100020462647,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.629800008842722,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.207199992379174,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.7339999980758876,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.57220001751557,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.560600005788729,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.510200000368059,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.2190999772865325,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.8366999942809343,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.136200004722923,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.725600010715425,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.5348999954294413,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.4487000084482133,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.3709999988786876,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 5.221899977186695,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 5.075100023532286,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.380000009201467,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.8223000010475516,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 5.043100012699142,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.58550000237301,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.6957999982405454,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.223500000080094,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.452699999092147,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.7930999824311584,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.3121999877039343,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.9043999859131873,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 5.429099983302876,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.9029000035952777,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.402700025821105,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.150399996433407,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.958499979693443,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.606100013712421,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.038199996808544,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.0617000011261553,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.236700013279915,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.764999990584329,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.5318000009283423,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.170400013914332,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.04629998956807,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 4.111000016564503,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 4.563900001812726,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.339399980381131,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.94699997943826,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.74709999980405,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.280999982962385,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.8902999949641526,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.737399984151125,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 4.389699985040352,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.6165999772492796,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.764599998248741,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.54249998438172,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.669499990995973,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.6920999991707504,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.6226999945938587,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.863599995383993,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 5.093400017358363,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.292999987024814,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 7.7262999839149415,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.926900001009926,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.983600006904453,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.2614000083412975,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.633200016338378,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.26849999348633,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 4.69669999438338,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.8292999961413443,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.6259000189602375,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 5.1961000135634094,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.5706000053323805,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.332899999804795,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.focus_chart",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 3.8431999855674803,
+      "error": ""
+    },
+    {
+      "category": "tradingview",
+      "name": "tv.get_screenshot",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 4.752300010295585,
+      "error": ""
+    },
+    {
+      "category": "execution",
+      "name": "exec.get_positions",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 4.377699980977923,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    },
+    {
+      "category": "execution",
+      "name": "exec.cancel_order",
+      "status_code": 401,
+      "ok": false,
+      "latency_ms": 3.54099998367019,
+      "error": "{\"detail\":\"Not authenticated\"}"
+    }
+  ]
+}

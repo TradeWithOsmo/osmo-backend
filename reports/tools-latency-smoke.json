@@ -1,0 +1,131 @@
+{
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "iterations": 4,
+    "warmup": 0,
+    "categories": [
+      "market",
+      "research",
+      "tradingview",
+      "execution"
+    ],
+    "cases": [
+      "data.price",
+      "data.candles",
+      "research.market",
+      "web.search",
+      "tv.focus_chart",
+      "tv.get_screenshot",
+      "exec.get_positions",
+      "exec.cancel_order"
+    ]
+  },
+  "overall": {
+    "requests": 4,
+    "success_rate_pct": 100.0,
+    "avg_ms": 296.22,
+    "p50_ms": 11.69,
+    "p95_ms": 984.1,
+    "p99_ms": 1121.0,
+    "max_ms": 1155.23,
+    "min_ms": 6.26
+  },
+  "by_category": {
+    "market": {
+      "requests": 2,
+      "success_rate_pct": 100.0,
+      "avg_ms": 582.13,
+      "p50_ms": 582.13,
+      "p95_ms": 1097.92,
+      "p99_ms": 1143.76,
+      "max_ms": 1155.23,
+      "min_ms": 9.03
+    },
+    "research": {
+      "requests": 2,
+      "success_rate_pct": 100.0,
+      "avg_ms": 10.31,
+      "p50_ms": 10.31,
+      "p95_ms": 13.95,
+      "p99_ms": 14.27,
+      "max_ms": 14.35,
+      "min_ms": 6.26
+    }
+  },
+  "by_case": {
+    "data.candles": {
+      "requests": 1,
+      "success_rate_pct": 100.0,
+      "avg_ms": 9.03,
+      "p50_ms": 9.03,
+      "p95_ms": 9.03,
+      "p99_ms": 9.03,
+      "max_ms": 9.03,
+      "min_ms": 9.03
+    },
+    "data.price": {
+      "requests": 1,
+      "success_rate_pct": 100.0,
+      "avg_ms": 1155.23,
+      "p50_ms": 1155.23,
+      "p95_ms": 1155.23,
+      "p99_ms": 1155.23,
+      "max_ms": 1155.23,
+      "min_ms": 1155.23
+    },
+    "research.market": {
+      "requests": 1,
+      "success_rate_pct": 100.0,
+      "avg_ms": 14.35,
+      "p50_ms": 14.35,
+      "p95_ms": 14.35,
+      "p99_ms": 14.35,
+      "max_ms": 14.35,
+      "min_ms": 14.35
+    },
+    "web.search": {
+      "requests": 1,
+      "success_rate_pct": 100.0,
+      "avg_ms": 6.26,
+      "p50_ms": 6.26,
+      "p95_ms": 6.26,
+      "p99_ms": 6.26,
+      "max_ms": 6.26,
+      "min_ms": 6.26
+    }
+  },
+  "samples": [
+    {
+      "category": "market",
+      "name": "data.price",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 1155.225700000301,
+      "error": ""
+    },
+    {
+      "category": "market",
+      "name": "data.candles",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 9.029999986523762,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "research.market",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 14.354599989019334,
+      "error": ""
+    },
+    {
+      "category": "research",
+      "name": "web.search",
+      "status_code": 200,
+      "ok": true,
+      "latency_ms": 6.26130000455305,
+      "error": ""
+    }
+  ]
+}

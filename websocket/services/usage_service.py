@@ -29,6 +29,9 @@ class UsageService:
                 prefix, remainder = value.split("/", 1)
                 if prefix.lower() in {"nvidia", "openrouter"} and remainder:
                     value = remainder.strip()
+            if value.endswith(":free"):
+                # Disallow free-tier model ids to avoid runtime 404/policy failures.
+                continue
             if not value or value in seen:
                 continue
             seen.add(value)
@@ -297,12 +300,7 @@ class UsageService:
             if model_id and model_id in live_ids and model_id not in selected:
                 selected.append(model_id)
 
-        # Include free-tier IDs first when available.
-        for model_id in live_ids:
-            if model_id.endswith(":free"):
-                add(model_id)
-
-        # Then pick a balanced one-per-provider core set.
+        # Pick a balanced one-per-provider core set.
         preferred_prefixes = (
             "anthropic/",
             "openai/",
@@ -335,7 +333,6 @@ class UsageService:
             "anthropic/claude-3.5-sonnet",
             "google/gemini-1.5-pro",
             "deepseek/deepseek-v3",
-            "openai/gpt-oss-120b:free",
         ]
         live_defaults = await self._resolve_live_default_models(limit=12)
 

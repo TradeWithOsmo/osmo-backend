@@ -59,6 +59,15 @@ def _detect_light_patterns(candles: List[Dict[str, Any]]) -> List[str]:
         if rng > 0 and (body / rng) < 0.35 and (upper_wick / rng) > 0.55 and (lower_wick / rng) < 0.2:
             out.append("Shooting Star (Bearish)")
 
+        # Keep output useful even when no strict candlestick pattern is present.
+        if not out:
+            if c0_cl > c1_cl:
+                out.append("Bullish Continuation")
+            elif c0_cl < c1_cl:
+                out.append("Bearish Continuation")
+            else:
+                out.append("Sideways Consolidation")
+
         # De-duplicate preserve order
         seen = set()
         dedup: List[str] = []
@@ -93,6 +102,19 @@ class IndicatorData(BaseModel):
     drawing_tags: Optional[List[str]] = None
     trade_setup: Optional[Dict[str, Any]] = None
     timestamp: Optional[int] = None
+
+
+class MemoryAddRequest(BaseModel):
+    user_id: str
+    text: Optional[str] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class MemorySearchRequest(BaseModel):
+    user_id: str
+    query: str
+    limit: int = 5
 
 
 def _model_to_dict(model: BaseModel) -> Dict[str, Any]:
@@ -427,6 +449,99 @@ async def get_tradingview_indicators(symbol: str, timeframe: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/memory/add")
+async def add_memory(request: MemoryAddRequest):
+    """
+    Add one memory item for a user through the in-process mem0 connector.
+    """
+    try:
+        connector = _require_connector("mem0")
+        safe_messages: List[Dict[str, str]] = []
+        for item in request.messages or []:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "user").strip().lower() or "user"
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            safe_messages.append({"role": role, "content": content})
+
+        if not safe_messages and request.text:
+            safe_messages.append({"role": "user", "content": str(request.text).strip()})
+
+        if not safe_messages:
+            raise HTTPException(status_code=400, detail="Provide text or messages")
+
+        result = await connector.add_memory(
+            user_id=request.user_id,
+            messages=safe_messages,
+            metadata=request.metadata or {},
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {
+            "stored": False,
+            "error": f"Memory add route error: {exc}",
+            "user_id": request.user_id,
+        }
+
+
+@router.post("/memory/search")
+async def search_memory(request: MemorySearchRequest):
+    """
+    Semantic memory search through mem0 connector.
+    """
+    try:
+        connector = _require_connector("mem0")
+        safe_limit = max(1, min(int(request.limit or 5), 20))
+        return await connector.fetch(request.user_id, query=request.query, limit=safe_limit)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {
+            "source": "mem0",
+            "data_type": "search",
+            "timestamp": None,
+            "data": {
+                "user_id": request.user_id,
+                "query": request.query,
+                "results": [],
+                "error": f"Memory search route error: {exc}",
+            },
+        }
+
+
+@router.get("/memory/all")
+async def get_all_memory(user_id: str):
+    """
+    Retrieve all stored memories for a user.
+    """
+    try:
+        connector = _require_connector("mem0")
+        if not hasattr(connector, "get_all_memories"):
+            raise HTTPException(status_code=501, detail="mem0 connector does not support get_all_memories")
+        return await connector.get_all_memories(user_id=user_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {
+            "user_id": user_id,
+            "memories": [],
+            "error": f"Memory list route error: {exc}",
+        }
+
+
+@router.get("/memory/status")
+async def memory_status():
+    """
+    mem0 connector status.
+    """
+    connector = _require_connector("mem0")
+    return connector.get_status()
+
+
 @router.get("/web_search/search")
 async def search_web(query: str, source: str = "news", mode: str = "quality"):
     """
@@ -494,6 +609,39 @@ async def get_funding_rate(symbol: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/candles/{symbol}")
+async def get_candles(
+    symbol: str,
+    timeframe: str = "1H",
+    limit: int = 100,
+    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium)$"),
+):
+    """
+    OHLCV candles endpoint used by agent market-data tools.
+    """
+    try:
+        normalized_asset = asset_type.lower()
+        safe_limit = max(1, min(int(limit or 100), 1500))
+
+        if normalized_asset in {"crypto", "hyperliquid"}:
+            connector = _require_connector("hyperliquid")
+            normalized_symbol = _normalize_hl_symbol(symbol)
+        else:
+            connector = _require_connector("ostium")
+            normalized_symbol = (symbol or "").upper().replace("-", "").replace("/", "")
+
+        return await connector.fetch(
+            normalized_symbol,
+            data_type="candles",
+            timeframe=timeframe,
+            limit=safe_limit,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/analysis/technical/{symbol}")
 async def get_technical_analysis(
     symbol: str,
@@ -541,7 +689,7 @@ async def get_technical_analysis(
 
         # Fallback: detect candlestick patterns from recent candles when frontend
         # TradingView payload does not provide patterns.
-        if not patterns:
+        if not patterns or not indicators:
             try:
                 from analysis.engine import TechnicalAnalysisEngine
 
@@ -559,6 +707,14 @@ async def get_technical_analysis(
                         timeframe=timeframe,
                         ohlcv_data=candles,
                     )
+                    if not indicators and isinstance(analysis_result, dict):
+                        fallback_indicators = analysis_result.get("indicators", {})
+                        if isinstance(fallback_indicators, dict):
+                            indicators = {
+                                str(k): v
+                                for k, v in fallback_indicators.items()
+                                if v is not None
+                            }
                     fallback_patterns = analysis_result.get("patterns", []) if isinstance(analysis_result, dict) else []
                     if isinstance(fallback_patterns, list):
                         patterns = [str(item).strip() for item in fallback_patterns if str(item).strip()]

@@ -154,10 +154,28 @@ class HyperliquidConnector(BaseConnector):
                     "1w": "1d",
                 }
                 interval = interval_map.get(timeframe, "1h")
-                candles = await self.http_client.get_candles(symbol, interval=interval)
                 limit = int(kwargs.get("limit", 100) or 100)
-                if limit > 0:
-                    candles = candles[-limit:]
+                safe_limit = max(1, min(limit, 1500))
+                # Derive explicit time window so upstream returns enough bars.
+                interval_minutes = {
+                    "1m": 1,
+                    "5m": 5,
+                    "15m": 15,
+                    "1h": 60,
+                    "4h": 240,
+                    "1d": 1440,
+                }.get(interval, 60)
+                now_ms = int(time.time() * 1000)
+                # Add small buffer (+2 bars) to reduce edge truncation.
+                start_ms = now_ms - ((safe_limit + 2) * interval_minutes * 60 * 1000)
+                candles = await self.http_client.get_candles(
+                    symbol,
+                    interval=interval,
+                    start_time=start_ms,
+                    end_time=now_ms,
+                )
+                if safe_limit > 0:
+                    candles = candles[-safe_limit:]
                 return self.normalize({"coin": symbol, "candles": candles}, "candles")
             
             else:

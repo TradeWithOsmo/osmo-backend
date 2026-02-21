@@ -45,6 +45,9 @@ from agent.Tools.data.market import (
     get_funding_rate,
     get_high_low_levels
 )
+from agent.Tools.data.tradingview import (
+    get_active_indicators,
+)
 from agent.Tools.data.analysis import (
     get_technical_analysis
 )
@@ -236,6 +239,12 @@ class GetHighLowLevelsRequest(BaseModel):
     timeframe: str = "1H"
     lookback: int = 7
     asset_type: str = "crypto"
+
+
+class GetActiveIndicatorsRequest(BaseModel):
+    symbol: str
+    timeframe: str = "1D"
+    tool_states: Optional[Dict[str, Any]] = None
 
 class ResearchMarketRequest(BaseModel):
     symbol: str
@@ -435,6 +444,16 @@ async def execute_get_candles(request: GetCandlesRequest):
 @router.post("/data/levels")
 async def execute_get_levels(request: GetHighLowLevelsRequest):
     return await get_high_low_levels(request.symbol, request.timeframe, request.lookback, None, request.asset_type)
+
+
+@router.post("/data/active_indicators")
+@router.post("/data/get_active_indicators")
+async def execute_get_active_indicators(request: GetActiveIndicatorsRequest):
+    return await get_active_indicators(
+        symbol=request.symbol,
+        timeframe=request.timeframe,
+        tool_states=request.tool_states or {},
+    )
 
 # 6. Research & Analysis
 @router.post("/research/market")
