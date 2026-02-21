@@ -58,7 +58,6 @@ websocket/Resources/
 # Local generated/work folders
 /backend/
 /agent_backup_Tools/
-/agent/
 /pytest-cache-files-98z3g4bk/
 /pytest-cache-files-na1ittcj/
 /agent/logs/

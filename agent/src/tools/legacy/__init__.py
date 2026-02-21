@@ -1,0 +1,1 @@
+"""Legacy tools compatibility namespace."""
