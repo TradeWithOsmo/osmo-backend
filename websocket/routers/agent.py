@@ -41,6 +41,8 @@ router = APIRouter(tags=["Agent"])
 logger = logging.getLogger(__name__)
 
 _ACTIVE_STREAMS: Dict[tuple[str, str], asyncio.Task] = {}
+DEFAULT_CHAT_STREAM_TIMEOUT_SECONDS = 500.0
+MAX_CHAT_STREAM_TIMEOUT_SECONDS = 900.0
 
 
 def _stream_key(user_id: str, session_id: str) -> tuple[str, str]:
@@ -321,6 +323,14 @@ def _extract_active_context(tool_states: Optional[Dict[str, Any]]) -> Dict[str, 
     if not isinstance(tool_states, dict):
         return {}
 
+    def _clean_text(value: Any, *, limit: int = 800) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return ""
+        if len(text) > limit:
+            return text[: limit - 3] + "..."
+        return text
+
     market_raw = (
         tool_states.get("market_symbol")
         or tool_states.get("market")
@@ -350,6 +360,42 @@ def _extract_active_context(tool_states: Optional[Dict[str, Any]]) -> Dict[str, 
         payload["timeframe"] = primary_tf
     if joined_tf:
         payload["timeframes"] = joined_tf
+
+    conversation_style = _clean_text(tool_states.get("conversation_style"), limit=64)
+    if conversation_style:
+        payload["conversation_style"] = conversation_style
+
+    trading_style_profile = _clean_text(
+        tool_states.get("trading_style") or tool_states.get("trading_style_profile"),
+        limit=64,
+    )
+    if trading_style_profile and trading_style_profile.lower() not in {
+        "off",
+        "none",
+        "default",
+    }:
+        payload["trading_style_profile"] = trading_style_profile
+
+    trading_style_prompt = _clean_text(
+        tool_states.get("trading_style_prompt"), limit=700
+    )
+    if trading_style_prompt:
+        payload["trading_style_prompt"] = trading_style_prompt
+
+    # Optional balance context for safer execution sizing.
+    balance_values = {
+        "account_value_usd": tool_states.get("account_value_usd"),
+        "free_collateral_usd": tool_states.get("free_collateral_usd")
+        if tool_states.get("free_collateral_usd") is not None
+        else tool_states.get("trading_balance_usd"),
+        "locked_margin_usd": tool_states.get("locked_margin_usd"),
+        "position_margin_usd": tool_states.get("position_margin_usd"),
+        "max_order_margin_usd": tool_states.get("max_order_margin_usd"),
+    }
+    for key, raw_value in balance_values.items():
+        parsed = _to_finite_number(raw_value)
+        if parsed is not None:
+            payload[key] = f"{parsed:.2f}"
     return payload
 
 
@@ -385,6 +431,56 @@ def _parse_bool_flag(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+def _to_finite_number(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed != parsed:  # NaN
+        return None
+    if parsed in (float("inf"), float("-inf")):
+        return None
+    return parsed
+
+
+async def _inject_runtime_balance_context(
+    tool_states: Optional[Dict[str, Any]],
+    *,
+    user_address: str,
+    db: Session,
+) -> Dict[str, Any]:
+    """
+    Enrich runtime tool_states with user balance context so the agent can size orders.
+    """
+    runtime_tool_states = dict(tool_states or {})
+    if not _looks_like_wallet(user_address):
+        return runtime_tool_states
+
+    try:
+        portfolio_service = PortfolioService(db)
+        metrics = await asyncio.wait_for(
+            portfolio_service.calculate_portfolio_value(user_address), timeout=1.5
+        )
+        account_value = float(metrics.get("portfolio_value") or 0.0)
+        free_collateral = float(metrics.get("cash_balance") or 0.0)
+        locked_margin = float(metrics.get("locked_margin") or 0.0)
+        position_margin = float(metrics.get("position_value") or 0.0)
+
+        runtime_tool_states["account_value_usd"] = round(account_value, 2)
+        runtime_tool_states["free_collateral_usd"] = round(free_collateral, 2)
+        runtime_tool_states["locked_margin_usd"] = round(locked_margin, 2)
+        runtime_tool_states["position_margin_usd"] = round(position_margin, 2)
+        runtime_tool_states["trading_balance_usd"] = round(free_collateral, 2)
+        if free_collateral > 0:
+            runtime_tool_states["max_order_margin_usd"] = round(free_collateral, 2)
+    except Exception as exc:
+        logger.debug("Failed to inject runtime balance context: %s", exc)
+
+    return runtime_tool_states
+
+
 def _build_runtime_context_block(tool_states: Optional[Dict[str, Any]]) -> List[str]:
     context = _extract_active_context(tool_states)
     if not context and not isinstance(tool_states, dict):
@@ -400,7 +496,20 @@ def _build_runtime_context_block(tool_states: Optional[Dict[str, Any]]) -> List[
 
     lines: List[str] = ["[RUNTIME_CONTEXT]"]
     lines.append("source=frontend_toolbar")
-    for key in ("market_symbol", "market_display", "timeframe", "timeframes"):
+    for key in (
+        "market_symbol",
+        "market_display",
+        "timeframe",
+        "timeframes",
+        "conversation_style",
+        "trading_style_profile",
+        "trading_style_prompt",
+        "account_value_usd",
+        "free_collateral_usd",
+        "locked_margin_usd",
+        "position_margin_usd",
+        "max_order_margin_usd",
+    ):
         value = context.get(key)
         if value:
             lines.append(f"{key}={value}")
@@ -410,6 +519,14 @@ def _build_runtime_context_block(tool_states: Optional[Dict[str, Any]]) -> List[
     lines.append(
         "instruction=Treat market/timeframe above as default active scope unless user explicitly changes it."
     )
+    if context.get("trading_style_profile") or context.get("trading_style_prompt"):
+        lines.append(
+            "style_instruction=Apply style context only for trading/TA analysis. Keep output practical and do not mention style profile names unless user asks."
+        )
+    if context.get("free_collateral_usd"):
+        lines.append(
+            "risk_instruction=When proposing or placing orders, keep amount_usd within free_collateral_usd and risk limits."
+        )
     lines.append("[/RUNTIME_CONTEXT]")
     return lines
 
@@ -615,8 +732,12 @@ async def agent_chat(
 
     # 4. Process with AgentBrain compatibility wrapper (Reflexion runtime)
     try:
-        ai_message = _augment_message_with_active_context(message, tool_states)
-        runtime_tool_states = dict(tool_states or {})
+        runtime_tool_states = await _inject_runtime_balance_context(
+            tool_states,
+            user_address=user_address,
+            db=db,
+        )
+        ai_message = _augment_message_with_active_context(message, runtime_tool_states)
         runtime_tool_states["agent_engine"] = "reflexion"
         runtime_tool_states["agent_engine_strict"] = True
         runtime_tool_states["knowledge_enabled"] = False
@@ -654,7 +775,7 @@ async def agent_chat(
             input_tokens=in_tokens,
             output_tokens=out_tokens,
             model_info=model_info,
-            tool_states=tool_states,
+            tool_states=runtime_tool_states,
         )
         _require_successful_billing(billing)
         total_cost = float(billing.get("total_cost_usd", 0.0))
@@ -832,8 +953,14 @@ async def agent_chat_stream(
         try:
             yield sse({"type": "meta", "session_id": session_id, "model": model_id})
 
-            ai_message = _augment_message_with_active_context(message, tool_states)
-            runtime_tool_states = dict(tool_states or {})
+            runtime_tool_states = await _inject_runtime_balance_context(
+                tool_states,
+                user_address=user_address,
+                db=db,
+            )
+            ai_message = _augment_message_with_active_context(
+                message, runtime_tool_states
+            )
             runtime_tool_states["agent_engine"] = "reflexion"
             runtime_tool_states["agent_engine_strict"] = True
             runtime_tool_states["knowledge_enabled"] = False
@@ -854,17 +981,20 @@ async def agent_chat_stream(
 
             try:
                 model_timeout_raw: Any = None
-                if isinstance(tool_states, dict):
-                    model_timeout_raw = tool_states.get("model_timeout_sec")
+                if isinstance(runtime_tool_states, dict):
+                    model_timeout_raw = runtime_tool_states.get("model_timeout_sec")
                 try:
                     model_timeout_sec = (
                         float(model_timeout_raw)
                         if model_timeout_raw is not None
-                        else 120.0
+                        else DEFAULT_CHAT_STREAM_TIMEOUT_SECONDS
                     )
                 except Exception:
-                    model_timeout_sec = 120.0
-                stream_timeout_sec = max(30.0, min(model_timeout_sec + 30.0, 360.0))
+                    model_timeout_sec = DEFAULT_CHAT_STREAM_TIMEOUT_SECONDS
+                stream_timeout_sec = max(
+                    DEFAULT_CHAT_STREAM_TIMEOUT_SECONDS,
+                    min(model_timeout_sec, MAX_CHAT_STREAM_TIMEOUT_SECONDS),
+                )
 
                 async with asyncio.timeout(stream_timeout_sec):
                     async for event in brain.stream(
@@ -922,7 +1052,7 @@ async def agent_chat_stream(
                 input_tokens=in_tokens,
                 output_tokens=out_tokens,
                 model_info=model_info,
-                tool_states=tool_states,
+                tool_states=runtime_tool_states,
             )
             _require_successful_billing(billing)
             total_cost = float(billing.get("total_cost_usd", 0.0))

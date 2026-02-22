@@ -120,6 +120,82 @@ def _command_symbol_keys(symbol: str) -> List[str]:
     return out
 
 
+def _normalize_timeframe_token(timeframe: str) -> str:
+    raw = (timeframe or "").strip().upper().replace(" ", "")
+    if not raw:
+        return ""
+    mapping = {
+        "1": "1m",
+        "3": "3m",
+        "5": "5m",
+        "15": "15m",
+        "30": "30m",
+        "45": "45m",
+        "60": "1H",
+        "120": "2H",
+        "180": "3H",
+        "240": "4H",
+        "360": "6H",
+        "480": "8H",
+        "720": "12H",
+        "D": "1D",
+        "W": "1W",
+        "1M": "1m",
+        "3M": "3m",
+        "5M": "5m",
+        "15M": "15m",
+        "30M": "30m",
+    }
+    return mapping.get(raw, raw)
+
+
+def _timeframe_aliases(timeframe: str) -> List[str]:
+    canonical = _normalize_timeframe_token(timeframe)
+    raw = str(timeframe or "").strip()
+    if not canonical and not raw:
+        return []
+
+    aliases: List[str] = []
+    if canonical:
+        aliases.append(canonical)
+
+        reverse = {
+            "1m": ["1", "1M"],
+            "3m": ["3", "3M"],
+            "5m": ["5", "5M"],
+            "15m": ["15", "15M"],
+            "30m": ["30", "30M"],
+            "45m": ["45", "45M"],
+            "1H": ["60"],
+            "2H": ["120"],
+            "3H": ["180"],
+            "4H": ["240"],
+            "6H": ["360"],
+            "8H": ["480"],
+            "12H": ["720"],
+            "1D": ["D"],
+            "1W": ["W"],
+        }
+        aliases.extend(reverse.get(canonical, []))
+
+    if raw:
+        aliases.append(raw)
+
+    # Keep order and uniqueness case-insensitively.
+    seen = set()
+    out: List[str] = []
+    for item in aliases:
+        token = str(item or "").strip()
+        if not token:
+            continue
+        marker = token.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(token)
+    return out
+
+
 class TradingViewConnector(BaseConnector):
     """
     TradingView data receiver connector.
@@ -271,15 +347,20 @@ class TradingViewConnector(BaseConnector):
         timeframe = kwargs.get("timeframe")
         if not timeframe:
             raise ValueError("timeframe is required")
-        
+
+        timeframe_candidates = _timeframe_aliases(str(timeframe))
+        if not timeframe_candidates:
+            timeframe_candidates = [str(timeframe)]
+
         try:
             for alias in _symbol_aliases(symbol):
-                cache_key = f"indicators:{alias}:{timeframe}"
-                cached = await self.redis_client.get(cache_key) if self.redis_client else await self._mem_get(cache_key)
-                if not cached:
-                    continue
-                data = json.loads(cached)
-                return self.normalize(data)
+                for tf in timeframe_candidates:
+                    cache_key = f"indicators:{alias}:{tf}"
+                    cached = await self.redis_client.get(cache_key) if self.redis_client else await self._mem_get(cache_key)
+                    if not cached:
+                        continue
+                    data = json.loads(cached)
+                    return self.normalize(data)
             raise ValueError(
                 f"No indicators cached for {symbol} {timeframe}. "
                 "Frontend needs to send data first."
@@ -326,13 +407,18 @@ class TradingViewConnector(BaseConnector):
         if not symbol or not timeframe:
             raise ValueError("symbol and timeframe are required")
 
+        timeframe_candidates = _timeframe_aliases(str(timeframe))
+        if not timeframe_candidates:
+            timeframe_candidates = [str(timeframe)]
+
+        payload = json.dumps(data)
         for alias in _symbol_aliases(symbol):
-            cache_key = f"indicators:{alias}:{timeframe}"
-            payload = json.dumps(data)
-            if self.redis_client:
-                await self.redis_client.setex(cache_key, self.cache_ttl, payload)
-            else:
-                await self._mem_setex(cache_key, self.cache_ttl, payload)
+            for tf in timeframe_candidates:
+                cache_key = f"indicators:{alias}:{tf}"
+                if self.redis_client:
+                    await self.redis_client.setex(cache_key, self.cache_ttl, payload)
+                else:
+                    await self._mem_setex(cache_key, self.cache_ttl, payload)
         
         return {
             "status": "stored",

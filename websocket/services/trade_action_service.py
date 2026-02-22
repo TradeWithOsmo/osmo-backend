@@ -24,6 +24,30 @@ class TradeActionService:
     def __init__(self):
         self.order_service = OrderService()
 
+    async def _get_current_price(self, symbol: str) -> float:
+        """Fetch current mark price for a symbol from available connectors."""
+        from connectors.init_connectors import connector_registry
+
+        base = (symbol or "").split("-")[0]
+        if not base:
+            raise ValueError(f"Invalid symbol: {symbol}")
+
+        conn = connector_registry.get_connector("hyperliquid")
+        if not conn or "USD" not in symbol:
+            conn = connector_registry.get_connector("ostium")
+
+        if not conn:
+            raise ValueError(f"No connector available to fetch price for {symbol}")
+
+        try:
+            data = await asyncio.wait_for(conn.fetch(base, data_type="price"), timeout=1.5)
+            price = float((data or {}).get("data", {}).get("price", 0) or 0)
+            if price <= 0:
+                raise ValueError(f"Invalid fetched price for {symbol}: {price}")
+            return price
+        except Exception as e:
+            raise ValueError(f"Could not fetch market price for {symbol}: {e}")
+
     async def close_position(
         self,
         user_address: str,

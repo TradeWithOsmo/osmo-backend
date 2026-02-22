@@ -150,7 +150,7 @@ class AddIndicatorRequest(BaseModel):
     symbol: str
     name: str
     inputs: Optional[Dict[str, Any]] = None
-    force_overlay: bool = True
+    force_overlay: bool = False
 
 class RemoveIndicatorRequest(BaseModel):
     symbol: str

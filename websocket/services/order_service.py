@@ -33,6 +33,103 @@ class OrderService:
             return str(float(value))
         return str(value).strip()
 
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _estimate_liquidation_price(
+        cls,
+        side: str,
+        entry_price: Any,
+        position_value: Any,
+        margin_used: Any,
+        leverage: Any,
+    ) -> float:
+        entry = cls._safe_float(entry_price)
+        if entry <= 0:
+            return 0.0
+
+        pos_value = cls._safe_float(position_value)
+        margin = cls._safe_float(margin_used)
+        lev = cls._safe_float(leverage)
+
+        # Keep compatibility with existing assumption:
+        # liquidation at ~80% of max-loss distance to full margin.
+        if pos_value > 0 and margin > 0:
+            max_loss_ratio = (margin * 0.8) / pos_value
+        elif lev > 0:
+            max_loss_ratio = 0.8 / lev
+        else:
+            return 0.0
+
+        max_loss_ratio = max(0.0, min(max_loss_ratio, 0.99))
+        if str(side).lower() == "short":
+            return entry * (1 + max_loss_ratio)
+        return entry * (1 - max_loss_ratio)
+
+    @classmethod
+    def _normalize_position_metrics(cls, pos: Dict[str, Any]) -> Dict[str, Any]:
+        raw_side = str(pos.get("side", "long")).lower()
+        if raw_side in ("sell", "short"):
+            side = "short"
+        else:
+            side = "long"
+        entry = cls._safe_float(pos.get("entry_price"))
+        mark = cls._safe_float(pos.get("mark_price"), entry)
+        size = cls._safe_float(pos.get("size"), cls._safe_float(pos.get("size_tokens")))
+        lev = cls._safe_float(pos.get("leverage"))
+
+        position_value = cls._safe_float(pos.get("position_value"))
+        if position_value <= 0 and size > 0 and mark > 0:
+            position_value = size * mark
+
+        margin = cls._safe_float(pos.get("margin_used"))
+        if margin <= 0 and position_value > 0 and lev > 0:
+            margin = position_value / lev
+
+        # Prefer connector/backend value when provided, otherwise derive from mark-entry.
+        if pos.get("unrealized_pnl") is None:
+            if side == "short":
+                unrealized = (entry - mark) * size
+            else:
+                unrealized = (mark - entry) * size
+        else:
+            unrealized = cls._safe_float(pos.get("unrealized_pnl"))
+
+        if margin > 0:
+            unrealized_pct = (unrealized / margin) * 100
+        else:
+            unrealized_pct = 0.0
+
+        liq = cls._safe_float(pos.get("liquidation_price"))
+        if liq <= 0:
+            liq = cls._estimate_liquidation_price(
+                side=side,
+                entry_price=entry,
+                position_value=position_value,
+                margin_used=margin,
+                leverage=lev,
+            )
+
+        pos["side"] = side
+        pos["entry_price"] = entry
+        pos["mark_price"] = mark
+        pos["size"] = size
+        size_tokens = cls._safe_float(pos.get("size_tokens"))
+        pos["size_tokens"] = size_tokens if size_tokens > 0 else size
+        pos["position_value"] = position_value
+        pos["margin_used"] = margin
+        pos["unrealized_pnl"] = unrealized
+        pos["unrealized_pnl_percent"] = unrealized_pct
+        pos["liquidation_price"] = liq if liq > 0 else 0
+        return pos
+
     async def place_order(
         self,
         user_address: str,
@@ -155,9 +252,15 @@ class OrderService:
             else:
                 current_price = price
 
-            # Calculate Tokens
-            size_tokens = (amount_usd / current_price) if current_price > 0 else 0
-            margin_used = amount_usd / leverage if leverage > 0 else amount_usd
+            # In simulation mode, interpret input amount_usd as margin/collateral.
+            # Notional exposure is margin * leverage.
+            simulation_notional_usd = (
+                amount_usd * leverage if leverage > 0 else amount_usd
+            )
+            size_tokens = (
+                (simulation_notional_usd / current_price) if current_price > 0 else 0
+            )
+            margin_used = amount_usd
 
             # Execute via Ledger (OR Match Engine for Limit/Stop)
             order_id = str(uuid.uuid4())
@@ -268,7 +371,7 @@ class OrderService:
                         price=price,
                         stop_price=stop_price,
                         size=size,
-                        notional_usd=amount_usd,
+                        notional_usd=simulation_notional_usd,
                         leverage=leverage,
                         reduce_only=reduce_only,
                         post_only=post_only,
@@ -1001,8 +1104,15 @@ class OrderService:
                 if account:
                     # SIMULATION MODE: Use Ledger as source of truth
                     if use_simulation:
-                        # Calculate total position value from simulation positions
-                        simulation_positions_value = sum(
+                        initial_simulation_balance = float(
+                            os.getenv("INITIAL_SIMULATION_BALANCE", "1000")
+                        )
+                        normalized_sim_balance = initial_simulation_balance + float(
+                            account.realized_pnl or 0.0
+                        )
+
+                        # Calculate total margin usage from simulation positions
+                        simulation_positions_margin = sum(
                             pos.get("margin_used", 0)
                             for pos in all_positions
                             if pos.get("exchange") == "simulation"
@@ -1017,18 +1127,30 @@ class OrderService:
 
                         # Account value = balance + unrealized PnL
                         # This ensures balance decreases when there's a loss
-                        account_value = account.balance + simulation_unrealized_pnl
+                        account_value = (
+                            normalized_sim_balance + simulation_unrealized_pnl
+                        )
 
                         overall_summary["account_value"] = account_value
-                        overall_summary["free_collateral"] = account.available_balance
+                        # IMPORTANT:
+                        # account.locked_margin already tracks locked margin from open simulation positions.
+                        # Do not add position margin again, otherwise margin appears doubled.
                         overall_summary["total_margin_used"] = (
-                            account.locked_margin + simulation_positions_value
+                            account.locked_margin
+                            if account.locked_margin > 0
+                            else simulation_positions_margin
+                        )
+                        overall_summary["free_collateral"] = (
+                            normalized_sim_balance - overall_summary["total_margin_used"]
                         )
 
                         print(
                             f"[OrderService] SIMULATION MODE - Ledger for {user_address}: "
-                            f"balance={account.balance:.2f}, unrealized_pnl={simulation_unrealized_pnl:.2f}, "
-                            f"account_value={account_value:.2f}"
+                            f"stored_balance={account.balance:.2f}, normalized_balance={normalized_sim_balance:.2f}, "
+                            f"unrealized_pnl={simulation_unrealized_pnl:.2f}, "
+                            f"account_value={account_value:.2f}, locked_margin={account.locked_margin:.2f}, "
+                            f"positions_margin={simulation_positions_margin:.2f}, "
+                            f"free_collateral={overall_summary['free_collateral']:.2f}"
                         )
                     # HYBRID/ONCHAIN MODE: Sync Ledger with On-chain
                     elif "onchain" in successful_exchanges:
@@ -1194,8 +1316,13 @@ class OrderService:
                             "entry_price": db_pos.entry_price,
                             "mark_price": mark_price,
                             "unrealized_pnl": unrealized_pnl,
+                            "unrealized_pnl_percent": 0,
+                            "position_value": db_pos.size * mark_price,
                             "leverage": db_pos.leverage,
                             "margin_used": db_pos.margin_used,
+                            "liquidation_price": db_pos.liquidation_price
+                            if db_pos.liquidation_price
+                            else 0,
                             "exchange": db_pos.exchange,
                             "is_shadow": False
                             if db_pos.exchange == "simulation"
@@ -1214,6 +1341,15 @@ class OrderService:
 
         except Exception as e:
             print(f"[OrderService] Error merging shadow positions/TPSL: {e}")
+
+        # Normalize metrics for every position so frontend receives consistent values.
+        for idx, pos in enumerate(all_positions):
+            try:
+                all_positions[idx] = self._normalize_position_metrics(pos)
+            except Exception as e:
+                print(
+                    f"[OrderService] Failed to normalize metrics for position {pos.get('id')}: {e}"
+                )
 
         # Final calculations for aggregated summary
         if overall_summary["account_value"] > 0:

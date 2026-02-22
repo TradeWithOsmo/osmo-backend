@@ -439,6 +439,7 @@ class AgentBrain:
             model_id=self.model_id,
             tool_states=dict(self.tool_states or {}),
             user_context=dict(self.user_context or {}),
+            reasoning_effort=self.reasoning_effort,
             temperature=self.temperature,
             max_iterations=self.max_iterations,
             max_retries_per_tool=max_retries_per_tool,
@@ -1278,7 +1279,6 @@ class AgentBrain:
                 if isinstance(reflexion.get("state_summary"), dict)
                 else {}
             ) or {}
-            actions = state_summary.get("actions", {}) or {}
             usage = {
                 "prompt_tokens": max(0, len(str(user_message or "")) // 4),
                 "completion_tokens": max(0, len(output) // 4),
@@ -1287,17 +1287,20 @@ class AgentBrain:
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
             thoughts: List[Dict[str, Any]] = []
-            if state_summary:
+            reflexion_thoughts = reflexion.get("thoughts")
+            if isinstance(reflexion_thoughts, list):
+                for item in reflexion_thoughts:
+                    if isinstance(item, dict):
+                        thoughts.append(item)
+
+            if not thoughts:
                 thoughts.append(
                     {
                         "type": "reasoning",
-                        "title": "Reflexion Summary",
+                        "title": "Reasoning Trace",
                         "content": (
-                            f"steps={int(state_summary.get('total_steps', 0))}, "
-                            f"good={int(actions.get('good', 0))}, "
-                            f"errors={int(actions.get('errors', 0))}, "
-                            f"retried={int(actions.get('retried', 0))}, "
-                            f"reflections={int(state_summary.get('reflections', 0))}"
+                            "Detailed provider reasoning is unavailable for this response. "
+                            "Showing execution trace when tool events are available."
                         ),
                         "status": "done",
                     }

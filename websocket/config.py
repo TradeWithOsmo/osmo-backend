@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     # Secondary session history cache (development)
     SECONDARY_HISTORY_ENABLED: bool = True
     SECONDARY_HISTORY_PREWARM: bool = True
-    SESSION_HISTORY_DAYS: int = 4
+    SESSION_HISTORY_DAYS: int = 7
     SECONDARY_CRYPTO_ONLY: bool = True
     SECONDARY_NON_CRYPTO_PROVIDER: str = "yahoo"
     SECONDARY_DISABLE_COMMODITIES: bool = True

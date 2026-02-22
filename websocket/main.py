@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+﻿from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Trigger Reload 1
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app, Counter, Gauge, Histogram
@@ -10,7 +10,8 @@ import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, Set
+from typing import Dict, Set, List, Any
+import httpx
 
 from config import settings
 from Hyperliquid.websocket_client import HyperliquidWebSocketClient
@@ -87,6 +88,94 @@ connected_l2book_clients: Dict[str, Set[WebSocket]] = {}
 connected_trades_clients: Dict[str, Set[WebSocket]] = {}
 latest_prices: Dict[str, dict] = {}  # symbol -> latest price data
 _COMMODITY_BASES = {"XAU", "XAG", "WTI", "BRN", "NG", "GC", "SI", "HG", "CL"}
+_BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+
+
+async def _fetch_binance_candles(
+    symbol: str,
+    timeframe: str,
+    start_time: int,
+    end_time: int,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """
+    Fallback candles from Binance (USDT pairs) for crypto symbols.
+    """
+    tf = to_timeframe(timeframe or "1m")
+    interval_map = {
+        "1m": "1m",
+        "5m": "5m",
+        "15m": "15m",
+        "30m": "30m",
+        "1h": "1h",
+        "4h": "4h",
+        "1d": "1d",
+        "1w": "1w",
+    }
+    interval = interval_map.get(tf)
+    if not interval:
+        return []
+
+    base = (symbol or "").upper().replace("/", "-").replace("_", "-").split("-")[0]
+    if not base:
+        return []
+    pair = f"{base}USDT"
+
+    safe_limit = max(1, int(limit))
+    step_ms = max(60_000, timeframe_minutes(tf) * 60 * 1000)
+    cursor = max(0, int(start_time))
+    end_ms = max(cursor, int(end_time))
+    out: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        while cursor <= end_ms and len(out) < safe_limit:
+            params = {
+                "symbol": pair,
+                "interval": interval,
+                "startTime": cursor,
+                "endTime": end_ms,
+                "limit": min(1000, safe_limit - len(out)),
+            }
+            try:
+                rows = await session_candle_cache._json_get_with_ssl_fallback(
+                    client, _BINANCE_KLINES_URL, params
+                )
+            except Exception as exc:
+                logger.warning("Binance fallback failed for %s (%s): %s", symbol, tf, exc)
+                break
+
+            if not isinstance(rows, list) or not rows:
+                break
+
+            last_open = None
+            for row in rows:
+                if not isinstance(row, list) or len(row) < 6:
+                    continue
+                ts = int(row[0])
+                out.append(
+                    {
+                        "timestamp": ts,
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                        "volume": float(row[5]),
+                        "symbol": symbol,
+                    }
+                )
+                last_open = ts
+                if len(out) >= safe_limit:
+                    break
+
+            if last_open is None:
+                break
+            next_cursor = last_open + step_ms
+            if next_cursor <= cursor:
+                break
+            cursor = next_cursor
+            await asyncio.sleep(0.03)
+
+    return out[-safe_limit:]
 
 
 async def handle_hyperliquid_message(data: dict):
@@ -194,7 +283,7 @@ async def handle_l2book_message(data: dict):
 
     coin = data.get("coin")
     if not coin:
-        logger.warning(f"⚠️ L2Book data missing 'coin' field: {data.keys()}")
+        logger.warning(f"âš ï¸ L2Book data missing 'coin' field: {data.keys()}")
         return
         
     symbol = f"{coin}-USD" # Normalize
@@ -225,12 +314,12 @@ async def handle_trades_message(data: dict):
     """Handle incoming Trades data"""
     # trades data is usually a list of trades
     if not isinstance(data, list) or not data:
-        logger.warning(f"⚠️ Trades data is not a non-empty list: {type(data)}")
+        logger.warning(f"âš ï¸ Trades data is not a non-empty list: {type(data)}")
         return
         
     coin = data[0].get("coin")
     if not coin:
-        logger.warning(f"⚠️ Trades data missing 'coin' field in first element: {data[0].keys()}")
+        logger.warning(f"âš ï¸ Trades data missing 'coin' field in first element: {data[0].keys()}")
         return
 
     symbol = f"{coin}-USD"
@@ -415,12 +504,12 @@ async def poll_ostium_volume():
                     count += 1
                 
                 if count > 0:
-                    logger.info(f"✅ Updated volume/OI for {count} Ostium symbols")
+                    logger.info(f"âœ… Updated volume/OI for {count} Ostium symbols")
                 else:
-                    logger.warning(f"⚠️ Polled Ostium Subgraph but found 0 matches in latest_prices. (Total pairs: {len(pairs_data)})")
+                    logger.warning(f"âš ï¸ Polled Ostium Subgraph but found 0 matches in latest_prices. (Total pairs: {len(pairs_data)})")
                     
         except Exception as e:
-            logger.error(f"❌ Error in volume poller: {e}")
+            logger.error(f"âŒ Error in volume poller: {e}")
             
         await asyncio.sleep(30)  # Poll every 30s
 
@@ -509,7 +598,7 @@ async def bootstrap_hyperliquid_history():
     """Initial fetch of 24h high/low for all Hyperliquid assets via candles"""
     global latest_prices, hl_price_history
     
-    logger.info("⚡ Bootstrapping Hyperliquid High/Low history...")
+    logger.info("âš¡ Bootstrapping Hyperliquid High/Low history...")
     try:
         data = await http_client.get_meta_and_asset_ctxs()
         if data and len(data) == 2:
@@ -562,9 +651,9 @@ async def bootstrap_hyperliquid_history():
                     # logger.warning(f"Failed to bootstrap {coin}: {e}")
                     continue
             
-            logger.info(f"✅ Bootstrapped High/Low for {len(universe)} HL symbols")
+            logger.info(f"âœ… Bootstrapped High/Low for {len(universe)} HL symbols")
     except Exception as e:
-        logger.error(f"❌ Error bootstrapping HL history: {e}")
+        logger.error(f"âŒ Error bootstrapping HL history: {e}")
 
 
 @asynccontextmanager
@@ -573,7 +662,7 @@ async def lifespan(app: FastAPI):
     global hyperliquid_client, ostium_client, ostium_poller, ostium_subgraph, ostium_candle_generator, ostium_persister
     
     # Startup
-    logger.info("🚀 Starting Osmo Backend...")
+    logger.info("ðŸš€ Starting Osmo Backend...")
     logger.info(f"Environment: {settings.ENV}")
     
     # Load persistence only when explicitly allowed (dev mode is in-memory only).
@@ -603,19 +692,19 @@ async def lifespan(app: FastAPI):
     # Start Hyperliquid WebSocket client
     try:
         ws_url = settings.HYPERLIQUID_WS_URL or "wss://api.hyperliquid.xyz/ws"
-        logger.info(f"🔌 Connecting to Hyperliquid WS at: {ws_url}")
+        logger.info(f"ðŸ”Œ Connecting to Hyperliquid WS at: {ws_url}")
         
         hyperliquid_client = HyperliquidWebSocketClient(ws_url)
         await hyperliquid_client.connect()
-        logger.info("✅ Connection established, subscribing to allMids...")
+        logger.info("âœ… Connection established, subscribing to allMids...")
         
         await hyperliquid_client.subscribe("allMids", handle_hyperliquid_message)
-        logger.info("✅ Subscribed to allMids, starting listen loop...")
+        logger.info("âœ… Subscribed to allMids, starting listen loop...")
         
         asyncio.create_task(hyperliquid_client.listen())
-        logger.info("✅ Hyperliquid WebSocket client started successfully")
+        logger.info("âœ… Hyperliquid WebSocket client started successfully")
     except Exception as e:
-        logger.error(f"❌ Failed to start Hyperliquid client: {e}", exc_info=True)
+        logger.error(f"âŒ Failed to start Hyperliquid client: {e}", exc_info=True)
         
     # Start Hyperliquid Stats Poller & Bootstrap
     asyncio.create_task(poll_hyperliquid_stats())
@@ -649,17 +738,17 @@ async def lifespan(app: FastAPI):
         try:
             ostium_subgraph = OstiumSubgraphClient()
             asyncio.create_task(poll_ostium_volume())
-            logger.info(f"✅ Ostium Subgraph Poller started")
+            logger.info(f"âœ… Ostium Subgraph Poller started")
         except Exception as e:
-            logger.error(f"⚠️ Failed to start Subgraph Poller: {e}")
+            logger.error(f"âš ï¸ Failed to start Subgraph Poller: {e}")
             
-        logger.info(f"✅ Ostium poller started (interval: {settings.OSTIUM_POLL_INTERVAL}s)")
+        logger.info(f"âœ… Ostium poller started (interval: {settings.OSTIUM_POLL_INTERVAL}s)")
         
         # Start Price Pusher (Sync to on-chain OrderRouter) - DISABLED (Using JIT Push in OnchainConnector)
         # asyncio.create_task(price_pusher.start(latest_prices, connected_clients))
-        # logger.info("✅ Price Pusher started")
+        # logger.info("âœ… Price Pusher started")
     except Exception as e:
-        logger.error(f"❌ Failed to start Ostium poller: {e}")
+        logger.error(f"âŒ Failed to start Ostium poller: {e}")
 
     # Start Indexer Service (Hybrid Architecture)
     try:
@@ -667,14 +756,14 @@ async def lifespan(app: FastAPI):
         from services.indexer_service import indexer_service
         print("DEBUG: Starting indexer_service task...")
         asyncio.create_task(indexer_service.start())
-        logger.info("✅ Indexer Service started (Listening to On-Chain Events)")
+        logger.info("âœ… Indexer Service started (Listening to On-Chain Events)")
         
         # Start Simulation Matching Engine
         print("DEBUG: Loading matching_engine...")
         from services.matching_engine import simulation_matching_engine
         print("DEBUG: Starting matching_engine task...")
         asyncio.create_task(simulation_matching_engine.start())
-        logger.info("✅ Simulation Matching Engine started")
+        logger.info("âœ… Simulation Matching Engine started")
         
         # Start Price Monitor Service (GP/GL monitoring)
         try:
@@ -682,24 +771,24 @@ async def lifespan(app: FastAPI):
             ai_callback = await ai_trigger_service.create_ai_trigger_callback()
             price_monitor_service.set_ai_trigger_callback(ai_callback)
             await price_monitor_service.start(latest_prices)
-            logger.info("✅ Price Monitor Service started (GP/GL monitoring)")
+            logger.info("âœ… Price Monitor Service started (GP/GL monitoring)")
         except Exception as e:
-            logger.error(f"❌ Failed to start Price Monitor Service: {e}")
+            logger.error(f"âŒ Failed to start Price Monitor Service: {e}")
         
     except Exception as e:
-        logger.error(f"❌ Failed to start Indexer/Matching Services: {e}")
+        logger.error(f"âŒ Failed to start Indexer/Matching Services: {e}")
 
     # Initialize Connector System
     try:
         asyncio.create_task(connector_registry.initialize(redis_url=settings.REDIS_URL))
-        logger.info("✅ Connector system initialized")
+        logger.info("âœ… Connector system initialized")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize connector system: {e}")
+        logger.error(f"âŒ Failed to initialize connector system: {e}")
     
     # Initialize Database
     try:
         await init_db()
-        logger.info("✅ Database initialized")
+        logger.info("âœ… Database initialized")
         
         # CLEAR TABLES FOR DEVELOPMENT (Per user request: store temporarily)
         try:
@@ -714,17 +803,17 @@ async def lifespan(app: FastAPI):
                 except Exception:
                     pass
                 await session.commit()
-                logger.info("🧹 Development: Markets and Trading tables cleared for new session")
+                logger.info("ðŸ§¹ Development: Markets and Trading tables cleared for new session")
         except Exception as truncate_err:
-            logger.warning(f"⚠️ Failed to clear some tables: {truncate_err}")
+            logger.warning(f"âš ï¸ Failed to clear some tables: {truncate_err}")
             
     except Exception as e:
-        logger.error(f"❌ Database initialization failed: {e}")
+        logger.error(f"âŒ Database initialization failed: {e}")
     
     yield
     
     # Shutdown
-    logger.info("🛑 Shutting down Osmo Backend...")
+    logger.info("ðŸ›‘ Shutting down Osmo Backend...")
     
     # CLEAR TABLES ON EXIT (Per user request)
     try:
@@ -738,9 +827,9 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
             await session.commit()
-            logger.info("🧹 Development: Tables cleared on shutdown")
+            logger.info("ðŸ§¹ Development: Tables cleared on shutdown")
     except Exception as e:
-        logger.error(f"⚠️ Failed to clear tables on shutdown: {e}")
+        logger.error(f"âš ï¸ Failed to clear tables on shutdown: {e}")
     
     if not settings.WS_IN_MEMORY_ONLY:
         ostium_price_history.save_to_disk()
@@ -766,7 +855,7 @@ async def lifespan(app: FastAPI):
         await ostium_client.close()
     if ostium_subgraph:
         await ostium_subgraph.close()
-    logger.info("✅ Shutdown complete")
+    logger.info("âœ… Shutdown complete")
 
 
 # Initialize FastAPI
@@ -890,45 +979,59 @@ async def get_candles(
     resolution: str = None,
     timeframe: str = None,
 ):
-    """Get OHLC candles for a symbol
-    
-    Args:
-        symbol: Trading pair symbol (e.g., EUR-USD, BTC-USD)
-        exchange: Exchange filter - 'ostium' or 'hyperliquid' (optional)
-        limit: Number of candles to return (default 100)
-    """
+    """Get OHLC candles for a symbol."""
     tf = to_timeframe(timeframe or resolution or "1m")
     source_hint = exchange
     normalized_symbol = (symbol or "").upper().replace("/", "-").replace("_", "-")
     symbol_base = normalized_symbol.split("-")[0] if normalized_symbol else ""
+    safe_limit = max(1, int(limit))
 
     if settings.SECONDARY_DISABLE_COMMODITIES and symbol_base in _COMMODITY_BASES:
         return []
 
     # Preferred path: session-scoped in-memory cache (secondary history + primary ticks).
+    # Only use cache when requested window fits cache horizon, otherwise fallback to provider API.
     if settings.SECONDARY_HISTORY_ENABLED and is_cache_timeframe(tf):
         try:
-            cached = await session_candle_cache.get_candles(
-                symbol=symbol,
-                timeframe=tf,
-                limit=limit,
-                source_hint=source_hint,
-            )
-            if cached:
-                return cached
+            tf_mins = max(1, timeframe_minutes(tf))
+            cache_horizon_mins = max(1, int(getattr(settings, "SESSION_HISTORY_DAYS", 4))) * 24 * 60
+            requested_window_mins = safe_limit * tf_mins
+            use_cache = requested_window_mins <= cache_horizon_mins
+
+            if use_cache:
+                cached = await session_candle_cache.get_candles(
+                    symbol=symbol,
+                    timeframe=tf,
+                    limit=safe_limit,
+                    source_hint=source_hint,
+                )
+                if cached:
+                    return cached
+            else:
+                logger.info(
+                    "Skip session cache for %s (%s): requested_window=%sm > cache_horizon=%sm",
+                    symbol,
+                    tf,
+                    requested_window_mins,
+                    cache_horizon_mins,
+                )
         except Exception as cache_err:
-            logger.warning(f"Session candle cache failed for {symbol} ({tf}): {cache_err}")
+            logger.warning("Session candle cache failed for %s (%s): %s", symbol, tf, cache_err)
+
+    # Shared external window
+    end_time = int(time.time() * 1000)
+    tf_mins = timeframe_minutes(tf)
+    start_time = end_time - (safe_limit * tf_mins * 60 * 1000)
+    interval = to_hl_interval(tf)
+    coin = symbol.split("-")[0]
 
     # Fallback path (legacy)
-    # Route based on exchange parameter
     if exchange == "ostium":
-        # Force Ostium Candle Generator
         if symbol in ostium_candle_generator.candles or symbol in ostium_candle_generator.current_candles:
-            logger.info(f"📊 Fetching {limit} Ostium candles for {symbol}")
-            raw = ostium_candle_generator.get_candles(symbol, limit if tf == "1m" else limit * 30)
+            logger.info("Fetching %s Ostium candles for %s", safe_limit, symbol)
+            raw = ostium_candle_generator.get_candles(symbol, safe_limit if tf == "1m" else safe_limit * 30)
             if tf == "1m":
                 return raw
-            # Reuse session cache aggregation helper via temporary local update.
             try:
                 for item in raw:
                     session_candle_cache.update_tick(
@@ -936,51 +1039,79 @@ async def get_candles(
                         price=float(item.get("c", item.get("close", 0))),
                         timestamp_ms=int(item.get("t", item.get("timestamp", int(time.time() * 1000)))),
                     )
-                aggregated = await session_candle_cache.get_candles(symbol=symbol, timeframe=tf, limit=limit, source_hint="ostium")
+                aggregated = await session_candle_cache.get_candles(
+                    symbol=symbol,
+                    timeframe=tf,
+                    limit=safe_limit,
+                    source_hint="ostium",
+                )
                 if aggregated:
                     return aggregated
             except Exception:
                 pass
             return raw
-        else:
-            logger.warning(f"⚠️ No Ostium candles found for {symbol}")
-            return []
-    
-    elif exchange == "hyperliquid":
-        # Force Hyperliquid API
-        try:
-            coin = symbol.split("-")[0]
-            end_time = int(time.time() * 1000)
-            tf_minutes = timeframe_minutes(tf)
-            start_time = end_time - (limit * tf_minutes * 60 * 1000)
-            
-            interval = to_hl_interval(tf)
-            logger.info(f"📊 Fetching {limit} Hyperliquid candles for {coin} ({interval})")
-            candles = await http_client.get_candles(coin, interval=interval, start_time=start_time, end_time=end_time)
-            return candles
-        except Exception as e:
-            logger.error(f"Failed to fetch Hyperliquid candles for {symbol}: {e}")
-            return []
-    
-    else:
-        # Auto-detect: Try Ostium first, then Hyperliquid
-        if symbol in ostium_candle_generator.candles or symbol in ostium_candle_generator.current_candles:
-            return ostium_candle_generator.get_candles(symbol, limit)
-        
-        # Try Hyperliquid API
-        try:
-            coin = symbol.split("-")[0]
-            end_time = int(time.time() * 1000)
-            tf_minutes = timeframe_minutes(tf)
-            start_time = end_time - (limit * tf_minutes * 60 * 1000)
-            interval = to_hl_interval(tf)
-            candles = await http_client.get_candles(coin, interval=interval, start_time=start_time, end_time=end_time)
-            return candles
-        except Exception as e:
-            logger.error(f"Failed to fetch external candles for {symbol}: {e}")
-            return []
+        logger.warning("No Ostium candles found for %s", symbol)
+        return []
 
+    if exchange == "hyperliquid":
+        try:
+            logger.info("Fetching %s Hyperliquid candles for %s (%s)", safe_limit, coin, interval)
+            candles = await http_client.get_candles(
+                coin, interval=interval, start_time=start_time, end_time=end_time
+            )
+            if candles:
+                return candles
+            logger.warning(
+                "Hyperliquid returned empty candles for %s (%s), trying Binance fallback",
+                symbol,
+                tf,
+            )
+        except Exception as e:
+            logger.error("Failed to fetch Hyperliquid candles for %s: %s", symbol, e)
 
+        if symbol_base not in _COMMODITY_BASES:
+            fallback = await _fetch_binance_candles(
+                symbol=symbol,
+                timeframe=tf,
+                start_time=start_time,
+                end_time=end_time,
+                limit=safe_limit,
+            )
+            if fallback:
+                logger.info("Using Binance fallback candles for %s (%s): %d bars", symbol, tf, len(fallback))
+                return fallback
+        return []
+
+    # Auto-detect: Try Ostium first, then Hyperliquid
+    if symbol in ostium_candle_generator.candles or symbol in ostium_candle_generator.current_candles:
+        return ostium_candle_generator.get_candles(symbol, safe_limit)
+
+    try:
+        candles = await http_client.get_candles(
+            coin, interval=interval, start_time=start_time, end_time=end_time
+        )
+        if candles:
+            return candles
+        logger.warning(
+            "Auto source Hyperliquid returned empty candles for %s (%s), trying Binance fallback",
+            symbol,
+            tf,
+        )
+    except Exception as e:
+        logger.error("Failed to fetch external candles for %s: %s", symbol, e)
+
+    if symbol_base not in _COMMODITY_BASES:
+        fallback = await _fetch_binance_candles(
+            symbol=symbol,
+            timeframe=tf,
+            start_time=start_time,
+            end_time=end_time,
+            limit=safe_limit,
+        )
+        if fallback:
+            logger.info("Using Binance fallback candles (auto) for %s (%s): %d bars", symbol, tf, len(fallback))
+            return fallback
+    return []
 # Market info endpoint
 @app.get("/api/markets")
 async def get_markets():
@@ -1019,27 +1150,27 @@ async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
     connected_clients[symbol].add(websocket)
     active_connections.labels(module="hyperliquid", symbol=symbol).inc()
     
-    logger.info(f"📡 Client connected to {symbol}")
+    logger.info(f"ðŸ“¡ Client connected to {symbol}")
     
     # Send latest price immediately
     try:
         if symbol == "ALL":
-            logger.info(f"📊 Sending {len(latest_prices)} keys to ALL client")
+            logger.info(f"ðŸ“Š Sending {len(latest_prices)} keys to ALL client")
             payload = json.dumps({
                 "type": "price_update",
                 "data": latest_prices
             })
             await websocket.send_text(payload)
-            logger.info("✅ Initial prices sent to ALL client")
+            logger.info("âœ… Initial prices sent to ALL client")
         elif symbol in latest_prices:
             # Send specific symbol price
             await websocket.send_text(json.dumps({
                 "type": "price_update",
                 "data": latest_prices[symbol]
             }))
-            logger.info(f"✅ Initial price sent for {symbol}")
+            logger.info(f"âœ… Initial price sent for {symbol}")
     except Exception as e:
-        logger.error(f"❌ Failed to send initial prices: {e}")
+        logger.error(f"âŒ Failed to send initial prices: {e}")
         # Don't close connection, just log the error
     
     try:
@@ -1050,7 +1181,7 @@ async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
             logger.debug(f"Received from client: {data}")
     
     except WebSocketDisconnect:
-        logger.info(f"📴 Client disconnected from {symbol}")
+        logger.info(f"ðŸ“´ Client disconnected from {symbol}")
     
     finally:
         # Remove from connected clients
@@ -1069,7 +1200,7 @@ async def ostium_websocket(websocket: WebSocket, symbol: str):
     connected_clients[symbol].add(websocket)
     active_connections.labels(module="ostium", symbol=symbol).inc()
     
-    logger.info(f"📡 Ostium client connected to {symbol}")
+    logger.info(f"ðŸ“¡ Ostium client connected to {symbol}")
     
     # Send latest price immediately
     try:
@@ -1078,9 +1209,9 @@ async def ostium_websocket(websocket: WebSocket, symbol: str):
                 "type": "price_update",
                 "data": latest_prices[symbol]
             }))
-            logger.info(f"✅ Initial Ostium price sent for {symbol}")
+            logger.info(f"âœ… Initial Ostium price sent for {symbol}")
     except Exception as e:
-        logger.error(f"❌ Failed to send initial Ostium price: {e}")
+        logger.error(f"âŒ Failed to send initial Ostium price: {e}")
     
     try:
         # Keep connection alive
@@ -1089,7 +1220,7 @@ async def ostium_websocket(websocket: WebSocket, symbol: str):
             logger.debug(f"Received from Ostium client: {data}")
     
     except WebSocketDisconnect:
-        logger.info(f"📴 Ostium client disconnected from {symbol}")
+        logger.info(f"ðŸ“´ Ostium client disconnected from {symbol}")
     
     finally:
         # Remove from connected clients
@@ -1191,7 +1322,7 @@ async def notification_websocket(websocket: WebSocket, address: str):
     channel = f"user_notifications:{address}"
     await pubsub.subscribe(channel)
     
-    logger.info(f"🔔 User {address} connected to real-time notifications")
+    logger.info(f"ðŸ”” User {address} connected to real-time notifications")
     
     try:
         # Background task for this specific connection to listen to Redis
@@ -1221,7 +1352,7 @@ async def notification_websocket(websocket: WebSocket, address: str):
             await websocket.receive_text()
             
     except WebSocketDisconnect:
-        logger.info(f"📴 Notification client disconnected: {address}")
+        logger.info(f"ðŸ“´ Notification client disconnected: {address}")
     except Exception as e:
         logger.error(f"Error in notification socket for {address}: {e}")
     finally:

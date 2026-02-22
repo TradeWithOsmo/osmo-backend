@@ -2,6 +2,7 @@
 Portfolio Service - Calculate and track portfolio value over time
 """
 from datetime import datetime, timedelta
+import os
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Dict, Optional
@@ -29,10 +30,22 @@ class PortfolioService:
         # 1. Get Balance from Ledger
         result = await self.db.execute(select(LedgerAccount).where(LedgerAccount.address == user_address.lower()))
         ledger = result.scalar_one_or_none()
-        
-        cash_balance = ledger.balance if ledger else 0.0
-        locked_margin = ledger.locked_margin if ledger else 0.0
-        realized_pnl = ledger.realized_pnl if ledger else 0.0
+
+        force_mode = os.getenv("FORCE_EXECUTION_MODE", "auto").lower().strip()
+        if ledger:
+            realized_pnl = float(ledger.realized_pnl or 0.0)
+            if force_mode == "simulation":
+                initial_simulation_balance = float(
+                    os.getenv("INITIAL_SIMULATION_BALANCE", "1000")
+                )
+                cash_balance = initial_simulation_balance + realized_pnl
+            else:
+                cash_balance = float(ledger.balance or 0.0)
+            locked_margin = float(ledger.locked_margin or 0.0)
+        else:
+            cash_balance = 0.0
+            locked_margin = 0.0
+            realized_pnl = 0.0
         
         # 2. Get all open positions
         result = await self.db.execute(

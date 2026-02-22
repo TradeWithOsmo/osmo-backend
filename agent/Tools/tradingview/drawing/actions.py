@@ -58,12 +58,16 @@ def _normalize_points(points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for pt in points or []:
         if not isinstance(pt, dict):
             continue
-        time_value = pt.get("time", pt.get("timestamp", pt.get("ts")))
+        time_value = pt.get("time", pt.get("timestamp", pt.get("ts", pt.get("x"))))
         price_value = pt.get("price", pt.get("y"))
         if time_value is None or price_value is None:
             continue
         try:
-            normalized.append({"time": int(float(time_value)), "price": float(price_value)})
+            parsed_time = float(time_value)
+            # Accept unix milliseconds and normalize to seconds.
+            if parsed_time > 1_000_000_000_000:
+                parsed_time = parsed_time / 1000.0
+            normalized.append({"time": int(parsed_time), "price": float(price_value)})
         except (TypeError, ValueError):
             continue
     return normalized

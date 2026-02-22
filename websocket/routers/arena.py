@@ -65,7 +65,7 @@ def _build_order_metrics_subquery(window_start: datetime, window_end: datetime):
             ).label("win_count"),
         )
         .where(
-            Order.status == "filled",
+            func.lower(Order.status).in_(["filled", "confirmed"]),
             order_time >= window_start,
             order_time <= window_end,
         )
@@ -360,6 +360,9 @@ async def get_arena_leaderboard(
         )
         .order_by(
             pnl_expr.desc(),
+            roi_expr.desc(),
+            volume_expr.desc(),
+            win_rate_expr.desc(),
             active_pick_subq.c.user_address.asc(),
         )
         .offset(offset)
@@ -438,6 +441,8 @@ async def get_overall_leaderboard(
     volume_expr = func.coalesce(
         order_metrics_subq.c.volume, lb_metrics_subq.c.volume, 0.0
     )
+    # Arena points are now aligned to realized 7D PNL (primary ranking basis).
+    total_points_expr = pnl_expr
     trade_count_expr = func.coalesce(order_metrics_subq.c.trade_count, 0)
     win_count_expr = func.coalesce(order_metrics_subq.c.win_count, 0)
     roi_expr = (pnl_expr / ARENA_BASE_CAPITAL) * 100.0
@@ -452,7 +457,7 @@ async def get_overall_leaderboard(
     stmt = (
         select(
             users_subq.c.user_address,
-            func.coalesce(points_subq.c.total_points, 0.0).label("total_points"),
+            total_points_expr.label("total_points"),
             pnl_expr.label("pnl"),
             roi_expr.label("roi"),
             volume_expr.label("volume"),
@@ -470,7 +475,10 @@ async def get_overall_leaderboard(
             order_metrics_subq.c.user_address == users_subq.c.user_address,
         )
         .order_by(
-            func.coalesce(points_subq.c.total_points, 0.0).desc(),
+            pnl_expr.desc(),
+            roi_expr.desc(),
+            volume_expr.desc(),
+            win_rate_expr.desc(),
             users_subq.c.user_address.asc(),
         )
         .offset(offset)

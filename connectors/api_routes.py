@@ -100,6 +100,67 @@ def _get_mem0_connector(manager):
     return connector
 
 
+def _to_finite_number(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed != parsed:  # NaN
+        return None
+    if parsed in (float("inf"), float("-inf")):
+        return None
+    return parsed
+
+
+def _normalize_setup_trade_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(params or {})
+    side_raw = str(normalized.get("side") or "").strip().lower()
+    side = "short" if side_raw in {"short", "sell"} else "long"
+
+    entry = _to_finite_number(normalized.get("entry"))
+    sl = _to_finite_number(normalized.get("sl"))
+    tp = _to_finite_number(normalized.get("tp"))
+
+    validation = _to_finite_number(
+        normalized.get("gp") if normalized.get("gp") is not None else normalized.get("validation")
+    )
+    invalidation = _to_finite_number(
+        normalized.get("gl") if normalized.get("gl") is not None else normalized.get("invalidation")
+    )
+
+    if validation is None and tp is not None:
+        validation = tp
+    if invalidation is None and sl is not None:
+        invalidation = sl
+
+    if entry is not None:
+        if validation is not None and invalidation is not None:
+            if side == "long" and validation < entry < invalidation:
+                validation, invalidation = invalidation, validation
+            elif side == "short" and validation > entry > invalidation:
+                validation, invalidation = invalidation, validation
+
+        if side == "long":
+            if validation is not None and validation <= entry and tp is not None and tp > entry:
+                validation = tp
+            if invalidation is not None and invalidation >= entry and sl is not None and sl < entry:
+                invalidation = sl
+        else:
+            if validation is not None and validation >= entry and tp is not None and tp < entry:
+                validation = tp
+            if invalidation is not None and invalidation <= entry and sl is not None and sl > entry:
+                invalidation = sl
+
+    normalized["side"] = side
+    normalized["validation"] = validation
+    normalized["invalidation"] = invalidation
+    normalized["gp"] = validation
+    normalized["gl"] = invalidation
+    return normalized
+
+
 @router.post("/tradingview/commands")
 async def send_tradingview_command(
     cmd: CommandRequest,
@@ -114,7 +175,10 @@ async def send_tradingview_command(
     try:
         from connectors.tradingview import TradingViewConnector
         connector = TradingViewConnector({"redis_client": redis_client})
-        queued = await connector.queue_command(cmd.symbol, {"action": cmd.action, "params": cmd.params})
+        params = dict(cmd.params or {})
+        if str(cmd.action or "").strip().lower() == "setup_trade":
+            params = _normalize_setup_trade_params(params)
+        queued = await connector.queue_command(cmd.symbol, {"action": cmd.action, "params": params})
         if not queued:
             raise HTTPException(status_code=400, detail="Invalid tradingview command payload")
 

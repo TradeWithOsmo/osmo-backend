@@ -70,6 +70,25 @@ class LedgerService:
             if exists.scalar_one_or_none():
                 return
 
+            force_mode = os.getenv("FORCE_EXECUTION_MODE", "auto").lower().strip()
+            if force_mode == "simulation":
+                # In pure simulation mode, do not mutate simulation ledger balance
+                # with on-chain funding events. Keep it isolated from real vault balance.
+                history = FundingHistory(
+                    user_address=user_address.lower(),
+                    type="Deposit",
+                    asset="USDC",
+                    amount=amount,
+                    tx_hash=tx_hash,
+                    status="Completed",
+                )
+                session.add(history)
+                await session.commit()
+                print(
+                    f"[Ledger] Simulation mode: tracked on-chain deposit {amount} USDC for {user_address} without ledger balance mutation"
+                )
+                return
+
             # Update Balance
             account.balance += amount
             account.available_balance = account.balance - account.locked_margin
@@ -97,6 +116,25 @@ class LedgerService:
                 select(FundingHistory).where(FundingHistory.tx_hash == tx_hash)
             )
             if exists.scalar_one_or_none():
+                return
+
+            force_mode = os.getenv("FORCE_EXECUTION_MODE", "auto").lower().strip()
+            if force_mode == "simulation":
+                # In pure simulation mode, do not mutate simulation ledger balance
+                # with on-chain funding events. Keep it isolated from real vault balance.
+                history = FundingHistory(
+                    user_address=user_address.lower(),
+                    type="Withdraw",
+                    asset="USDC",
+                    amount=amount,
+                    tx_hash=tx_hash,
+                    status="Completed",
+                )
+                session.add(history)
+                await session.commit()
+                print(
+                    f"[Ledger] Simulation mode: tracked on-chain withdrawal {amount} USDC for {user_address} without ledger balance mutation"
+                )
                 return
 
             account.balance -= amount

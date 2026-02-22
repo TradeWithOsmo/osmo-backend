@@ -71,11 +71,93 @@ def _norm_indicator_token(value: Any) -> str:
     return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
 
 
+def _to_finite_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed != parsed:  # NaN
+        return None
+    if parsed in (float("inf"), float("-inf")):
+        return None
+    return parsed
+
+
+def _normalize_trade_tripwire_levels(
+    *,
+    side: str,
+    entry: Any,
+    sl: Any,
+    tp: Any,
+    validation: Any,
+    invalidation: Any,
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    Keep validation/invalidation aligned with side semantics:
+    - long: validation above entry, invalidation below entry
+    - short: validation below entry, invalidation above entry
+    """
+    side_norm = str(side or "").strip().lower()
+    is_long = side_norm in {"buy", "long"}
+    is_short = side_norm in {"sell", "short"}
+
+    entry_level = _to_finite_float(entry)
+    sl_level = _to_finite_float(sl)
+    tp_level = _to_finite_float(tp)
+    validation_level = _to_finite_float(validation)
+    invalidation_level = _to_finite_float(invalidation)
+
+    if validation_level is None and tp_level is not None:
+        validation_level = tp_level
+    if invalidation_level is None and sl_level is not None:
+        invalidation_level = sl_level
+
+    if entry_level is None or not (is_long or is_short):
+        return validation_level, invalidation_level
+
+    def _is_validation_ok(value: Optional[float]) -> bool:
+        if value is None:
+            return True
+        return value > entry_level if is_long else value < entry_level
+
+    def _is_invalidation_ok(value: Optional[float]) -> bool:
+        if value is None:
+            return True
+        return value < entry_level if is_long else value > entry_level
+
+    # If both were provided but clearly reversed around entry, swap once.
+    if validation_level is not None and invalidation_level is not None:
+        if is_long and validation_level < entry_level < invalidation_level:
+            validation_level, invalidation_level = invalidation_level, validation_level
+        elif is_short and validation_level > entry_level > invalidation_level:
+            validation_level, invalidation_level = invalidation_level, validation_level
+
+    if not _is_validation_ok(validation_level) and _is_validation_ok(tp_level):
+        validation_level = tp_level
+    if not _is_invalidation_ok(invalidation_level) and _is_invalidation_ok(sl_level):
+        invalidation_level = sl_level
+
+    return validation_level, invalidation_level
+
+
 def _timeframe_candidates(timeframe: str) -> List[str]:
     raw = str(timeframe or "").strip().upper().replace(" ", "")
     if not raw:
-        return ["1D"]
+        # Fallback sweep for cases where runtime context does not carry timeframe yet.
+        return ["15", "15M", "5", "5M", "1H", "60", "4H", "240", "1D", "D", "1W", "W"]
     mapping = {
+        "1": "1M",
+        "1M": "1",
+        "3": "3M",
+        "3M": "3",
+        "5": "5M",
+        "5M": "5",
+        "15": "15M",
+        "15M": "15",
+        "30": "30M",
+        "30M": "30",
         "60": "1H",
         "1H": "60",
         "240": "4H",
@@ -89,13 +171,26 @@ def _timeframe_candidates(timeframe: str) -> List[str]:
     out = [raw]
     if alt and alt not in out:
         out.append(alt)
+    # Add common canonical spellings so endpoint lookups are resilient.
+    if raw.endswith("M") and raw[:-1].isdigit():
+        compact = raw[:-1]
+        if compact not in out:
+            out.append(compact)
+    elif raw.isdigit():
+        expanded = f"{raw}M"
+        if expanded not in out:
+            out.append(expanded)
+    # Last-resort scan candidates.
+    for tf in ("15", "15M", "5", "5M", "1H", "60", "4H", "240", "1D", "D"):
+        if tf not in out:
+            out.append(tf)
     return out
 
 
 async def verify_indicator_present(
     symbol: str,
     name: str,
-    timeframe: str = "1D",
+    timeframe: str = "",
     timeout_sec: float = 6.0,
     poll_interval_sec: float = 0.25,
 ) -> Dict[str, Any]:
@@ -197,7 +292,7 @@ async def add_indicator(
     symbol: str,
     name: str,
     inputs: Dict[str, Any] = None,
-    force_overlay: bool = True,
+    force_overlay: bool = False,
     write_txn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
     tv_name = _INDICATOR_NAME_MAP.get(name, name)
@@ -207,7 +302,8 @@ async def add_indicator(
         params={
             "name": tv_name,
             "inputs": inputs or {},
-            "forceOverlay": force_overlay,
+            # Force overlay is intentionally disabled to keep indicator panes clean.
+            "forceOverlay": False,
             "write_txn_id": write_txn_id,
         },
         mode="write",
@@ -340,8 +436,16 @@ async def setup_trade(
     write_txn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     normalized_side = str(side or "").lower()
-    validation_level = gp if gp is not None else validation
-    invalidation_level = gl if gl is not None else invalidation
+    validation_level_raw = gp if gp is not None else validation
+    invalidation_level_raw = gl if gl is not None else invalidation
+    validation_level, invalidation_level = _normalize_trade_tripwire_levels(
+        side=normalized_side,
+        entry=entry,
+        sl=sl,
+        tp=tp,
+        validation=validation_level_raw,
+        invalidation=invalidation_level_raw,
+    )
     expected: Dict[str, Any] = {"symbol": symbol, "side": normalized_side}
     if validation_level is not None:
         expected["validation"] = validation_level

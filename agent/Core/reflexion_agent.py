@@ -81,7 +81,7 @@ ANALYSIS_WORKFLOW_TOOLS = [
 ]
 
 # Default indicator set a professional trader adds first
-DEFAULT_INDICATORS = ["RSI", "MACD", "Bollinger Bands", "EMA"]
+DEFAULT_INDICATORS = ["RSI", "MACD"]
 
 # Tools worth contextual quality review even when execution is technically OK.
 CONTEXTUAL_REVIEW_TOOLS = {
@@ -193,6 +193,12 @@ Before doing ANYTHING else you MUST explore your toolset:
 
 Only AFTER these two calls may you proceed. A professional knows their instruments.
 
+MANDATORY INDICATOR EXECUTION RULES:
+  - Keep MAX 2 active non-volume indicators on chart.
+  - Before adding another indicator, remove one existing indicator first.
+  - If switching to a different indicator set, remove old indicators immediately.
+  - Never force-overlay indicators onto the price pane.
+
 ════════════════════════════════════════════════════════════════
   PHASE 1 — HUMAN-LIKE ANALYSIS WORKFLOW
 ════════════════════════════════════════════════════════════════
@@ -224,11 +230,11 @@ When asked to analyse a market, follow this EXACT human-trader mental sequence:
 ┌─ STEP 5: CONFIGURE CHART  ────────────────────────────────────
 │ "Set up the chart like a professional would."
 │  → set_timeframe(symbol, timeframe)
-│  → add_indicator(symbol, "RSI")                ← momentum gauge
-│  → add_indicator(symbol, "MACD")               ← trend confirmation
-│  → add_indicator(symbol, "Bollinger Bands")     ← volatility envelope
-│  → add_indicator(symbol, "EMA", inputs={"period": 21}) ← dynamic support
-│  → get_active_indicators(symbol)               ← verify all added
+│  → get_active_indicators(symbol, timeframe)     ← read current chart indicators
+│  → remove_indicator(symbol, "<old_indicator>")  ← if already at 2 and need a new one
+│  → add_indicator(symbol, "RSI")                 ← momentum gauge
+│  → add_indicator(symbol, "MACD")                ← trend confirmation
+│  → get_active_indicators(symbol, timeframe)     ← verify final count <= 2
 └────────────────────────────────────────────────────────────────
 
 ┌─ STEP 6: DRAW FINDINGS  ──────────────────────────────────────
@@ -313,6 +319,91 @@ def _trim_result_for_context(result: Any, max_chars: int = 2000) -> str:
         return text
     # Truncate and note it
     return text[:max_chars] + f"…[truncated, total {len(text)} chars]"
+
+
+def _format_tool_signature(tool_name: str, args: Dict[str, Any]) -> str:
+    name = str(tool_name or "").strip() or "unknown_tool"
+    if not isinstance(args, dict) or not args:
+        return f"{name}()"
+
+    parts: List[str] = []
+    for idx, (key, value) in enumerate(args.items()):
+        if idx >= 6:
+            parts.append("...")
+            break
+        raw = _safe_json_dumps(value)
+        if len(raw) > 48:
+            raw = raw[:45] + "..."
+        parts.append(f"{key}={raw}")
+    return f"{name}({', '.join(parts)})"
+
+
+def _normalize_reasoning_effort(value: Any) -> Optional[str]:
+    raw = str(value or "").strip().lower()
+    if raw in {"low", "medium", "high"}:
+        return raw
+    return None
+
+
+def _reasoning_request_fields(reasoning_effort: Any) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"include_reasoning": True}
+    effort = _normalize_reasoning_effort(reasoning_effort)
+    if effort:
+        payload["reasoning"] = {"effort": effort}
+    return payload
+
+
+def _normalize_text(text: Any) -> str:
+    return " ".join(str(text or "").split()).strip()
+
+
+def _extract_reasoning_texts(value: Any) -> List[str]:
+    results: List[str] = []
+    seen: set[str] = set()
+
+    def _append(raw: Any) -> None:
+        text = _normalize_text(raw)
+        if not text:
+            return
+        key = text.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        results.append(text)
+
+    def _walk(node: Any) -> None:
+        if node is None:
+            return
+        if isinstance(node, str):
+            _append(node)
+            return
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+
+        for key in (
+            "reasoning",
+            "reasoning_content",
+            "reasoning_text",
+            "reasoning_details",
+            "thinking",
+            "analysis",
+            "summary",
+        ):
+            if key in node:
+                _walk(node.get(key))
+
+        node_type = str(node.get("type") or "").strip().lower()
+        if node_type in {"reasoning", "reasoning_text", "thinking"}:
+            for key in ("text", "content", "summary", "details", "value"):
+                if key in node:
+                    _walk(node.get(key))
+
+    _walk(value)
+    return results
 
 
 def _extract_symbols_from_message(message: str) -> List[str]:
@@ -451,6 +542,47 @@ def _extract_symbols_from_message(message: str) -> List[str]:
             if full not in found:
                 found.append(full)
     return found[:5]  # cap at 5
+
+
+def _thought_from_reflexion_event(
+    event_type: str, data: str, index: int
+) -> Optional[Dict[str, Any]]:
+    text = str(data or "").strip()
+    if not text:
+        return None
+
+    kind = str(event_type or "").strip().lower()
+    if kind == "thinking":
+        return {
+            "type": "thinking",
+            "title": f"Thinking {index}",
+            "content": text,
+            "status": "done",
+        }
+    if kind == "tool_call":
+        return {
+            "type": "tool_call",
+            "title": f"Tool Call {index}",
+            "content": text,
+            "status": "done",
+        }
+    if kind == "tool_result":
+        upper = text.upper()
+        status = "failed" if ("ERROR" in upper or "FAILED" in upper) else "done"
+        return {
+            "type": "tool_result",
+            "title": f"Tool Result {index}",
+            "content": text,
+            "status": status,
+        }
+    if kind == "reflection":
+        return {
+            "type": "reasoning",
+            "title": f"Reflexion {index}",
+            "content": text,
+            "status": "done",
+        }
+    return None
 
 
 def _infer_timeframe_from_message(message: str) -> str:
@@ -649,6 +781,7 @@ class ReflexionAgent:
         model_id: str,
         tool_states: Optional[Dict[str, Any]] = None,
         user_context: Optional[Dict[str, Any]] = None,
+        reasoning_effort: Optional[str] = None,
         temperature: float = 0.7,
         max_iterations: int = 12,
         max_retries_per_tool: int = 2,
@@ -656,7 +789,18 @@ class ReflexionAgent:
         self.model_id = self._clean_model_id(model_id)
         self.tool_states = dict(tool_states or {})
         self.user_context = dict(user_context or {})
+        # Backward-compatible aliases used by older helper paths.
+        self._tool_states = self.tool_states
+        self._user_context = self.user_context
         self.temperature = float(temperature)
+        inferred_effort = (
+            self.tool_states.get("reasoning_effort")
+            if isinstance(self.tool_states, dict)
+            else None
+        )
+        self.reasoning_effort = _normalize_reasoning_effort(
+            reasoning_effort or inferred_effort
+        )
         self.max_iterations = max(1, min(int(max_iterations), 20))
         self.max_retries_per_tool = max(0, min(int(max_retries_per_tool), 3))
         self.contextual_eval_enabled = self._state_bool(
@@ -869,6 +1013,43 @@ class ReflexionAgent:
         content = REFLEXION_SYSTEM_PROMPT
         if ctx_block:
             content += f"\n\n<agent_context>\n{ctx_block}\n</agent_context>"
+
+        conversation_style = " ".join(
+            str(self.tool_states.get("conversation_style") or "").split()
+        ).strip()
+        trading_style_profile = " ".join(
+            str(
+                self.tool_states.get("trading_style")
+                or self.tool_states.get("trading_style_profile")
+                or ""
+            ).split()
+        ).strip()
+        trading_style_prompt = " ".join(
+            str(self.tool_states.get("trading_style_prompt") or "").split()
+        ).strip()
+        if len(trading_style_prompt) > 800:
+            trading_style_prompt = trading_style_prompt[:797] + "..."
+
+        style_lines: List[str] = []
+        if conversation_style:
+            style_lines.append(f"conversation_style={conversation_style}")
+        if trading_style_profile and trading_style_profile.lower() not in {
+            "off",
+            "none",
+            "default",
+        }:
+            style_lines.append(f"trading_style_profile={trading_style_profile}")
+        if trading_style_prompt:
+            style_lines.append(f"trading_style_prompt={trading_style_prompt}")
+
+        if style_lines:
+            content += (
+                "\n\n<style_context>\n"
+                + "\n".join(style_lines)
+                + "\n</style_context>\n\n"
+                + "Apply style_context for analysis tone and structure only. "
+                + "Do not mention style profile names in final answer unless explicitly requested."
+            )
         return SystemMessage(content=content)
 
     def _lc_history_to_openrouter(
@@ -924,6 +1105,7 @@ class ReflexionAgent:
             "messages": messages,
             "temperature": self.temperature,
         }
+        body.update(_reasoning_request_fields(self.reasoning_effort))
         if tools_payload:
             body["tools"] = tools_payload
             body["tool_choice"] = "auto"
@@ -1063,6 +1245,10 @@ class ReflexionAgent:
         result = (
             raw_result.get("result") if isinstance(raw_result, dict) else raw_result
         )
+        timeframe_arg = str(args.get("timeframe") or "").strip()
+        if symbol and timeframe_arg:
+            ctx = state.get_or_create_symbol(symbol)
+            ctx.timeframe = timeframe_arg
 
         if tool_name == "get_price" and symbol:
             if isinstance(result, dict):
@@ -1088,6 +1274,16 @@ class ReflexionAgent:
         elif tool_name == "get_active_indicators" and symbol:
             if isinstance(result, dict):
                 state.ingest_indicators_result(symbol, result)
+                payload_data = result.get("data", {}) if isinstance(result, dict) else {}
+                result_tf = str(
+                    payload_data.get("timeframe")
+                    or result.get("timeframe")
+                    or timeframe_arg
+                    or ""
+                ).strip()
+                if result_tf:
+                    ctx = state.get_or_create_symbol(symbol)
+                    ctx.timeframe = result_tf
 
         elif tool_name == "add_indicator" and symbol:
             ind_name = str(args.get("name") or "")
@@ -1105,6 +1301,12 @@ class ReflexionAgent:
                 state.set_active_symbol(target)
                 state.advance_phase(AnalysisPhase.PRICE_CONTEXT)
                 logger.info("[ReflexionAgent] Switched active symbol → %s", target)
+
+        elif tool_name == "set_timeframe" and symbol:
+            tf = str(args.get("timeframe") or "").strip()
+            if tf:
+                ctx = state.get_or_create_symbol(symbol)
+                ctx.timeframe = tf
 
         elif tool_name == "list_supported_draw_tools":
             if isinstance(result, dict):
@@ -1256,9 +1458,26 @@ class ReflexionAgent:
             indicator_name = str(tool_args.get("name") or "").strip()
             if symbol and indicator_name:
                 verify_args: Dict[str, Any] = {"symbol": symbol, "name": indicator_name}
+                state_tf = (
+                    state.active_ctx.timeframe
+                    if state.active_ctx and str(state.active_ctx.timeframe or "").strip()
+                    else ""
+                )
+                tool_states_tf = ""
+                if isinstance(self.tool_states, dict):
+                    raw_tf = self.tool_states.get("timeframe")
+                    if isinstance(raw_tf, list):
+                        for item in raw_tf:
+                            cand = str(item or "").strip()
+                            if cand:
+                                tool_states_tf = cand
+                                break
+                    else:
+                        tool_states_tf = str(raw_tf or "").strip()
                 timeframe = str(
                     tool_args.get("timeframe")
-                    or (state.active_ctx.timeframe if state.active_ctx else "")
+                    or state_tf
+                    or tool_states_tf
                     or ""
                 ).strip()
                 if timeframe:
@@ -1388,15 +1607,28 @@ class ReflexionAgent:
 
         # ---- PHASE 0: Tool Discovery ----
         if not state.capabilities.explored:
-            _emit("thinking", "🔍 Exploring available tools (draw tools + indicators)…")
+            _emit("tool_call", "calling list_supported_draw_tools()...")
+            _emit("tool_call", "calling list_supported_indicator_aliases()...")
             await self._run_tool_discovery(state)
+            draw_preview = ", ".join(state.capabilities.draw_tools[:8]) or "none"
+            ind_preview = ", ".join(state.capabilities.indicator_aliases[:12]) or "none"
             _emit(
-                "thinking",
-                f"✅ Discovered {len(state.capabilities.draw_tools)} draw tools "
-                f"and {len(state.capabilities.indicator_aliases)} indicator aliases.",
+                "tool_result",
+                (
+                    "result list_supported_draw_tools(): "
+                    f"{len(state.capabilities.draw_tools)} tools -> {draw_preview}"
+                ),
+            )
+            _emit(
+                "tool_result",
+                (
+                    "result list_supported_indicator_aliases(): "
+                    f"{len(state.capabilities.indicator_aliases)} aliases -> {ind_preview}"
+                ),
             )
 
         final_content = ""
+        seen_model_reasoning: set[str] = set()
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             for iteration in range(self.max_iterations):
@@ -1420,6 +1652,26 @@ class ReflexionAgent:
                 except Exception as exc:
                     logger.error("[ReflexionAgent] OpenRouter call failed: %s", exc)
                     return f"⚠️ LLM call failed: {exc}"
+
+                choices = completion.get("choices") or []
+                message = choices[0].get("message", {}) if choices else {}
+                reasoning_texts = _extract_reasoning_texts(
+                    [
+                        completion.get("reasoning"),
+                        completion.get("reasoning_details"),
+                        choices[0].get("reasoning", {}) if choices else {},
+                        message.get("reasoning"),
+                        message.get("reasoning_content"),
+                        message.get("thinking"),
+                    ]
+                )
+                for rtext in reasoning_texts:
+                    key = rtext.lower()
+                    if key in seen_model_reasoning:
+                        continue
+                    seen_model_reasoning.add(key)
+                    display = rtext if len(rtext) <= 700 else (rtext[:697] + "...")
+                    _emit("thinking", display)
 
                 tool_calls = self._extract_tool_calls(completion)
                 text_content = self._extract_text_content(completion)
@@ -1459,7 +1711,7 @@ class ReflexionAgent:
                     tool_name = canonicalize_tool_name(_normalize_tool_name(raw_name))
                     _emit(
                         "tool_call",
-                        f"🔧 Calling `{tool_name}` → {_safe_json_dumps(raw_args)[:200]}",
+                        f"calling {_format_tool_signature(tool_name, raw_args)}...",
                     )
 
                     # ----- ACT -----
@@ -1479,7 +1731,7 @@ class ReflexionAgent:
                     )
                     _emit(
                         "tool_result",
-                        f"  ↳ [{status.value.upper()}] {note} ({elapsed:.0f}ms)",
+                        f"result: {status.value.upper()} - {note} ({elapsed:.0f}ms)",
                     )
 
                     if status == ActionStatus.GOOD:
@@ -1495,7 +1747,7 @@ class ReflexionAgent:
                             status, note, fix_hint = contextual
                             _emit(
                                 "tool_result",
-                                f"  [CONTEXT {status.value.upper()}] {note}",
+                                f"context review: {status.value.upper()} - {note}",
                             )
 
                     retry_count = 0
@@ -1509,7 +1761,7 @@ class ReflexionAgent:
                             + (f"Fix: {fix_hint}" if fix_hint else "Adjusting params.")
                         )
                         state.add_reflection(reflection)
-                        _emit("reflection", f"  ♻️ Reflexion: {reflection}")
+                        _emit("reflection", f"reflexion: {reflection}")
 
                         # Build fixed args
                         fixed_args = self._evaluator.apply_fix_to_args(
@@ -1518,8 +1770,8 @@ class ReflexionAgent:
 
                         _emit(
                             "tool_call",
-                            f"  🔄 Retry #{retry_count + 1} `{tool_name}` → "
-                            f"{_safe_json_dumps(fixed_args)[:200]}",
+                            f"retry #{retry_count + 1}: calling "
+                            f"{_format_tool_signature(tool_name, fixed_args)}...",
                         )
 
                         exec_result = await self._executor.execute(
@@ -1550,7 +1802,7 @@ class ReflexionAgent:
 
                         _emit(
                             "tool_result",
-                            f"  ↳ Retry [{status.value.upper()}] {note}",
+                            f"retry result: {status.value.upper()} - {note}",
                         )
 
                         if status == ActionStatus.GOOD:
@@ -1636,10 +1888,31 @@ class ReflexionAgent:
         )
 
         collected_chunks: List[str] = []
+        collected_thoughts: List[Dict[str, Any]] = []
+        seen_thoughts: set[Tuple[str, str]] = set()
+        max_collected_thoughts = 120
 
         def _collect(event_type: str, data: str) -> None:
             if event_type == "content":
                 collected_chunks.append(data)
+                return
+
+            if len(collected_thoughts) >= max_collected_thoughts:
+                return
+
+            item = _thought_from_reflexion_event(
+                event_type=event_type,
+                data=data,
+                index=len(collected_thoughts) + 1,
+            )
+            if not item:
+                return
+
+            identity = (str(item.get("type") or ""), str(item.get("content") or ""))
+            if identity in seen_thoughts:
+                return
+            seen_thoughts.add(identity)
+            collected_thoughts.append(item)
 
         response = await self._reflexion_loop(
             user_message=user_message,
@@ -1656,6 +1929,7 @@ class ReflexionAgent:
             "response": response,
             "state_summary": state.summary(),
             "tool_calls": state.step_counter,
+            "thoughts": collected_thoughts,
         }
 
     # ------------------------------------------------------------------

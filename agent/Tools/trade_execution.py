@@ -19,6 +19,23 @@ def _parse_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+def _normalize_order_type(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace(" ", "_")
+    aliases = {
+        "mkt": "market",
+        "market_order": "market",
+        "limit_order": "limit",
+        "stop": "stop_market",
+        "stoploss": "stop_market",
+        "stop_loss": "stop_market",
+        "stoplimit": "stop_limit",
+    }
+    normalized = aliases.get(raw, raw)
+    if normalized not in {"market", "limit", "stop_market", "stop_limit"}:
+        return "market"
+    return normalized
+
+
 async def place_order(
     symbol: str,
     side: str,
@@ -89,6 +106,21 @@ async def place_order(
     execution_enabled = _parse_bool(tool_states.get("execution"), default=False)
     can_auto_execute = policy_mode == "auto_exec" and execution_enabled
 
+    requested_order_type = _normalize_order_type(order_type)
+    prefer_market_orders = _parse_bool(
+        tool_states.get("prefer_market_orders"), default=True
+    )
+    allow_non_market_orders = _parse_bool(
+        tool_states.get("allow_non_market_orders"), default=False
+    )
+    normalized_order_type = requested_order_type
+    if prefer_market_orders and not allow_non_market_orders:
+        normalized_order_type = "market"
+    if normalized_order_type == "market":
+        # Prevent accidental pending orders when a stale limit/stop price is provided.
+        price = None
+        stop_price = None
+
     # Hard gate: if execution tools are disabled, block order placement entirely.
     # Frontend uses the "Auto Execution" toggle to control this.
     if not execution_enabled:
@@ -133,7 +165,7 @@ async def place_order(
         "side": side,
         "amount_usd": float(amount_usd),
         "leverage": int(leverage),
-        "order_type": order_type,
+        "order_type": normalized_order_type,
         "exchange": resolved_exchange,
         "reduce_only": bool(reduce_only),
         "post_only": bool(post_only),
