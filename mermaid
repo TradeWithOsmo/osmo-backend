@@ -1,146 +1,68 @@
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'fontFamily': 'Inter, system-ui, sans-serif',
-    'fontSize': '12px',
-    'primaryColor': 'transparent',
-    'primaryTextColor': '#c9d1d9',
-    'primaryBorderColor': '#30363d',
-    'lineColor': '#8b949e',
-    'secondaryColor': '#0d1117',
-    'tertiaryColor': '#161b22',
-    'mainBkg': 'transparent',
-    'nodeBorder': '#30363d',
-    'clusterBkg': 'transparent',
-    'clusterBorder': '#484f58',
-    'edgeLabelBackground':'#0d1117'
-  }
-}}%%
+# OSMO Mermaid Architecture Docs
 
-flowchart TD
-    subgraph USER["USER"]
-        U["USER"]
-        W["WALLET"]
-    end
+This folder contains architecture diagrams and a codebase snapshot for the OSMO trading stack.
 
-    subgraph DEPOSIT["DEPOSIT"]
-        APP["ERC20 APPROVE"]
-        DEPREQ["DEPOSIT REQUEST"]
-        CHOOSE{"VAULT TYPE?"}
-    end
+## Repositories
 
-    subgraph VAULT1["TRADING VAULT"]
-        VT["TRADING VAULT"]
-        BALT["COLLATERAL BALANCE"]
-        WDRT["WITHDRAW TRADING"]
-    end
+| Layer | Repo | Local Folder |
+| --- | --- | --- |
+| Frontend | https://github.com/TradeWithOsmo/osmo-web | `v1-web` |
+| Backend | https://github.com/TradeWithOsmo/osmo-backend | `backend` |
+| Smart Contracts | https://github.com/TradeWithOsmo/osmo-contracts | `contracts` |
 
-    subgraph VAULT2["CREDIT VAULT"]
-        VC["CREDIT VAULT"]
-        BALC["CREDIT BALANCE"]
-        WDRC["WITHDRAW CREDIT"]
-    end
+## Codebase Snapshot
 
-    subgraph HUB["OSMO HUB"]
-        OSMOHUB["CENTRAL REGISTRY"]
-        MODREG["MODULE REGISTRY"]
-    end
+### 1) Frontend (`v1-web`)
+- Stack: React 19 + TypeScript + Vite.
+- Main pages: Trade, Portfolio, Arena, Leaderboard, Usage, Faucet.
+- Key modules:
+  - `src/charting/` (TradingView chart integration, command handlers, datafeeds)
+  - `src/api/` (onchain, orders, portfolio, leaderboard, agent, usage services)
+  - `src/components/Autos/` (AI chat interface and workspace)
+  - `src/contracts/abis/` (ABI bindings for on-chain modules)
+- Typical run:
+  - `npm run dev`
+  - `npm run build`
 
-    subgraph MODULES["CONTRACT MODULES"]
-        RISKMOD["RISK MODULE"]
-        TRADEMOD["TRADING MODULE"]
-        ORACLEMOD["ORACLE MODULE"]
-        FEEMOD["FEE MODULE"]
-        SESSIONMOD["SESSION MODULE"]
-    end
+### 2) Backend (`backend`)
+- Stack: Python services with agent runtime + websocket API service.
+- Main services:
+  - `backend/websocket/` (API routers, market data, ledger, leaderboard, chat, arena services)
+  - `backend/agent/` (tool orchestration, reasoning runtime, TradingView tools, trade/data tools)
+- Includes:
+  - connector pipelines (Hyperliquid/Ostium),
+  - candle/history services,
+  - AI tool routing and runtime safety gates.
 
-    subgraph TRADING["TRADING"]
-        MAN["MANUAL TRADE"]
-        AUTO["AI TRADE"]
-    end
+### 3) Smart Contracts (`contracts`)
+- Stack: Foundry-based Solidity project.
+- Main modules:
+  - core hub: `src/core/OsmoHub.sol`
+  - trading: vault, order router, position manager, adapters
+  - risk + security modules
+  - fees + AI credit vault
+  - oracle + symbol registry
+  - arena modules (`ArenaChooseSide`, `ArenaPoints`, `ArenaSecurity`)
+- Config highlights:
+  - `foundry.toml` uses `src/`, `out/`, `lib/`
+  - CI profile for fuzz and invariant testing.
 
-    subgraph EXECUTION["EXECUTION"]
-        ORDER["ORDER BUILDER"]
-        TX["TX QUEUE"]
-    end
+## Diagram Index
 
-    subgraph ONCHAIN["ONCHAIN"]
-        PM["POSITION MANAGER"]
-        ADP1["CORE ADAPTER"]
-        ADP2["HYPERLIQUID ADAPTER"]
-        ADP3["OSTIUM ADAPTER"]
-    end
+- `AI-Architecture.mmd`
+  - Agent orchestration flow: prompt -> reasoning/action -> tools -> model router -> output.
+  - Shows permission gates (write/execute), style routing, and docker/runtime components.
 
-    subgraph ARENA["ARENA SYSTEM"]
-        CHOOSESIDE["CHOOSE SIDE"]
-        POINTS["POINTS"]
-        SECURITY["SECURITY"]
-    end
+- `SC-Architecture.mmd`
+  - End-to-end on-chain flow: deposit -> vault split -> hub/modules -> execution -> positions -> arena points -> withdraw.
+  - Shows contract module relationships and infra dependencies.
 
-    subgraph RESULT["RESULT"]
-        POS["POSITIONS"]
-        RCPT["RECEIPT"]
-    end
+- `Competitive-Positioning.mmd`
+  - Quadrant map comparing OSMO vs other venues by:
+    - X-axis: discretionary trading -> capital efficiency
+    - Y-axis: manual interface -> AI-augmented trading
 
-    subgraph WITHDRAW["WITHDRAW"]
-        WDRREQ["WITHDRAW REQUEST"]
-        WDRTX["WITHDRAW TX"]
-        WDRCONF["CONFIRMATION"]
-    end
+## Notes
 
-    subgraph DOCKER["DOCKER INFRASTRUCTURE"]
-        FOUNDRY["FOUNDRY CONTAINER"]
-        BACKEND["BACKEND CONTAINER"]
-        INDEXER["INDEXER/SYNC"]
-    end
-
-    U --> W --> APP --> DEPREQ --> CHOOSE
-
-    CHOOSE -->|TRADING| VT --> BALT
-    CHOOSE -->|CREDIT| VC --> BALC
-
-    BALT --> MAN
-    BALC --> AUTO
-
-    MAN --> OSMOHUB
-    AUTO --> OSMOHUB
-
-    OSMOHUB --> MODREG
-    MODREG --> RISKMOD & TRADEMOD & ORACLEMOD & FEEMOD & SESSIONMOD
-
-    RISKMOD --> ORDER
-    TRADEMOD --> ORDER
-    ORACLEMOD --> ORDER
-    FEEMOD --> ORDER
-    SESSIONMOD --> ORDER
-
-    ORDER --> TX
-
-    TX --> PM
-    PM --> ADP1 & ADP2 & ADP3
-
-    ADP1 --> POS
-    ADP2 --> POS
-    ADP3 --> POS
-
-    POS --> RCPT
-    POS -.-> CHOOSESIDE
-    CHOOSESIDE --> POINTS --> SECURITY
-
-    BALT -.-> WDRT --> WDRREQ
-    BALC -.-> WDRC --> WDRREQ
-    WDRREQ --> WDRTX --> WDRCONF
-
-    FOUNDRY -.-> VT & VC & OSMOHUB & PM
-    BACKEND -.-> INDEXER
-    INDEXER -.-> BALT & BALC
-
-    classDef main fill:#161b22,stroke:#30363d,color:#c9d1d9,stroke-width:1px;
-    classDef group fill:transparent,stroke:#484f58,color:#8b949e,stroke-width:1px,stroke-dasharray: 5 5;
-    classDef highlight fill:#238636,stroke:#3fb950,color:#ffffff,stroke-width:2px;
-
-    class U,W,APP,DEPREQ,CHOOSE,VT,BALT,WDRT,VC,BALC,WDRC,OSMOHUB,MODREG,RISKMOD,TRADEMOD,ORACLEMOD,FEEMOD,SESSIONMOD,MAN,AUTO,ORDER,TX,PM,ADP1,ADP2,ADP3,CHOOSESIDE,POINTS,SECURITY,POS,RCPT,WDRREQ,WDRTX,WDRCONF,FOUNDRY,BACKEND,INDEXER main;
-    class USER,DEPOSIT,VAULT1,VAULT2,HUB,MODULES,TRADING,EXECUTION,ONCHAIN,ARENA,RESULT,WITHDRAW,DOCKER group;
-    class PM,VT,VC highlight;
-
-    linkStyle default stroke:#8b949e,stroke-width:1px;
+- This README is a living overview for architecture-level communication.
+- Update this file when module ownership, service boundaries, or repo structure changes.
