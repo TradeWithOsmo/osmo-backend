@@ -1,68 +1,158 @@
-# OSMO Mermaid Architecture Docs
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Inter, system-ui, sans-serif',
+    'fontSize': '12px',
+    'primaryColor': 'transparent',
+    'primaryTextColor': '#c9d1d9',
+    'primaryBorderColor': '#30363d',
+    'lineColor': '#8b949e',
+    'secondaryColor': '#0d1117',
+    'tertiaryColor': '#161b22',
+    'mainBkg': 'transparent',
+    'nodeBorder': '#30363d',
+    'clusterBkg': 'transparent',
+    'clusterBorder': '#484f58',
+    'edgeLabelBackground':'#0d1117'
+  }
+}}%%
 
-This folder contains architecture diagrams and a codebase snapshot for the OSMO trading stack.
+flowchart TD
+    subgraph INPUT["INPUT"]
+        USER["USER PROMPT"]
+        FE["FRONTEND"]
+    end
 
-## Repositories
+    subgraph EVAL["EVALUATOR AGENT"]
+        ORCH["ORCHESTRATOR"]
+        GEN["GENERATOR"]
+        EVALUATE["EVALUATOR"]
+        OBS["OBSERVE"]
+    end
 
-| Layer | Repo | Local Folder |
-| --- | --- | --- |
-| Frontend | https://github.com/TradeWithOsmo/osmo-web | `v1-web` |
-| Backend | https://github.com/TradeWithOsmo/osmo-backend | `backend` |
-| Smart Contracts | https://github.com/TradeWithOsmo/osmo-contracts | `contracts` |
+    subgraph GATES["PERMISSION GATES"]
+        GWRITE{"ENABLE WRITE?"}
+        GEXEC{"ENABLE EXECUTION?"}
+    end
 
-## Codebase Snapshot
+    subgraph FTOOLS["FRONTEND TOOLS"]
+        HINT["HINT/INDICATOR"]
+        TF["TIMEFRAME"]
+        ATTACH["ATTACHMENT"]
+        PHOTO["PHOTO/DOC"]
+        TVWRITE["TV WRITE/ADD/GET/NAV"]
+        MKTORDER["MARKET ORDER"]
+    end
 
-### 1) Frontend (`v1-web`)
-- Stack: React 19 + TypeScript + Vite.
-- Main pages: Trade, Portfolio, Arena, Leaderboard, Usage, Faucet.
-- Key modules:
-  - `src/charting/` (TradingView chart integration, command handlers, datafeeds)
-  - `src/api/` (onchain, orders, portfolio, leaderboard, agent, usage services)
-  - `src/components/Autos/` (AI chat interface and workspace)
-  - `src/contracts/abis/` (ABI bindings for on-chain modules)
-- Typical run:
-  - `npm run dev`
-  - `npm run build`
+    subgraph STYLES["AI STYLES"]
+        SSTYLE{"STYLE TYPE?"}
+        CONV["CONVERSATION"]
+        TSTYLE["TRADING STYLE"]
+        JESSE["JESSE LIVERMORE"]
+        DARVAS["NICOLAS DARVAS"]
+        OTHERS["OTHERS"]
+    end
 
-### 2) Backend (`backend`)
-- Stack: Python services with agent runtime + websocket API service.
-- Main services:
-  - `backend/websocket/` (API routers, market data, ledger, leaderboard, chat, arena services)
-  - `backend/agent/` (tool orchestration, reasoning runtime, TradingView tools, trade/data tools)
-- Includes:
-  - connector pipelines (Hyperliquid/Ostium),
-  - candle/history services,
-  - AI tool routing and runtime safety gates.
+    subgraph BTOOLS["BACKEND TOOLS"]
+        WEB["WEB SEARCH"]
+        MEM["MEMORY"]
+        TVAPI["TRADINGVIEW API"]
+        ENABLE{"ENABLED?"}
+    end
 
-### 3) Smart Contracts (`contracts`)
-- Stack: Foundry-based Solidity project.
-- Main modules:
-  - core hub: `src/core/OsmoHub.sol`
-  - trading: vault, order router, position manager, adapters
-  - risk + security modules
-  - fees + AI credit vault
-  - oracle + symbol registry
-  - arena modules (`ArenaChooseSide`, `ArenaPoints`, `ArenaSecurity`)
-- Config highlights:
-  - `foundry.toml` uses `src/`, `out/`, `lib/`
-  - CI profile for fuzz and invariant testing.
+    subgraph CONNECTORS["DATA CONNECTORS"]
+        HL["HYPERLIQUID"]
+        OST["OSTIUM"]
+        CHAIN["CHAINLINK"]
+        DUNE["DUNE"]
+    end
 
-## Diagram Index
+    subgraph KNOWLEDGE["KNOWLEDGE BASE"]
+        QDRANT["QDRANT VECTOR DB"]
+        EMBED["EMBEDDINGS"]
+        KB["KNOWLEDGE DOCS"]
+    end
 
-- `AI-Architecture.mmd`
-  - Agent orchestration flow: prompt -> reasoning/action -> tools -> model router -> output.
-  - Shows permission gates (write/execute), style routing, and docker/runtime components.
+    subgraph CONFIG["CONFIGURATION"]
+        MAXCALL["MAX TOOLS CALL"]
+        LIMIT["LIMIT CHAIN"]
+    end
 
-- `SC-Architecture.mmd`
-  - End-to-end on-chain flow: deposit -> vault split -> hub/modules -> execution -> positions -> arena points -> withdraw.
-  - Shows contract module relationships and infra dependencies.
+    subgraph MODELS["MODELS"]
+        ROUTER["MODEL ROUTER"]
+        OR["OPENROUTER"]
+        GPT["GPT-4"]
+        CLAUDE["CLAUDE"]
+        OTHER["OTHERS"]
+    end
 
-- `Competitive-Positioning.mmd`
-  - Quadrant map comparing OSMO vs other venues by:
-    - X-axis: discretionary trading -> capital efficiency
-    - Y-axis: manual interface -> AI-augmented trading
+    subgraph DOCKER["DOCKER SERVICES"]
+        BACKEND["BACKEND API"]
+        REDIS["REDIS CACHE"]
+        POSTGRES["POSTGRESQL"]
+        MEM0["MEM0 SERVICE"]
+        INNGEST["INNGEST WORKER"]
+    end
 
-## Notes
+    subgraph OUTPUT["OUTPUT"]
+        RESULT["RESULT"]
+        PLAN["TRADING PLAN"]
+    end
 
-- This README is a living overview for architecture-level communication.
-- Update this file when module ownership, service boundaries, or repo structure changes.
+    USER --> FE --> ORCH
+    ORCH --> GEN --> EVALUATE
+
+    EVALUATE --> SSTYLE
+    SSTYLE -->|CONVERSATION| CONV --> GEN
+    SSTYLE -->|TRADING| TSTYLE
+    TSTYLE --> JESSE & DARVAS & OTHERS
+    JESSE & DARVAS & OTHERS --> GEN
+
+    EVALUATE --> GWRITE & GEXEC
+    GWRITE -->|YES| TVWRITE --> OBS
+    GWRITE -->|NO| GEN
+    GEXEC -->|YES| MKTORDER --> OBS
+    GEXEC -->|NO| GEN
+
+    EVALUATE --> HINT & TF
+    HINT & TF --> ATTACH --> PHOTO
+
+    EVALUATE --> ENABLE
+    ENABLE -->|YES| WEB & MEM & TVAPI
+    ENABLE -->|NO| GEN
+    WEB & MEM & TVAPI --> OBS
+    PHOTO --> OBS
+
+    ORCH --> HL & OST & CHAIN & DUNE
+    HL & OST & CHAIN & DUNE --> OBS
+
+    MEM --> MEM0
+    MEM0 --> QDRANT
+    QDRANT --> EMBED --> KB
+    KB --> ORCH
+
+    OBS --> GEN
+
+    ORCH --> MAXCALL --> LIMIT
+    LIMIT --> GEN
+
+    GEN --> ROUTER
+    ROUTER --> OR & GPT & CLAUDE & OTHER
+    OR & GPT & CLAUDE & OTHER --> RESULT
+
+    BACKEND -.-> ORCH
+    REDIS -.-> BACKEND
+    POSTGRES -.-> BACKEND
+    INNGEST -.-> BACKEND
+
+    RESULT --> PLAN
+
+    classDef main fill:#161b22,stroke:#30363d,color:#c9d1d9,stroke-width:1px;
+    classDef group fill:transparent,stroke:#484f58,color:#8b949e,stroke-width:1px,stroke-dasharray: 5 5;
+    classDef highlight fill:#1f6feb,stroke:#58a6ff,color:#ffffff,stroke-width:2px;
+
+    class USER,FE,ORCH,GEN,EVALUATE,OBS,GWRITE,GEXEC,HINT,TF,ATTACH,PHOTO,TVWRITE,MKTORDER,SSTYLE,CONV,TSTYLE,JESSE,DARVAS,OTHERS,WEB,MEM,TVAPI,ENABLE,HL,OST,CHAIN,DUNE,QDRANT,EMBED,KB,MAXCALL,LIMIT,ROUTER,OR,GPT,CLAUDE,OTHER,BACKEND,REDIS,POSTGRES,MEM0,INNGEST,RESULT,PLAN main;
+    class INPUT,EVAL,GATES,FTOOLS,STYLES,BTOOLS,CONNECTORS,KNOWLEDGE,CONFIG,MODELS,DOCKER,OUTPUT group;
+    class ORCH highlight;
+
+    linkStyle default stroke:#8b949e,stroke-width:1px;
