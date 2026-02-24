@@ -1,0 +1,146 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Inter, system-ui, sans-serif',
+    'fontSize': '12px',
+    'primaryColor': 'transparent',
+    'primaryTextColor': '#c9d1d9',
+    'primaryBorderColor': '#30363d',
+    'lineColor': '#8b949e',
+    'secondaryColor': '#0d1117',
+    'tertiaryColor': '#161b22',
+    'mainBkg': 'transparent',
+    'nodeBorder': '#30363d',
+    'clusterBkg': 'transparent',
+    'clusterBorder': '#484f58',
+    'edgeLabelBackground':'#0d1117'
+  }
+}}%%
+
+flowchart TD
+    subgraph USER["USER"]
+        U["USER"]
+        W["WALLET"]
+    end
+
+    subgraph DEPOSIT["DEPOSIT"]
+        APP["ERC20 APPROVE"]
+        DEPREQ["DEPOSIT REQUEST"]
+        CHOOSE{"VAULT TYPE?"}
+    end
+
+    subgraph VAULT1["TRADING VAULT"]
+        VT["TRADING VAULT"]
+        BALT["COLLATERAL BALANCE"]
+        WDRT["WITHDRAW TRADING"]
+    end
+
+    subgraph VAULT2["CREDIT VAULT"]
+        VC["CREDIT VAULT"]
+        BALC["CREDIT BALANCE"]
+        WDRC["WITHDRAW CREDIT"]
+    end
+
+    subgraph HUB["OSMO HUB"]
+        OSMOHUB["CENTRAL REGISTRY"]
+        MODREG["MODULE REGISTRY"]
+    end
+
+    subgraph MODULES["CONTRACT MODULES"]
+        RISKMOD["RISK MODULE"]
+        TRADEMOD["TRADING MODULE"]
+        ORACLEMOD["ORACLE MODULE"]
+        FEEMOD["FEE MODULE"]
+        SESSIONMOD["SESSION MODULE"]
+    end
+
+    subgraph TRADING["TRADING"]
+        MAN["MANUAL TRADE"]
+        AUTO["AI TRADE"]
+    end
+
+    subgraph EXECUTION["EXECUTION"]
+        ORDER["ORDER BUILDER"]
+        TX["TX QUEUE"]
+    end
+
+    subgraph ONCHAIN["ONCHAIN"]
+        PM["POSITION MANAGER"]
+        ADP1["CORE ADAPTER"]
+        ADP2["HYPERLIQUID ADAPTER"]
+        ADP3["OSTIUM ADAPTER"]
+    end
+
+    subgraph ARENA["ARENA SYSTEM"]
+        CHOOSESIDE["CHOOSE SIDE"]
+        POINTS["POINTS"]
+        SECURITY["SECURITY"]
+    end
+
+    subgraph RESULT["RESULT"]
+        POS["POSITIONS"]
+        RCPT["RECEIPT"]
+    end
+
+    subgraph WITHDRAW["WITHDRAW"]
+        WDRREQ["WITHDRAW REQUEST"]
+        WDRTX["WITHDRAW TX"]
+        WDRCONF["CONFIRMATION"]
+    end
+
+    subgraph DOCKER["DOCKER INFRASTRUCTURE"]
+        FOUNDRY["FOUNDRY CONTAINER"]
+        BACKEND["BACKEND CONTAINER"]
+        INDEXER["INDEXER/SYNC"]
+    end
+
+    U --> W --> APP --> DEPREQ --> CHOOSE
+
+    CHOOSE -->|TRADING| VT --> BALT
+    CHOOSE -->|CREDIT| VC --> BALC
+
+    BALT --> MAN
+    BALC --> AUTO
+
+    MAN --> OSMOHUB
+    AUTO --> OSMOHUB
+
+    OSMOHUB --> MODREG
+    MODREG --> RISKMOD & TRADEMOD & ORACLEMOD & FEEMOD & SESSIONMOD
+
+    RISKMOD --> ORDER
+    TRADEMOD --> ORDER
+    ORACLEMOD --> ORDER
+    FEEMOD --> ORDER
+    SESSIONMOD --> ORDER
+
+    ORDER --> TX
+
+    TX --> PM
+    PM --> ADP1 & ADP2 & ADP3
+
+    ADP1 --> POS
+    ADP2 --> POS
+    ADP3 --> POS
+
+    POS --> RCPT
+    POS -.-> CHOOSESIDE
+    CHOOSESIDE --> POINTS --> SECURITY
+
+    BALT -.-> WDRT --> WDRREQ
+    BALC -.-> WDRC --> WDRREQ
+    WDRREQ --> WDRTX --> WDRCONF
+
+    FOUNDRY -.-> VT & VC & OSMOHUB & PM
+    BACKEND -.-> INDEXER
+    INDEXER -.-> BALT & BALC
+
+    classDef main fill:#161b22,stroke:#30363d,color:#c9d1d9,stroke-width:1px;
+    classDef group fill:transparent,stroke:#484f58,color:#8b949e,stroke-width:1px,stroke-dasharray: 5 5;
+    classDef highlight fill:#238636,stroke:#3fb950,color:#ffffff,stroke-width:2px;
+
+    class U,W,APP,DEPREQ,CHOOSE,VT,BALT,WDRT,VC,BALC,WDRC,OSMOHUB,MODREG,RISKMOD,TRADEMOD,ORACLEMOD,FEEMOD,SESSIONMOD,MAN,AUTO,ORDER,TX,PM,ADP1,ADP2,ADP3,CHOOSESIDE,POINTS,SECURITY,POS,RCPT,WDRREQ,WDRTX,WDRCONF,FOUNDRY,BACKEND,INDEXER main;
+    class USER,DEPOSIT,VAULT1,VAULT2,HUB,MODULES,TRADING,EXECUTION,ONCHAIN,ARENA,RESULT,WITHDRAW,DOCKER group;
+    class PM,VT,VC highlight;
+
+    linkStyle default stroke:#8b949e,stroke-width:1px;
