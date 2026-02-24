@@ -18,141 +18,132 @@
 }}%%
 
 flowchart TD
-    subgraph INPUT["INPUT"]
-        USER["USER PROMPT"]
-        FE["FRONTEND"]
+    subgraph USER["USER"]
+        U["USER"]
+        W["WALLET"]
     end
 
-    subgraph EVAL["EVALUATOR AGENT"]
-        ORCH["ORCHESTRATOR"]
-        GEN["GENERATOR"]
-        EVALUATE["EVALUATOR"]
-        OBS["OBSERVE"]
+    subgraph DEPOSIT["DEPOSIT"]
+        APP["ERC20 APPROVE"]
+        DEPREQ["DEPOSIT REQUEST"]
+        CHOOSE{"VAULT TYPE?"}
     end
 
-    subgraph GATES["PERMISSION GATES"]
-        GWRITE{"ENABLE WRITE?"}
-        GEXEC{"ENABLE EXECUTION?"}
+    subgraph VAULT1["TRADING VAULT"]
+        VT["TRADING VAULT"]
+        BALT["COLLATERAL BALANCE"]
+        WDRT["WITHDRAW TRADING"]
     end
 
-    subgraph FTOOLS["FRONTEND TOOLS"]
-        HINT["HINT/INDICATOR"]
-        TF["TIMEFRAME"]
-        ATTACH["ATTACHMENT"]
-        PHOTO["PHOTO/DOC"]
-        TVWRITE["TV WRITE/ADD/GET/NAV"]
-        MKTORDER["MARKET ORDER"]
+    subgraph VAULT2["CREDIT VAULT"]
+        VC["CREDIT VAULT"]
+        BALC["CREDIT BALANCE"]
+        WDRC["WITHDRAW CREDIT"]
     end
 
-    subgraph STYLES["AI STYLES"]
-        SSTYLE{"STYLE TYPE?"}
-        CONV["CONVERSATION"]
-        TSTYLE["TRADING STYLE"]
-        JESSE["JESSE LIVERMORE"]
-        DARVAS["NICOLAS DARVAS"]
-        OTHERS["OTHERS"]
+    subgraph HUB["OSMO HUB"]
+        OSMOHUB["CENTRAL REGISTRY"]
+        MODREG["MODULE REGISTRY"]
     end
 
-    subgraph BTOOLS["BACKEND TOOLS"]
-        WEB["WEB SEARCH"]
-        MEM["MEMORY"]
-        TVAPI["TRADINGVIEW API"]
-        ENABLE{"ENABLED?"}
+    subgraph MODULES["CONTRACT MODULES"]
+        RISKMOD["RISK MODULE"]
+        TRADEMOD["TRADING MODULE"]
+        ORACLEMOD["ORACLE MODULE"]
+        FEEMOD["FEE MODULE"]
+        SESSIONMOD["SESSION MODULE"]
     end
 
-    subgraph CONNECTORS["DATA CONNECTORS"]
-        HL["HYPERLIQUID"]
-        OST["OSTIUM"]
-        CHAIN["CHAINLINK"]
-        DUNE["DUNE"]
+    subgraph TRADING["TRADING"]
+        MAN["MANUAL TRADE"]
+        AUTO["AI TRADE"]
     end
 
-    subgraph KNOWLEDGE["KNOWLEDGE BASE"]
-        QDRANT["QDRANT VECTOR DB"]
-        EMBED["EMBEDDINGS"]
-        KB["KNOWLEDGE DOCS"]
+    subgraph EXECUTION["EXECUTION"]
+        ORDER["ORDER BUILDER"]
+        TX["TX QUEUE"]
     end
 
-    subgraph CONFIG["CONFIGURATION"]
-        MAXCALL["MAX TOOLS CALL"]
-        LIMIT["LIMIT CHAIN"]
+    subgraph ONCHAIN["ONCHAIN"]
+        PM["POSITION MANAGER"]
+        ADP1["CORE ADAPTER"]
+        ADP2["HYPERLIQUID ADAPTER"]
+        ADP3["OSTIUM ADAPTER"]
     end
 
-    subgraph MODELS["MODELS"]
-        ROUTER["MODEL ROUTER"]
-        OR["OPENROUTER"]
-        GPT["GPT-4"]
-        CLAUDE["CLAUDE"]
-        OTHER["OTHERS"]
+    subgraph ARENA["ARENA SYSTEM"]
+        CHOOSESIDE["CHOOSE SIDE"]
+        POINTS["POINTS"]
+        SECURITY["SECURITY"]
     end
 
-    subgraph DOCKER["DOCKER SERVICES"]
-        BACKEND["BACKEND API"]
-        REDIS["REDIS CACHE"]
-        POSTGRES["POSTGRESQL"]
-        MEM0["MEM0 SERVICE"]
-        INNGEST["INNGEST WORKER"]
+    subgraph RESULT["RESULT"]
+        POS["POSITIONS"]
+        RCPT["RECEIPT"]
     end
 
-    subgraph OUTPUT["OUTPUT"]
-        RESULT["RESULT"]
-        PLAN["TRADING PLAN"]
+    subgraph WITHDRAW["WITHDRAW"]
+        WDRREQ["WITHDRAW REQUEST"]
+        WDRTX["WITHDRAW TX"]
+        WDRCONF["CONFIRMATION"]
     end
 
-    USER --> FE --> ORCH
-    ORCH --> GEN --> EVALUATE
+    subgraph DOCKER["DOCKER INFRASTRUCTURE"]
+        FOUNDRY["FOUNDRY CONTAINER"]
+        BACKEND["BACKEND CONTAINER"]
+        INDEXER["INDEXER/SYNC"]
+        PUSHER["PRICE PUSHER (SECURITY)"]
+    end
 
-    EVALUATE --> SSTYLE
-    SSTYLE -->|CONVERSATION| CONV --> GEN
-    SSTYLE -->|TRADING| TSTYLE
-    TSTYLE --> JESSE & DARVAS & OTHERS
-    JESSE & DARVAS & OTHERS --> GEN
+    U --> W --> APP --> DEPREQ --> CHOOSE
 
-    EVALUATE --> GWRITE & GEXEC
-    GWRITE -->|YES| TVWRITE --> OBS
-    GWRITE -->|NO| GEN
-    GEXEC -->|YES| MKTORDER --> OBS
-    GEXEC -->|NO| GEN
+    CHOOSE -->|TRADING| VT --> BALT
+    CHOOSE -->|CREDIT| VC --> BALC
 
-    EVALUATE --> HINT & TF
-    HINT & TF --> ATTACH --> PHOTO
+    BALT --> MAN
+    BALC --> AUTO
 
-    EVALUATE --> ENABLE
-    ENABLE -->|YES| WEB & MEM & TVAPI
-    ENABLE -->|NO| GEN
-    WEB & MEM & TVAPI --> OBS
-    PHOTO --> OBS
+    MAN --> OSMOHUB
+    AUTO --> OSMOHUB
 
-    ORCH --> HL & OST & CHAIN & DUNE
-    HL & OST & CHAIN & DUNE --> OBS
+    OSMOHUB --> MODREG
+    MODREG --> RISKMOD & TRADEMOD & ORACLEMOD & FEEMOD & SESSIONMOD
 
-    MEM --> MEM0
-    MEM0 --> QDRANT
-    QDRANT --> EMBED --> KB
-    KB --> ORCH
+    RISKMOD --> ORDER
+    TRADEMOD --> ORDER
+    ORACLEMOD --> ORDER
+    FEEMOD --> ORDER
+    SESSIONMOD --> ORDER
 
-    OBS --> GEN
+    ORDER --> TX
 
-    ORCH --> MAXCALL --> LIMIT
-    LIMIT --> GEN
+    TX --> PM
+    PM --> ADP1 & ADP2 & ADP3
 
-    GEN --> ROUTER
-    ROUTER --> OR & GPT & CLAUDE & OTHER
-    OR & GPT & CLAUDE & OTHER --> RESULT
+    ADP1 --> POS
+    ADP2 --> POS
+    ADP3 --> POS
 
-    BACKEND -.-> ORCH
-    REDIS -.-> BACKEND
-    POSTGRES -.-> BACKEND
-    INNGEST -.-> BACKEND
+    POS --> RCPT
+    POS -.-> CHOOSESIDE
+    CHOOSESIDE --> POINTS --> SECURITY
 
-    RESULT --> PLAN
+    BALT -.-> WDRT --> WDRREQ
+    BALC -.-> WDRC --> WDRREQ
+    WDRREQ --> WDRTX --> WDRCONF
+
+    FOUNDRY -.-> VT & VC & OSMOHUB & PM
+    BACKEND -.-> INDEXER
+    INDEXER -.-> BALT & BALC
+    PUSHER -->|JIT Price Sync| ORACLEMOD
+    PUSHER -.->|Security Verification| RISKMOD
 
     classDef main fill:#161b22,stroke:#30363d,color:#c9d1d9,stroke-width:1px;
     classDef group fill:transparent,stroke:#484f58,color:#8b949e,stroke-width:1px,stroke-dasharray: 5 5;
-    classDef highlight fill:#1f6feb,stroke:#58a6ff,color:#ffffff,stroke-width:2px;
+    classDef highlight fill:#238636,stroke:#3fb950,color:#ffffff,stroke-width:2px;
 
-    class USER,FE,ORCH,GEN,EVALUATE,OBS,GWRITE,GEXEC,HINT,TF,ATTACH,PHOTO,TVWRITE,MKTORDER,SSTYLE,CONV,TSTYLE,JESSE,DARVAS,OTHERS,WEB,MEM,TVAPI,ENABLE,HL,OST,CHAIN,DUNE,QDRANT,EMBED,KB,MAXCALL,LIMIT,ROUTER,OR,GPT,CLAUDE,OTHER,BACKEND,REDIS,POSTGRES,MEM0,INNGEST,RESULT,PLAN main;
-    class INPUT,EVAL,GATES,FTOOLS,STYLES,BTOOLS,CONNECTORS,KNOWLEDGE,CONFIG,MODELS,DOCKER,OUTPUT group;
-    class ORCH highlight;
+    class U,W,APP,DEPREQ,CHOOSE,VT,BALT,WDRT,VC,BALC,WDRC,OSMOHUB,MODREG,RISKMOD,TRADEMOD,ORACLEMOD,FEEMOD,SESSIONMOD,MAN,AUTO,ORDER,TX,PM,ADP1,ADP2,ADP3,CHOOSESIDE,POINTS,SECURITY,POS,RCPT,WDRREQ,WDRTX,WDRCONF,FOUNDRY,BACKEND,INDEXER,PUSHER main;
+    class USER,DEPOSIT,VAULT1,VAULT2,HUB,MODULES,TRADING,EXECUTION,ONCHAIN,ARENA,RESULT,WITHDRAW,DOCKER group;
+    class PM,VT,VC,PUSHER highlight;
 
     linkStyle default stroke:#8b949e,stroke-width:1px;
