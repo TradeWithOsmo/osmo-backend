@@ -26,6 +26,7 @@ from Ostium.persistence import CandlePersister
 from Ostium.subgraph_client import OstiumSubgraphClient  # New
 from sqlalchemy import text
 from database.connection import init_db, AsyncSessionLocal
+from database import models
 from database.models import Candle, Trade
 from storage.redis_manager import redis_manager
 
@@ -664,6 +665,28 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("ðŸš€ Starting Osmo Backend...")
     logger.info(f"Environment: {settings.ENV}")
+
+    # Initialize Database FIRST to ensure tables exist for background services
+    try:
+        await init_db()
+        logger.info("âœ… Database initialized")
+        
+        # CLEAR TABLES FOR DEVELOPMENT (Per user request: store temporarily)
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("TRUNCATE TABLE candles RESTART IDENTITY CASCADE"))
+                await session.execute(text("TRUNCATE TABLE trades RESTART IDENTITY CASCADE"))
+                await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
+                await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
+                await session.execute(text("TRUNCATE TABLE trade_setups RESTART IDENTITY CASCADE"))
+                await session.execute(text("TRUNCATE TABLE ledger_accounts RESTART IDENTITY CASCADE"))
+                await session.commit()
+                logger.info("ðŸ§¹ Development: Markets and Trading tables cleared for new session")
+        except Exception as truncate_err:
+            logger.warning(f"âš ï¸  Failed to clear some tables: {truncate_err}")
+            
+    except Exception as e:
+        logger.error(f"â Œ Database initialization failed: {e}")
     
     # Load persistence only when explicitly allowed (dev mode is in-memory only).
     if not settings.WS_IN_MEMORY_ONLY:
@@ -784,31 +807,6 @@ async def lifespan(app: FastAPI):
         logger.info("âœ… Connector system initialized")
     except Exception as e:
         logger.error(f"âŒ Failed to initialize connector system: {e}")
-    
-    # Initialize Database
-    try:
-        await init_db()
-        logger.info("âœ… Database initialized")
-        
-        # CLEAR TABLES FOR DEVELOPMENT (Per user request: store temporarily)
-        try:
-            async with AsyncSessionLocal() as session:
-                await session.execute(text("TRUNCATE TABLE candles RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE trades RESTART IDENTITY CASCADE"))
-                # Also truncate new trading tables if they exist
-                try:
-                    pass 
-                    # await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
-                    # await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
-                except Exception:
-                    pass
-                await session.commit()
-                logger.info("ðŸ§¹ Development: Markets and Trading tables cleared for new session")
-        except Exception as truncate_err:
-            logger.warning(f"âš ï¸ Failed to clear some tables: {truncate_err}")
-            
-    except Exception as e:
-        logger.error(f"âŒ Database initialization failed: {e}")
     
     yield
     

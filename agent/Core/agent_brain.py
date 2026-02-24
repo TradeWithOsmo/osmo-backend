@@ -1331,48 +1331,146 @@ class AgentBrain:
         history: Optional[List[Dict[str, Any]]] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        chat_task = asyncio.create_task(
-            self.chat(
-                user_message=user_message,
-                history=history,
-                attachments=attachments,
-            )
-        )
-        started = time.monotonic()
+        # Use ReflexionAgent.stream() for real-time event streaming
+        session_id = str(self.user_context.get("session_id") or "").strip()
 
-        while True:
-            try:
-                result = await asyncio.wait_for(asyncio.shield(chat_task), timeout=0.25)
+        collected_content: List[str] = []
+        collected_thoughts: List[Dict[str, Any]] = []
+        runtime_info: Dict[str, Any] = {}
+
+        async for event in self._reflexion_agent.stream(
+            user_message=user_message,
+            history=history,
+            session_id=session_id,
+        ):
+            event_type = event.get("type", "")
+            event_data = event.get("data", "")
+            event_meta = event.get("meta", {})
+
+            # Skip tool discovery events (internal initialization)
+            if event_type == "tool_call":
+                if (
+                    "list_supported_draw_tools" in event_data
+                    or "list_supported_indicator_aliases" in event_data
+                ):
+                    continue
+
+            # Skip tool result for discovery phase
+            if event_type == "tool_result":
+                if (
+                    "list_supported_draw_tools" in event_data
+                    or "list_supported_indicator_aliases" in event_data
+                ):
+                    continue
+
+            # Translate reflexion events to standard format
+            if event_type == "thinking":
+                # Stream thinking/reasoning text as thoughts_delta
+                yield {"type": "thoughts_delta", "thought": event_data}
+                # Also collect for final thoughts list
+                collected_thoughts.append(
+                    {
+                        "type": "reasoning",
+                        "title": "Reasoning",
+                        "content": event_data,
+                        "status": "running",
+                    }
+                )
+
+            elif event_type == "tool_call":
+                # Stream tool calls as thoughts
+                yield {"type": "thoughts_delta", "thought": event_data}
+                collected_thoughts.append(
+                    {
+                        "type": "tool_call",
+                        "title": "Tool Call",
+                        "content": event_data,
+                        "status": "running",
+                    }
+                )
+
+            elif event_type == "tool_result":
+                # Stream tool results as thoughts
+                yield {"type": "thoughts_delta", "thought": event_data}
+                collected_thoughts.append(
+                    {
+                        "type": "tool_result",
+                        "title": "Tool Result",
+                        "content": event_data,
+                        "status": "done",
+                    }
+                )
+
+            elif event_type == "reflection":
+                # Stream reflection as thoughts
+                yield {"type": "thoughts_delta", "thought": event_data}
+                collected_thoughts.append(
+                    {
+                        "type": "reflection",
+                        "title": "Reflection",
+                        "content": event_data,
+                        "status": "done",
+                    }
+                )
+
+            elif event_type == "content":
+                # Stream content as delta
+                collected_content.append(event_data)
+                yield {"type": "delta", "content": event_data}
+
+            elif event_type == "error":
+                yield {"type": "error", "message": event_data}
+                return
+
+            elif event_type == "done":
+                # Final summary - extract runtime from meta
+                if event_meta:
+                    runtime_info = {
+                        "engine": "reflexion_agent",
+                        "model_id": self.model_id,
+                        "reasoning_effort": self.reasoning_effort,
+                        "state_summary": event_meta,
+                    }
                 break
-            except asyncio.TimeoutError:
-                elapsed_ms = int((time.monotonic() - started) * 1000)
-                yield {
-                    "type": "status",
-                    "stage": "reflexion_loop",
-                    "elapsed_ms": elapsed_ms,
-                }
-            except asyncio.CancelledError:
-                chat_task.cancel()
-                raise
 
-        runtime = result.get("runtime", {}) or {}
-        if runtime:
-            yield {"type": "runtime", "runtime": runtime}
+        # Build final thoughts list (deduplicated)
+        seen = set()
+        unique_thoughts = []
+        for t in collected_thoughts:
+            key = (t.get("type", ""), t.get("content", ""))
+            if key not in seen:
+                seen.add(key)
+                unique_thoughts.append(t)
 
-        thoughts = result.get("thoughts", []) or []
-        if thoughts:
-            yield {"type": "thoughts", "thoughts": thoughts}
+        # Update thought statuses to done
+        for t in unique_thoughts:
+            t["status"] = "done"
 
-        content = str(result.get("content") or "")
-        chunk_size = 220
-        for i in range(0, len(content), chunk_size):
-            yield {"type": "delta", "content": content[i : i + chunk_size]}
+        # Yield runtime info
+        if runtime_info:
+            yield {"type": "runtime", "runtime": runtime_info}
 
+        # Yield final thoughts summary
+        if unique_thoughts:
+            yield {"type": "thoughts", "thoughts": unique_thoughts}
+
+        # Build final content
+        final_content = "".join(collected_content)
+
+        # Build usage info
+        usage = {
+            "prompt_tokens": max(0, len(str(user_message or "")) // 4),
+            "completion_tokens": max(0, len(final_content) // 4),
+            "total_tokens": 0,
+        }
+        usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+
+        # Yield done event
         yield {
             "type": "done",
-            "content": content,
-            "usage": result.get("usage", {}) or {},
-            "thoughts": thoughts,
+            "content": final_content,
+            "usage": usage,
+            "thoughts": unique_thoughts,
         }
 
     async def process_query(

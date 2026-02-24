@@ -347,16 +347,16 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
             },
         },
         "draw": {
-            "description": "Draw an object on TradingView chart.",
+            "description": "Draw an object on TradingView chart. Supports: horizontal_line, support, resistance, trend_line, ray, rectangle, fib_retracement, etc. For horizontal lines (support/resistance), only price is needed: [{\"price\": 67000}]. For trend lines, provide time+price: [{\"time\": 1234567890, \"price\": 67000}]. Use 'id' to tag drawings for later updates.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "tool": {"type": "string"},
-                    "points": {"type": "array"},
+                    "tool": {"type": "string", "description": "Tool type: horizontal_line, support, resistance, trend_line, ray, rectangle, etc."},
+                    "points": {"type": "array", "description": "Points array. For horizontal_line: [{\"price\": 67000}]. For trend_line: [{\"time\": ts, \"price\": p}, ...]"},
                     "style": {"type": "object"},
                     "text": {"type": "string"},
-                    "id": {"type": "string"},
+                    "id": {"type": "string", "description": "Custom ID for updates, e.g., 'support', 'resistance', 'trailing_sl'"},
                     "line_width": {"type": "number", "description": "Legacy alias to style.linewidth."},
                     "fill": {"description": "Legacy alias to style.filled/fillColor."},
                 },

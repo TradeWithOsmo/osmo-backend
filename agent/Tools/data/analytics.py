@@ -4,7 +4,8 @@ Analytics Tool (On-Chain / Dune)
 Wraps Dune Analytics connector for whale tracking and on-chain data.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
+
 try:
     from agent.Tools.http_client import get_http_client
 except Exception:
@@ -16,13 +17,14 @@ except Exception:
 
 CONNECTORS_API = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
 
+
 async def get_whale_activity(symbol: str, min_size_usd: int = 100000) -> Dict[str, Any]:
     """
     Get recent whale trades for a token.
     Uses Dune Analytics via backend connector.
     """
     url = f"{CONNECTORS_API}/dune/whale_trades/{symbol}"
-    
+
     client = await get_http_client(timeout_sec=12.0)
     try:
         resp = await client.get(url, params={"min_size_usd": min_size_usd})
@@ -33,6 +35,7 @@ async def get_whale_activity(symbol: str, min_size_usd: int = 100000) -> Dict[st
         return resp.json()
     except Exception as e:
         return {"error": f"Failed to fetch whale data: {str(e)}"}
+
 
 async def get_token_distribution(symbol: str) -> Dict[str, Any]:
     """

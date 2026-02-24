@@ -4,18 +4,24 @@ Market Data Access Tool
 Aggregates data from Hyperliquid (Crypto), Ostium (RWA), and Chainlink (Oracle).
 """
 
-from typing import Dict, Any, List, Optional
+import os
+from typing import Any, Dict, List, Optional
+
 try:
     from agent.Tools.http_client import get_http_client
 except Exception:
     from backend.agent.Tools.http_client import get_http_client
+
 try:
     from agent.Config.tools_config import DATA_SOURCES
 except Exception:
     from backend.agent.Config.tools_config import DATA_SOURCES
 
 # Base URL for connectors API
-CONNECTORS_API = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
+CONNECTORS_API = os.environ.get(
+    "CONNECTORS_API_URL",
+    DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors"),
+)
 FIAT_CODES = {"USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "NZD", "MXN", "HKD"}
 
 
@@ -72,13 +78,17 @@ def _looks_like_fiat_cross(symbol: str) -> bool:
     return False
 
 
-def _select_market(markets: List[Dict[str, Any]], symbol: str) -> Optional[Dict[str, Any]]:
+def _select_market(
+    markets: List[Dict[str, Any]], symbol: str
+) -> Optional[Dict[str, Any]]:
     candidates = _normalize_symbol_candidates(symbol)
     if not candidates:
         return None
     for c in candidates:
         for row in markets:
-            row_symbol = str(row.get("symbol", "")).upper().replace("/", "-").replace("_", "-")
+            row_symbol = (
+                str(row.get("symbol", "")).upper().replace("/", "-").replace("_", "-")
+            )
             if row_symbol == c:
                 return row
     return None
@@ -103,10 +113,11 @@ def _symbol_for_connector_route(symbol: str, asset_type: str) -> str:
         return raw
     return raw
 
+
 async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     """
     Get current price for a symbol.
-    
+
     Args:
         symbol: e.g. "BTC", "EURUSD"
         asset_type: "crypto" (Hyperliquid) or "rwa" (Ostium)
@@ -117,7 +128,10 @@ async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
         preferred_asset_type = "rwa"
 
     # If symbol is missing in preferred source, auto-fallback to the other source.
-    route_order = [preferred_asset_type, "rwa" if preferred_asset_type == "crypto" else "crypto"]
+    route_order = [
+        preferred_asset_type,
+        "rwa" if preferred_asset_type == "crypto" else "crypto",
+    ]
     tried: List[str] = []
     client = await get_http_client(timeout_sec=10.0)
     try:
@@ -125,7 +139,11 @@ async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
             if current_asset_type in tried:
                 continue
             tried.append(current_asset_type)
-            endpoint = "/hyperliquid/prices" if current_asset_type == "crypto" else "/ostium/prices"
+            endpoint = (
+                "/hyperliquid/prices"
+                if current_asset_type == "crypto"
+                else "/ostium/prices"
+            )
             url = f"{CONNECTORS_API}{endpoint}"
             resp = await client.get(url)
             resp.raise_for_status()
@@ -155,7 +173,10 @@ async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Failed to fetch price: {str(e)}"}
 
-async def get_candles(symbol: str, timeframe: str = "1H", limit: int = 100, asset_type: str = "crypto") -> Dict[str, Any]:
+
+async def get_candles(
+    symbol: str, timeframe: str = "1H", limit: int = 100, asset_type: str = "crypto"
+) -> Dict[str, Any]:
     """
     Get OHLCV candles from connectors API.
     """
@@ -166,12 +187,17 @@ async def get_candles(symbol: str, timeframe: str = "1H", limit: int = 100, asse
     try:
         resp = await client.get(
             url,
-            params={"timeframe": timeframe, "limit": int(limit), "asset_type": asset_type},
+            params={
+                "timeframe": timeframe,
+                "limit": int(limit),
+                "asset_type": asset_type,
+            },
         )
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
         return {"error": f"Failed to fetch candles: {str(e)}"}
+
 
 async def get_orderbook(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     """
@@ -190,6 +216,7 @@ async def get_orderbook(symbol: str, asset_type: str = "crypto") -> Dict[str, An
     except Exception as e:
         return {"error": f"Failed to fetch orderbook: {str(e)}"}
 
+
 async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     """
     Get Funding Rate (Crypto/Hyperliquid only).
@@ -205,6 +232,7 @@ async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str,
     except Exception as e:
         return {"error": f"Failed to fetch funding rate: {str(e)}"}
 
+
 async def get_ticker_stats(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     """
     Get 24h Stats (Volume, Change).
@@ -212,13 +240,15 @@ async def get_ticker_stats(symbol: str, asset_type: str = "crypto") -> Dict[str,
     # Ostium returns this in get_price response (volume_24h).
     # Hyperliquid price response also has data.
     price_data = await get_price(symbol, asset_type=asset_type)
-    if "error" in price_data: return price_data
-    
+    if "error" in price_data:
+        return price_data
+
     return {
         "volume_24h": price_data.get("volume_24h", 0),
         "change_24h": price_data.get("change_24h", 0),
-        "price": price_data.get("price")
+        "price": price_data.get("price"),
     }
+
 
 async def get_chainlink_price(symbol: str) -> Dict[str, Any]:
     """

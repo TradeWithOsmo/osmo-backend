@@ -1,17 +1,25 @@
+import asyncio
+import logging
+import os
+import sys
+import time
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
-import logging
-import asyncio
-import time
-import sys
-import os
 
 # Add connectors path
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
-from connectors.hyperliquid.connector import HyperliquidConnector
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 from Ostium.api_client import OstiumAPIClient
-from Ostium.normalizer import normalize_ostium_prices, get_ostium_category, get_ostium_max_leverage
+from Ostium.normalizer import (
+    get_ostium_category,
+    get_ostium_max_leverage,
+    normalize_ostium_prices,
+)
+
+from agent.Tools.tradingview.actions import list_supported_indicator_aliases
+from agent.Tools.tradingview.drawing.actions import list_supported_draw_tools
+from connectors.hyperliquid.connector import HyperliquidConnector
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -47,16 +55,36 @@ def _detect_light_patterns(candles: List[Dict[str, Any]]) -> List[str]:
             out.append("Doji")
 
         # Engulfing
-        if (c1_cl < c1_op) and (c0_cl > c0_op) and (c0_cl >= c1_op) and (c0_op <= c1_cl):
+        if (
+            (c1_cl < c1_op)
+            and (c0_cl > c0_op)
+            and (c0_cl >= c1_op)
+            and (c0_op <= c1_cl)
+        ):
             out.append("Bullish Engulfing")
-        if (c1_cl > c1_op) and (c0_cl < c0_op) and (c0_cl <= c1_op) and (c0_op >= c1_cl):
+        if (
+            (c1_cl > c1_op)
+            and (c0_cl < c0_op)
+            and (c0_cl <= c1_op)
+            and (c0_op >= c1_cl)
+        ):
             out.append("Bearish Engulfing")
 
         lower_wick = min(c0_op, c0_cl) - c0_lo
         upper_wick = c0_hi - max(c0_op, c0_cl)
-        if rng > 0 and (body / rng) < 0.35 and (lower_wick / rng) > 0.55 and (upper_wick / rng) < 0.2:
+        if (
+            rng > 0
+            and (body / rng) < 0.35
+            and (lower_wick / rng) > 0.55
+            and (upper_wick / rng) < 0.2
+        ):
             out.append("Hammer (Bullish)")
-        if rng > 0 and (body / rng) < 0.35 and (upper_wick / rng) > 0.55 and (lower_wick / rng) < 0.2:
+        if (
+            rng > 0
+            and (body / rng) < 0.35
+            and (upper_wick / rng) > 0.55
+            and (lower_wick / rng) < 0.2
+        ):
             out.append("Shooting Star (Bearish)")
 
         # Keep output useful even when no strict candlestick pattern is present.
@@ -157,10 +185,14 @@ def _normalize_setup_trade_params(params: Dict[str, Any]) -> Dict[str, Any]:
     tp = _to_finite_number(normalized.get("tp"))
 
     validation = _to_finite_number(
-        normalized.get("gp") if normalized.get("gp") is not None else normalized.get("validation")
+        normalized.get("gp")
+        if normalized.get("gp") is not None
+        else normalized.get("validation")
     )
     invalidation = _to_finite_number(
-        normalized.get("gl") if normalized.get("gl") is not None else normalized.get("invalidation")
+        normalized.get("gl")
+        if normalized.get("gl") is not None
+        else normalized.get("invalidation")
     )
 
     if validation is None and tp is not None:
@@ -176,14 +208,34 @@ def _normalize_setup_trade_params(params: Dict[str, Any]) -> Dict[str, Any]:
                 validation, invalidation = invalidation, validation
 
         if side == "long":
-            if validation is not None and validation <= entry and tp is not None and tp > entry:
+            if (
+                validation is not None
+                and validation <= entry
+                and tp is not None
+                and tp > entry
+            ):
                 validation = tp
-            if invalidation is not None and invalidation >= entry and sl is not None and sl < entry:
+            if (
+                invalidation is not None
+                and invalidation >= entry
+                and sl is not None
+                and sl < entry
+            ):
                 invalidation = sl
         else:
-            if validation is not None and validation >= entry and tp is not None and tp < entry:
+            if (
+                validation is not None
+                and validation >= entry
+                and tp is not None
+                and tp < entry
+            ):
                 validation = tp
-            if invalidation is not None and invalidation <= entry and sl is not None and sl > entry:
+            if (
+                invalidation is not None
+                and invalidation <= entry
+                and sl is not None
+                and sl > entry
+            ):
                 invalidation = sl
 
     normalized["side"] = side
@@ -193,10 +245,12 @@ def _normalize_setup_trade_params(params: Dict[str, Any]) -> Dict[str, Any]:
     normalized["gl"] = invalidation
     return normalized
 
+
 async def update_hl_cache():
     global HL_MARKETS_CACHE, LAST_HL_UPDATE
     try:
         from main import hl_price_history
+
         markets = await hl_connector.fetch_all_markets()
         if markets:
             for market in markets:
@@ -212,10 +266,12 @@ async def update_hl_cache():
     except Exception as e:
         logger.error(f"Error updating HL cache: {e}")
 
+
 async def update_ost_cache():
     global OST_MARKETS_CACHE, LAST_OST_UPDATE
     try:
         from main import ostium_price_history
+
         raw_prices = await ostium_client.get_latest_prices()
         if raw_prices:
             ostium_price_history.update_from_ostium_response(raw_prices)
@@ -223,34 +279,44 @@ async def update_ost_cache():
             markets_list = []
             for symbol, data in normalized_dict.items():
                 stats_24h = ostium_price_history.get_stats(symbol)
-                markets_list.append({
-                    "symbol": data["symbol"],
-                    "price": float(data["price"]),
-                    "change_24h": stats_24h.get("change_24h", 0) if stats_24h else 0,
-                    "change_percent_24h": stats_24h.get("change_percent_24h", 0) if stats_24h else 0,
-                    "volume_24h": 0,
-                    "high_24h": stats_24h.get("high_24h", 0) if stats_24h else 0,
-                    "low_24h": stats_24h.get("low_24h", 0) if stats_24h else 0,
-                    "category": data.get("category", "Forex")
-                })
+                markets_list.append(
+                    {
+                        "symbol": data["symbol"],
+                        "price": float(data["price"]),
+                        "change_24h": stats_24h.get("change_24h", 0)
+                        if stats_24h
+                        else 0,
+                        "change_percent_24h": stats_24h.get("change_percent_24h", 0)
+                        if stats_24h
+                        else 0,
+                        "volume_24h": 0,
+                        "high_24h": stats_24h.get("high_24h", 0) if stats_24h else 0,
+                        "low_24h": stats_24h.get("low_24h", 0) if stats_24h else 0,
+                        "category": data.get("category", "Forex"),
+                    }
+                )
             OST_MARKETS_CACHE = markets_list
             LAST_OST_UPDATE = time.time()
     except Exception as e:
         logger.error(f"Error updating Ostium cache: {e}")
+
 
 @router.on_event("startup")
 async def start_cache_poller():
     async def poll():
         while True:
             await asyncio.gather(update_hl_cache(), update_ost_cache())
-            await asyncio.sleep(0.5) # Refresh every 0.5s for <1s freshness
+            await asyncio.sleep(0.5)  # Refresh every 0.5s for <1s freshness
+
     asyncio.create_task(poll())
+
 
 @router.get("/hyperliquid/prices")
 async def get_hyperliquid_prices():
     if not HL_MARKETS_CACHE:
         await update_hl_cache()
     return HL_MARKETS_CACHE
+
 
 @router.get("/ostium/prices")
 async def get_ostium_prices():
@@ -285,7 +351,9 @@ def _symbol_candidates(symbol: str) -> List[str]:
     return out
 
 
-def _find_market(markets: List[Dict[str, Any]], symbol: str) -> Optional[Dict[str, Any]]:
+def _find_market(
+    markets: List[Dict[str, Any]], symbol: str
+) -> Optional[Dict[str, Any]]:
     candidates = _symbol_candidates(symbol)
     for c in candidates:
         for row in markets:
@@ -310,6 +378,7 @@ def _normalize_hl_symbol(symbol: str) -> str:
 
 def _manager():
     from connectors.init_connectors import connector_registry
+
     return connector_registry.get_manager()
 
 
@@ -317,7 +386,9 @@ def _require_connector(connector_id: str):
     manager = _manager()
     connector = manager.get_connector(connector_id)
     if not connector:
-        raise HTTPException(status_code=503, detail=f"Connector '{connector_id}' not active")
+        raise HTTPException(
+            status_code=503, detail=f"Connector '{connector_id}' not active"
+        )
     return connector
 
 
@@ -344,7 +415,10 @@ async def get_price_legacy(
 
     row = _find_market(markets, symbol)
     if not row:
-        raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found for asset_type='{asset_type}'")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Symbol '{symbol}' not found for asset_type='{asset_type}'",
+        )
 
     return {
         "symbol": row.get("symbol", symbol),
@@ -361,7 +435,9 @@ async def get_all_connector_statuses():
     """
     try:
         manager = _manager()
-        connector_ids = sorted([str(k) for k in getattr(manager, "connectors", {}).keys()])
+        connector_ids = sorted(
+            [str(k) for k in getattr(manager, "connectors", {}).keys()]
+        )
         return {
             "count": len(connector_ids),
             "connectors": connector_ids,
@@ -387,9 +463,13 @@ async def send_tradingview_command(
         params = dict(cmd.params or {})
         if str(cmd.action or "").strip().lower() == "setup_trade":
             params = _normalize_setup_trade_params(params)
-        queued = await tv.queue_command(cmd.symbol, {"action": cmd.action, "params": params})
+        queued = await tv.queue_command(
+            cmd.symbol, {"action": cmd.action, "params": params}
+        )
         if not queued:
-            raise HTTPException(status_code=400, detail="Invalid tradingview command payload")
+            raise HTTPException(
+                status_code=400, detail="Invalid tradingview command payload"
+            )
 
         if not wait_for_completion:
             return {"status": "queued", "command": queued}
@@ -455,7 +535,9 @@ async def get_tradingview_consumer_status(
                 "reason": "consumer_status_not_supported",
                 "requested_symbol": str(symbol or "").strip() or None,
             }
-        return await tv.get_consumer_status(symbol=str(symbol or ""), stale_after_sec=stale_after_sec)
+        return await tv.get_consumer_status(
+            symbol=str(symbol or ""), stale_after_sec=stale_after_sec
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -513,6 +595,22 @@ async def get_tradingview_indicators(symbol: str, timeframe: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/tradingview/draw_tools")
+async def get_draw_tools():
+    """
+    Get list of supported drawing tools.
+    """
+    return await list_supported_draw_tools()
+
+
+@router.get("/tradingview/indicator_aliases")
+async def get_indicator_aliases():
+    """
+    Get list of supported indicator aliases.
+    """
+    return await list_supported_indicator_aliases()
+
+
 @router.post("/memory/add")
 async def add_memory(request: MemoryAddRequest):
     """
@@ -560,7 +658,9 @@ async def search_memory(request: MemorySearchRequest):
     try:
         connector = _require_connector("mem0")
         safe_limit = max(1, min(int(request.limit or 5), 20))
-        return await connector.fetch(request.user_id, query=request.query, limit=safe_limit)
+        return await connector.fetch(
+            request.user_id, query=request.query, limit=safe_limit
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -585,7 +685,10 @@ async def get_all_memory(user_id: str):
     try:
         connector = _require_connector("mem0")
         if not hasattr(connector, "get_all_memories"):
-            raise HTTPException(status_code=501, detail="mem0 connector does not support get_all_memories")
+            raise HTTPException(
+                status_code=501,
+                detail="mem0 connector does not support get_all_memories",
+            )
         return await connector.get_all_memories(user_id=user_id)
     except HTTPException:
         raise
@@ -638,7 +741,9 @@ async def get_whale_trades(symbol: str, min_size_usd: int = 100000, hours: int =
     """
     try:
         connector = _require_connector("dune")
-        return await connector.fetch(_normalize_hl_symbol(symbol), min_size_usd=min_size_usd, hours=hours)
+        return await connector.fetch(
+            _normalize_hl_symbol(symbol), min_size_usd=min_size_usd, hours=hours
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -652,7 +757,9 @@ async def get_orderbook(symbol: str):
     """
     try:
         connector = _require_connector("hyperliquid")
-        return await connector.fetch(_normalize_hl_symbol(symbol), data_type="orderbook")
+        return await connector.fetch(
+            _normalize_hl_symbol(symbol), data_type="orderbook"
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -732,7 +839,11 @@ async def get_technical_analysis(
             source = "ostium"
             price_payload = await connector.fetch(normalized_symbol, data_type="price")
 
-        price_data = (price_payload or {}).get("data", {}) if isinstance(price_payload, dict) else {}
+        price_data = (
+            (price_payload or {}).get("data", {})
+            if isinstance(price_payload, dict)
+            else {}
+        )
         indicators: Dict[str, Any] = {}
         chart_screenshot: Optional[str] = None
         patterns: List[str] = []
@@ -742,11 +853,19 @@ async def get_technical_analysis(
             tv = _require_connector("tradingview")
             tv_payload = await tv.fetch(view_symbol, timeframe=timeframe)
             tv_data = tv_payload.get("data", {}) if isinstance(tv_payload, dict) else {}
-            indicators = tv_data.get("indicators", {}) if isinstance(tv_data, dict) else {}
-            chart_screenshot = tv_data.get("screenshot") if isinstance(tv_data, dict) else None
-            raw_patterns = tv_data.get("patterns", []) if isinstance(tv_data, dict) else []
+            indicators = (
+                tv_data.get("indicators", {}) if isinstance(tv_data, dict) else {}
+            )
+            chart_screenshot = (
+                tv_data.get("screenshot") if isinstance(tv_data, dict) else None
+            )
+            raw_patterns = (
+                tv_data.get("patterns", []) if isinstance(tv_data, dict) else []
+            )
             if isinstance(raw_patterns, list):
-                patterns = [str(item).strip() for item in raw_patterns if str(item).strip()]
+                patterns = [
+                    str(item).strip() for item in raw_patterns if str(item).strip()
+                ]
         except Exception:
             indicators = {}
             chart_screenshot = None
@@ -764,7 +883,11 @@ async def get_technical_analysis(
                     timeframe=timeframe,
                     limit=120,
                 )
-                candles = (candles_payload or {}).get("data", []) if isinstance(candles_payload, dict) else []
+                candles = (
+                    (candles_payload or {}).get("data", [])
+                    if isinstance(candles_payload, dict)
+                    else []
+                )
                 if isinstance(candles, list) and candles:
                     analysis_result = engine.analyze_ticker(
                         symbol=normalized_symbol,
@@ -779,9 +902,17 @@ async def get_technical_analysis(
                                 for k, v in fallback_indicators.items()
                                 if v is not None
                             }
-                    fallback_patterns = analysis_result.get("patterns", []) if isinstance(analysis_result, dict) else []
+                    fallback_patterns = (
+                        analysis_result.get("patterns", [])
+                        if isinstance(analysis_result, dict)
+                        else []
+                    )
                     if isinstance(fallback_patterns, list):
-                        patterns = [str(item).strip() for item in fallback_patterns if str(item).strip()]
+                        patterns = [
+                            str(item).strip()
+                            for item in fallback_patterns
+                            if str(item).strip()
+                        ]
                     if not patterns:
                         patterns = _detect_light_patterns(candles)
             except Exception:

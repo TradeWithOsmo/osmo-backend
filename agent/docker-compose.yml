@@ -13,13 +13,16 @@ services:
       - LOG_LEVEL=INFO
       - DEFAULT_MODEL=anthropic/claude-3.5-sonnet
       - PYTHONUNBUFFERED=1
+      - MEM0_API_URL=http://osmo-mem0:8000
+      - QDRANT_HOST=osmo-qdrant
+      - QDRANT_PORT=6333
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
     networks:
-      - agent-network
+      - osmo-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -29,5 +32,5 @@ services:
       start_period: 40s
 
 networks:
-  agent-network:
-    driver: bridge
+  osmo-network:
+    external: true

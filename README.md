@@ -13,6 +13,159 @@ The backend repository contains multiple services:
 - `connectors/` - market/connectivity integrations
 - `analysis/` - analytics scripts and support modules
 
+## Mermaid Diagram
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Inter, sans-serif',
+    'fontSize': '11px'
+  },
+  'flowchart': {
+    'nodeSpacing': 50,
+    'rankSpacing': 80,
+    'padding': 30
+  }
+}}%%
+
+flowchart TD
+    subgraph INPUT["INPUT"]
+        USER["USER PROMPT"]
+        FE["FRONTEND"]
+    end
+
+    subgraph REACT["ReACT ORCHESTRATOR"]
+        ORCH["ORCHESTRATOR"]
+        REASON["REASONING"]
+        ACT["ACTION"]
+        OBS["OBSERVE"]
+    end
+
+    subgraph GATES["PERMISSION GATES"]
+        GWRITE{"ENABLE WRITE?"}
+        GEXEC{"ENABLE EXECUTION?"}
+    end
+
+    subgraph FTOOLS["FRONTEND TOOLS"]
+        HINT["HINT/INDICATOR"]
+        TF["TIMEFRAME"]
+        ATTACH["ATTACHMENT"]
+        PHOTO["PHOTO/DOC"]
+        TVWRITE["TV WRITE/ADD/GET/NAV"]
+        MKTORDER["MARKET ORDER"]
+    end
+
+    subgraph STYLES["AI STYLES"]
+        SSTYLE{"STYLE TYPE?"}
+        CONV["CONVERSATION"]
+        TSTYLE["TRADING STYLE"]
+        JESSE["JESSE LIVERMORE"]
+        DARVAS["NICOLAS DARVAS"]
+        OTHERS["OTHERS"]
+    end
+
+    subgraph BTOOLS["BACKEND TOOLS"]
+        WEB["WEB SEARCH"]
+        MEM["MEMORY"]
+        TVAPI["TRADINGVIEW API"]
+        ENABLE{"ENABLED?"}
+    end
+
+    subgraph CONNECTORS["DATA CONNECTORS"]
+        HL["HYPERLIQUID"]
+        OST["OSTIUM"]
+        CHAIN["CHAINLINK"]
+        DUNE["DUNE"]
+    end
+
+    subgraph KNOWLEDGE["KNOWLEDGE BASE"]
+        QDRANT["QDRANT VECTOR DB"]
+        EMBED["EMBEDDINGS"]
+        KB["KNOWLEDGE DOCS"]
+    end
+
+    subgraph CONFIG["CONFIGURATION"]
+        MAXCALL["MAX TOOLS CALL"]
+        LIMIT["LIMIT CHAIN"]
+    end
+
+    subgraph MODELS["MODELS"]
+        ROUTER["MODEL ROUTER"]
+        OR["OPENROUTER"]
+        GPT["GPT-4"]
+        CLAUDE["CLAUDE"]
+        OTHER["OTHERS"]
+    end
+
+    subgraph DOCKER["DOCKER SERVICES"]
+        BACKEND["BACKEND API"]
+        REDIS["REDIS CACHE"]
+        POSTGRES["POSTGRESQL"]
+        MEM0["MEM0 SERVICE"]
+        INNGEST["INNGEST WORKER"]
+    end
+
+    subgraph OUTPUT["OUTPUT"]
+        RESULT["RESULT"]
+        PLAN["TRADING PLAN"]
+    end
+
+    USER --> FE --> ORCH
+    ORCH --> REASON --> ACT
+
+    ACT --> SSTYLE
+    SSTYLE -->|CONVERSATION| CONV --> REASON
+    SSTYLE -->|TRADING| TSTYLE
+    TSTYLE --> JESSE & DARVAS & OTHERS
+    JESSE & DARVAS & OTHERS --> REASON
+
+    ACT --> GWRITE & GEXEC
+    GWRITE -->|YES| TVWRITE --> OBS
+    GWRITE -->|NO| REASON
+    GEXEC -->|YES| MKTORDER --> OBS
+    GEXEC -->|NO| REASON
+
+    ACT --> HINT & TF
+    HINT & TF --> ATTACH --> PHOTO
+
+    ACT --> ENABLE
+    ENABLE -->|YES| WEB & MEM & TVAPI
+    ENABLE -->|NO| REASON
+    WEB & MEM & TVAPI --> OBS
+    PHOTO --> OBS
+
+    ORCH --> HL & OST & CHAIN & DUNE
+    HL & OST & CHAIN & DUNE --> OBS
+
+    MEM --> MEM0
+    MEM0 --> QDRANT
+    QDRANT --> EMBED --> KB
+    KB --> ORCH
+
+    OBS --> REASON
+
+    ORCH --> MAXCALL --> LIMIT
+    LIMIT --> REASON
+
+    REASON --> ROUTER
+    ROUTER --> OR & GPT & CLAUDE & OTHER
+    OR & GPT & CLAUDE & OTHER --> RESULT
+
+    BACKEND -.-> ORCH
+    REDIS -.-> BACKEND
+    POSTGRES -.-> BACKEND
+    INNGEST -.-> BACKEND
+
+    RESULT --> PLAN
+
+    classDef main fill:#19010E,stroke:#420024,color:#FFE4FB,stroke-width:1.5px;
+    classDef group fill:#19010E,stroke:#420024,color:#FFE4FB,stroke-width:1.5px;
+    class USER,FE,ORCH,REASON,ACT,OBS,GWRITE,GEXEC,HINT,TF,ATTACH,PHOTO,TVWRITE,MKTORDER,SSTYLE,CONV,TSTYLE,JESSE,DARVAS,OTHERS,WEB,MEM,TVAPI,ENABLE,HL,OST,CHAIN,DUNE,QDRANT,EMBED,KB,MAXCALL,LIMIT,ROUTER,OR,GPT,CLAUDE,OTHER,BACKEND,REDIS,POSTGRES,MEM0,INNGEST,RESULT,PLAN main;
+    class INPUT,REACT,GATES,FTOOLS,STYLES,BTOOLS,CONNECTORS,KNOWLEDGE,CONFIG,MODELS,DOCKER,OUTPUT group;
+    linkStyle default stroke:#FFE4FB,stroke-width:1.5px;
+```
+
 ## Core Features
 
 - Real-time market streaming (Hyperliquid and Ostium)

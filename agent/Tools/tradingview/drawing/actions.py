@@ -53,23 +53,54 @@ def _normalize_tool_name(tool: str) -> str:
     return TOOL_ALIAS_MAP.get(key, key)
 
 
-def _normalize_points(points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _normalize_points(points: List[Dict[str, Any]], tool: str = None) -> List[Dict[str, Any]]:
     normalized: List[Dict[str, Any]] = []
-    for pt in points or []:
+    tool_normalized = _normalize_tool_name(tool) if tool else ""
+    
+    for pt in (points or []):
         if not isinstance(pt, dict):
             continue
         time_value = pt.get("time", pt.get("timestamp", pt.get("ts", pt.get("x"))))
         price_value = pt.get("price", pt.get("y"))
-        if time_value is None or price_value is None:
-            continue
-        try:
-            parsed_time = float(time_value)
-            # Accept unix milliseconds and normalize to seconds.
-            if parsed_time > 1_000_000_000_000:
-                parsed_time = parsed_time / 1000.0
-            normalized.append({"time": int(parsed_time), "price": float(price_value)})
-        except (TypeError, ValueError):
-            continue
+        
+        # For horizontal_line, only price is required (time optional)
+        if tool_normalized == "horizontal_line":
+            if price_value is None:
+                continue
+            try:
+                parsed_time = 0
+                if time_value is not None:
+                    parsed_time = float(time_value)
+                    if parsed_time > 1_000_000_000_000:
+                        parsed_time = parsed_time / 1000.0
+                normalized.append({"time": int(parsed_time), "price": float(price_value)})
+            except (TypeError, ValueError):
+                continue
+                
+        # For vertical_line, only time is required (price optional)
+        elif tool_normalized == "vertical_line":
+            if time_value is None:
+                continue
+            try:
+                parsed_time = float(time_value)
+                if parsed_time > 1_000_000_000_000:
+                    parsed_time = parsed_time / 1000.0
+                normalized.append({"time": int(parsed_time), "price": 0})
+            except (TypeError, ValueError):
+                continue
+                
+        # Default: both time and price required
+        else:
+            if time_value is None or price_value is None:
+                continue
+            try:
+                parsed_time = float(time_value)
+                if parsed_time > 1_000_000_000_000:
+                    parsed_time = parsed_time / 1000.0
+                normalized.append({"time": int(parsed_time), "price": float(price_value)})
+            except (TypeError, ValueError):
+                continue
+                
     return normalized
 
 
@@ -105,14 +136,30 @@ async def draw(
     
     Args:
         symbol: Ticker symbol (e.g., "BTC").
-        tool: Tool name from cheatsheet (e.g., 'trend_line', 'fib_retracement').
+        tool: Tool name from cheatsheet (e.g., 'trend_line', 'fib_retracement', 'horizontal_line').
         points: List of coordinates. 
+            - For most tools: [{"time": 1234567890, "price": 50000}]
+            - For horizontal_line: [{"price": 50000}] (time optional)
+            - For vertical_line: [{"time": 1234567890}] (price optional)
         style: Optional style overrides.
         text: Optional text content.
         id: Optional Custom ID (tag) to track this drawing for future updates (e.g., "trailing_sl").
+    
+    Examples:
+        # Draw horizontal support line
+        draw(symbol="BTC", tool="horizontal_line", points=[{"price": 67460}], id="support")
+        
+        # Draw horizontal resistance line  
+        draw(symbol="BTC", tool="horizontal_line", points=[{"price": 68225}], id="resistance")
+        
+        # Draw trend line
+        draw(symbol="BTC", tool="trend_line", points=[
+            {"time": 1704067200, "price": 42000},
+            {"time": 1704153600, "price": 43000}
+        ])
     """
     normalized_tool = _normalize_tool_name(tool)
-    normalized_points = _normalize_points(points)
+    normalized_points = _normalize_points(points, tool=tool)
 
     params = {
         "type": normalized_tool,
@@ -152,7 +199,7 @@ async def update_drawing(
         "id": id
     }
     if points:
-        params["points"] = _normalize_points(points)
+        params["points"] = _normalize_points(points, tool=None)
     if style:
         params["style"] = style
     if text:

@@ -16,22 +16,24 @@ services:
     env_file:
       - .env
     environment:
+      - CONNECTORS_API_URL=http://backend:8000/api/connectors
       - SAVE_TO_DB=${SAVE_TO_DB:-False}
       - DATABASE_URL=postgresql://osmo_user:osmo_password@db:5432/osmo_db
       - REDIS_URL=redis://osmo-redis:6379/0
-      - QDRANT_HOST=${QDRANT_HOST:-osmo-qdrant}
-      - QDRANT_PORT=${QDRANT_PORT:-6333}
-      - QDRANT_KB_COLLECTION=${QDRANT_KB_COLLECTION:-osmo_knowledge_base_384}
-      - KB_EMBEDDING_PROVIDER=${KB_EMBEDDING_PROVIDER:-openrouter}
-      - KB_EMBEDDING_MODEL=${KB_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
-      - KB_EMBEDDING_DIMS=${KB_EMBEDDING_DIMS:-0}
       - FORCE_EXECUTION_MODE=${FORCE_EXECUTION_MODE:-auto}
+      - AI_AGENT_API_URL=http://osmo-agent:8000
+      - QDRANT_HOST=osmo-qdrant
+      - QDRANT_PORT=6333
+      - MEM0_API_URL=http://osmo-mem0:8000
     depends_on:
       - db
       - redis
     restart: unless-stopped
     networks:
       - osmo-network
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   redis:
     image: redis:7-alpine
@@ -62,26 +64,26 @@ services:
     networks:
       - osmo-network
 
-  mem0:
-    image: websocket-mem0:latest
-    container_name: osmo-mem0
-    ports:
-      - "8888:8000"
-    env_file:
-      - .env
-    environment:
-      - VECTOR_STORE_PROVIDER=qdrant
-      - QDRANT_HOST=osmo-qdrant
-      - QDRANT_PORT=6333
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - MEM0_DATA_DIR=/data
-    restart: unless-stopped
-    depends_on:
-      - qdrant
-    volumes:
-      - ../docker-data/mem0:/data
-    networks:
-      - osmo-network
+#  mem0:
+#    image: websocket-mem0:latest
+#    container_name: osmo-mem0
+#    ports:
+#      - "8888:8000"
+#    env_file:
+#      - .env
+#    environment:
+#      - VECTOR_STORE_PROVIDER=qdrant
+#      - QDRANT_HOST=osmo-qdrant
+#      - QDRANT_PORT=6333
+#      - OPENAI_API_KEY=${OPENAI_API_KEY}
+#      - MEM0_DATA_DIR=/data
+#    restart: unless-stopped
+#    depends_on:
+#      - qdrant
+#    volumes:
+#      - ../docker-data/mem0:/data
+#    networks:
+#      - osmo-network
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -94,242 +96,10 @@ services:
     networks:
       - osmo-network
 
-  inngest:
-    image: inngest/inngest:latest
-    container_name: osmo-inngest
-    ports:
-      - "8288:8288"
-    environment:
-      - INNGEST_EVENT_KEY=local
-      - INNGEST_SIGNING_KEY=local
-    # Start dev server pointing to our worker service automatically
-    command: inngest dev -u http://osmo-inngest-worker:8000/api/inngest
-    restart: unless-stopped
-    networks:
-      - osmo-network
-
-  inngest-worker:
-    image: websocket-inngest-worker:latest
-    container_name: osmo-inngest-worker
-    ports:
-      - "8008:8000"
-    environment:
-      - QDRANT_HOST=osmo-qdrant
-      - QDRANT_PORT=6333
-      - QDRANT_KB_COLLECTION=${QDRANT_KB_COLLECTION:-osmo_knowledge_base_384}
-      - KB_EMBEDDING_PROVIDER=${KB_EMBEDDING_PROVIDER:-openrouter}
-      - KB_EMBEDDING_DIMS=${KB_EMBEDDING_DIMS:-0}
-      - KB_EMBEDDING_MODEL=${KB_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - INGEST_EMBED_MAX_CHARS=${INGEST_EMBED_MAX_CHARS:-6000}
-      - INGEST_EMBED_MAX_TOKENS=${INGEST_EMBED_MAX_TOKENS:-2000}
-      - INGEST_EMBED_SPLIT_CHARS=${INGEST_EMBED_SPLIT_CHARS:-1800}
-      - INGEST_EMBED_SPLIT_OVERLAP=${INGEST_EMBED_SPLIT_OVERLAP:-200}
-      - INGEST_MIN_CONFIDENCE=${INGEST_MIN_CONFIDENCE:-0.8}
-      - INGEST_ALLOWED_TYPES=${INGEST_ALLOWED_TYPES:-article}
-      - INGEST_UPSERT_BATCH_SIZE=${INGEST_UPSERT_BATCH_SIZE:-100}
-      - INGEST_DEDUP_DB_PATH=${INGEST_DEDUP_DB_PATH:-/data/.ingest_dedup.sqlite3}
-      # Inngest Configuration
-      - INNGEST_BASE_URL=http://osmo-inngest:8288
-      - INNGEST_EVENT_KEY=local
-      # Keep ingestion worker stable (disable auto-reloader by default).
-      - FLASK_DEBUG=${FLASK_DEBUG:-0}
-    volumes:
-      - ../docker-data/inngest:/data
-      - ../agent/Knowledge/ContectCats:/app/ContectCats
-      - ../../book:/app/book
-    depends_on:
-      - qdrant
-      - inngest
-    networks:
-      - osmo-network
-
-  upload-ui:
-    image: websocket-upload-ui:latest
-    container_name: osmo-upload-ui
-    ports:
-      - "8501:8501"
-    environment:
-      - INNGEST_EVENT_KEY=local
-      - INNGEST_SIGNING_KEY=local
-      # Point to Inngest Dev Server
-      - INNGEST_BASE_URL=http://osmo-inngest:8288
-    volumes:
-      - ../docker-data/inngest:/data
-    command: streamlit run app.py
-    depends_on:
-      - inngest
-    networks:
-      - osmo-network
-
-  langfuse-worker:
-    image: docker.io/langfuse/langfuse-worker:3
-    container_name: osmo-langfuse-worker
-    profiles: ["observability"]
-    restart: unless-stopped
-    depends_on: &langfuse-depends-on
-      langfuse-postgres:
-        condition: service_healthy
-      langfuse-minio:
-        condition: service_healthy
-      langfuse-redis:
-        condition: service_healthy
-      langfuse-clickhouse:
-        condition: service_healthy
-    environment: &langfuse-common-env
-      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3001}
-      DATABASE_URL: ${LANGFUSE_DATABASE_URL:-postgresql://postgres:postgres@langfuse-postgres:5432/postgres}
-      SALT: ${LANGFUSE_SALT:-replace-me}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
-      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-true}
-      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
-      CLICKHOUSE_MIGRATION_URL: ${LANGFUSE_CLICKHOUSE_MIGRATION_URL:-clickhouse://langfuse-clickhouse:9000}
-      CLICKHOUSE_URL: ${LANGFUSE_CLICKHOUSE_URL:-http://langfuse-clickhouse:8123}
-      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
-      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
-      CLICKHOUSE_CLUSTER_ENABLED: ${LANGFUSE_CLICKHOUSE_CLUSTER_ENABLED:-false}
-      LANGFUSE_USE_AZURE_BLOB: ${LANGFUSE_USE_AZURE_BLOB:-false}
-      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
-      LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_EVENT_UPLOAD_REGION:-auto}
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}
-      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-http://langfuse-minio:9000}
-      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-true}
-      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
-      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
-      LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-auto}
-      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-minio}
-      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}
-      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://langfuse-minio:9000}
-      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE:-true}
-      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
-      REDIS_HOST: ${LANGFUSE_REDIS_HOST:-langfuse-redis}
-      REDIS_PORT: ${LANGFUSE_REDIS_PORT:-6379}
-      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-myredissecret}
-      REDIS_TLS_ENABLED: ${LANGFUSE_REDIS_TLS_ENABLED:-false}
-      EMAIL_FROM_ADDRESS: ${LANGFUSE_EMAIL_FROM_ADDRESS:-}
-      SMTP_CONNECTION_URL: ${LANGFUSE_SMTP_CONNECTION_URL:-}
-    networks:
-      - osmo-network
-
-  langfuse-web:
-    image: docker.io/langfuse/langfuse:3
-    container_name: osmo-langfuse-web
-    profiles: ["observability"]
-    restart: unless-stopped
-    depends_on: *langfuse-depends-on
-    ports:
-      - "3001:3000"
-    environment:
-      <<: *langfuse-common-env
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-replace-me}
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
-    networks:
-      - osmo-network
-
-  langfuse-clickhouse:
-    image: docker.io/clickhouse/clickhouse-server
-    container_name: osmo-langfuse-clickhouse
-    profiles: ["observability"]
-    restart: unless-stopped
-    environment:
-      CLICKHOUSE_DB: default
-      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
-      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
-    volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
-    healthcheck:
-      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
-      interval: 5s
-      timeout: 5s
-      retries: 15
-      start_period: 5s
-    networks:
-      - osmo-network
-
-  langfuse-minio:
-    image: cgr.dev/chainguard/minio
-    container_name: osmo-langfuse-minio
-    profiles: ["observability"]
-    restart: unless-stopped
-    entrypoint: sh
-    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
-    environment:
-      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
-    volumes:
-      - langfuse_minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 3s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-    networks:
-      - osmo-network
-
-  langfuse-redis:
-    image: docker.io/redis:7
-    container_name: osmo-langfuse-redis
-    profiles: ["observability"]
-    restart: unless-stopped
-    command: >
-      --requirepass ${LANGFUSE_REDIS_AUTH:-myredissecret}
-      --maxmemory-policy noeviction
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "redis-cli -a ${LANGFUSE_REDIS_AUTH:-myredissecret} ping | grep PONG",
-        ]
-      interval: 3s
-      timeout: 10s
-      retries: 20
-      start_period: 5s
-    networks:
-      - osmo-network
-
-  langfuse-postgres:
-    image: docker.io/postgres:17
-    container_name: osmo-langfuse-postgres
-    profiles: ["observability"]
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${LANGFUSE_POSTGRES_DB:-postgres}
-      TZ: UTC
-      PGTZ: UTC
-    volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_POSTGRES_USER:-postgres}"]
-      interval: 3s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-    networks:
-      - osmo-network
-
 volumes:
   postgres_data:
-  langfuse_postgres_data:
-  langfuse_clickhouse_data:
-  langfuse_clickhouse_logs:
-  langfuse_minio_data:
 
 networks:
   osmo-network:
+    name: osmo-network
     driver: bridge

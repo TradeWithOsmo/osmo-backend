@@ -453,8 +453,14 @@ async def _inject_runtime_balance_context(
 ) -> Dict[str, Any]:
     """
     Enrich runtime tool_states with user balance context so the agent can size orders.
+    Also injects user_address for execution tools.
     """
     runtime_tool_states = dict(tool_states or {})
+    
+    # Always inject user_address for execution tools
+    if _looks_like_wallet(user_address):
+        runtime_tool_states["user_address"] = user_address.lower()
+
     if not _looks_like_wallet(user_address):
         return runtime_tool_states
 
