@@ -146,7 +146,8 @@ class ConnectorRegistry:
         try:
             config = {
                 "redis_client": self.redis_client,
-                "cache_ttl": int(os.getenv("TRADINGVIEW_CACHE_TTL", "60"))
+                # TradingView indicator cache is intentionally disabled.
+                "cache_ttl": 0,
             }
             
             from connectors.tradingview import TradingViewConnector

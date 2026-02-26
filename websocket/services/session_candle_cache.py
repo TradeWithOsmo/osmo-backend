@@ -22,7 +22,6 @@ from Hyperliquid.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
-_BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 _YAHOO_CHART_URLS = (
     "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
     "https://query2.finance.yahoo.com/v8/finance/chart/{ticker}",
@@ -204,14 +203,10 @@ class SessionCandleCache:
                 return
 
             if is_crypto:
-                bars = await self._fetch_binance_1m(symbol)
-                if not bars:
-                    bars = await self._fetch_hyperliquid_1m(symbol)
+                bars = await self._fetch_hyperliquid_1m(symbol)
                 if not bars and base_asset(symbol) == "HYPE":
                     logger.info("HYPE secondary data unavailable, trying fallback %s", _HYPE_FALLBACK_SYMBOL)
-                    bars = await self._fetch_binance_1m(_HYPE_FALLBACK_SYMBOL)
-                    if not bars:
-                        bars = await self._fetch_hyperliquid_1m(_HYPE_FALLBACK_SYMBOL)
+                    bars = await self._fetch_hyperliquid_1m(_HYPE_FALLBACK_SYMBOL)
             else:
                 bars = await self._fetch_yahoo_finance_1m(symbol)
 
@@ -357,59 +352,6 @@ class SessionCandleCache:
 
         merged = [agg[k] for k in sorted(agg.keys())]
         return merged[-max(1, limit):]
-
-    async def _fetch_binance_1m(self, symbol: str) -> List[Dict[str, Any]]:
-        base = base_asset(symbol)
-        pair = f"{base}USDT"
-        end_ms = _now_ms()
-        start_ms = end_ms - (self.history_days * 24 * 60 * 60 * 1000)
-        cursor = start_ms
-        out: List[Dict[str, Any]] = []
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            while cursor < end_ms:
-                params = {
-                    "symbol": pair,
-                    "interval": "1m",
-                    "startTime": cursor,
-                    "endTime": end_ms,
-                    "limit": 1000,
-                }
-                try:
-                    rows = await self._json_get_with_ssl_fallback(client, _BINANCE_KLINES_URL, params)
-                except Exception as exc:
-                    logger.warning("Binance fetch failed for %s: %s", symbol, exc)
-                    break
-
-                if not isinstance(rows, list) or not rows:
-                    break
-
-                last_open = None
-                for row in rows:
-                    # Binance kline shape: [openTime, open, high, low, close, volume, ...]
-                    ts = int(row[0])
-                    last_open = ts
-                    out.append(
-                        {
-                            "timestamp": ts,
-                            "open": _safe_float(row[1]),
-                            "high": _safe_float(row[2]),
-                            "low": _safe_float(row[3]),
-                            "close": _safe_float(row[4]),
-                            "volume": _safe_float(row[5]),
-                            "symbol": symbol,
-                        }
-                    )
-
-                if last_open is None:
-                    break
-                next_cursor = last_open + 60_000
-                if next_cursor <= cursor:
-                    break
-                cursor = next_cursor
-                await asyncio.sleep(0.05)
-
-        return out
 
     async def _fetch_yahoo_finance_1m(self, symbol: str) -> List[Dict[str, Any]]:
         normalized = normalize_symbol(symbol)

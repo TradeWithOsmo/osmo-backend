@@ -33,12 +33,14 @@ from storage.redis_manager import redis_manager
 # Import connector system
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from connectors.init_connectors import connector_registry
 from connectors.web3_arbitrum.api_routes import router as web3_router
 from connectors.hyperliquid.category_map import get_category  # Import category mapping
 
 # Import orders API
 from routers.orders import router as orders_router
+from services.canonical_source_registry import canonical_registry
+from services.client_registry import get_exchange_client
+from connectors.init_connectors import connector_registry
 from services.price_pusher import price_pusher
 from services.price_monitor_service import price_monitor_service
 from services.ai_trigger_service import ai_trigger_service

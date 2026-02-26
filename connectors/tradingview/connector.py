@@ -214,7 +214,8 @@ class TradingViewConnector(BaseConnector):
         super().__init__("tradingview", config)
         
         self.redis_client = config.get("redis_client")
-        self.cache_ttl = config.get("cache_ttl", 60)  # 60 seconds default
+        # Disable indicator cache by default to avoid storing per-symbol/timeframe snapshots.
+        self.cache_ttl = int(config.get("cache_ttl", 0))
         self.consumer_status_ttl = int(max(30, config.get("consumer_status_ttl", 120)))
 
         # In CI/dev, Redis may be unavailable. We still want the TradingView command loop
@@ -344,6 +345,9 @@ class TradingViewConnector(BaseConnector):
         Returns:
             Cached indicator data or error if not found
         """
+        if self.cache_ttl <= 0:
+            raise ValueError("TradingView indicator cache is disabled")
+
         timeframe = kwargs.get("timeframe")
         if not timeframe:
             raise ValueError("timeframe is required")
@@ -410,6 +414,16 @@ class TradingViewConnector(BaseConnector):
         timeframe_candidates = _timeframe_aliases(str(timeframe))
         if not timeframe_candidates:
             timeframe_candidates = [str(timeframe)]
+
+        if self.cache_ttl <= 0:
+            return {
+                "status": "ignored",
+                "reason": "cache_disabled",
+                "symbol": _normalize_symbol_token(symbol),
+                "timeframe": timeframe,
+                "indicator_count": len(data.get("indicators", {})),
+                "has_screenshot": "chart_screenshot" in data,
+            }
 
         payload = json.dumps(data)
         for alias in _symbol_aliases(symbol):

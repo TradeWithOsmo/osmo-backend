@@ -498,3 +498,23 @@ class ChatMessage(Base):
     __table_args__ = (
         Index('idx_message_session', 'session_id', 'timestamp'),
     )
+
+class GlobalChatMessage(Base):
+    """Global chat messages valid for 24 hours UTC"""
+    __tablename__ = "global_chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String, index=True, nullable=False, default="Global")
+    address = Column(String, index=True, nullable=False)
+    
+    text = Column(Text, nullable=True)
+    images = Column(Text, nullable=True) # JSON array of base64/url str
+    reply_to = Column(Text, nullable=True) # JSON obj {id, address, text}
+    shared_news = Column(Text, nullable=True) # JSON obj {title, link, photoUrl}
+    
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index('idx_global_chat_time', 'timestamp'),
+        Index('idx_global_chat_symbol_time', 'symbol', 'timestamp'),
+    )

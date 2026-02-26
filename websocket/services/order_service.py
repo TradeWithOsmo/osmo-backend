@@ -449,7 +449,7 @@ class OrderService:
             await session.refresh(order)
 
         # 7. Optimistic Shadow Update for On-chain
-        if exchange == "onchain":
+        if False:#exchange == "onchain":
             try:
                 # We reuse the logic from report_onchain_order to update shadow position record
                 await self.report_onchain_order(
@@ -564,6 +564,12 @@ class OrderService:
                 avg_fill_price=price if price and price > 0 else None,
             )
             session.add(order)
+            await session.commit()
+            return {
+                "order_id": order_id,
+                "status": "reported",
+                "message": "Order reported (shadow position creation disabled)",
+            }
 
             # 2. Check if we should create a shadow position record
             # This ensures the position shows up even if indexing is slow
@@ -1306,6 +1312,8 @@ class OrderService:
                             break
 
                     if not found_active:
+                        if db_pos.exchange == "onchain":
+                            continue
                         if db_pos.exchange in successful_exchanges:
                             from datetime import timedelta
 

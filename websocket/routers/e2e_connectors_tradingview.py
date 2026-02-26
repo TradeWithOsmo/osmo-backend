@@ -15,7 +15,7 @@ router = APIRouter()
 
 # Single in-process TradingView connector instance for E2E.
 # Uses in-memory fallback when Redis is unavailable, so the command loop works.
-_tv = TradingViewConnector(config={"redis_client": None, "cache_ttl": 60})
+_tv = TradingViewConnector(config={"redis_client": None, "cache_ttl": 0})
 
 
 class CommandRequest(BaseModel):

@@ -116,8 +116,30 @@ CATEGORY_MAP = {
     "NOT": "Gaming", # Clicker game
 }
 
-def get_category(symbol: str) -> str:
-    """Get category for a symbol (e.g. BTC, ETH). Default to 'Other'."""
-    # Handle PERP suffix or USD suffix if present in input
+# Main category mapping: sub-categories → main frontend category
+_MAIN_CATEGORY = {
+    "Layer 1": "Crypto",
+    "Layer 2": "Crypto",
+    "Meme": "Crypto",
+    "AI & Big Data": "Crypto",
+    "DeFi": "Crypto",
+    "DePIN": "Crypto",
+    "RWA": "Crypto",
+    "Gaming": "Crypto",
+    "Infrastructure": "Crypto",
+    "Crypto": "Crypto",
+    "Forex": "Forex",
+    "Stocks": "Stocks",
+    "Commodities": "Commodities",
+    "Index": "Index",
+}
+
+def get_subcategory(symbol: str) -> str:
+    """Get detailed sub-category for a symbol (e.g. Layer 1, DeFi, Meme)."""
     clean_symbol = symbol.split("-")[0].replace("/USD", "")
-    return CATEGORY_MAP.get(clean_symbol, "Crypto") # Default to generic Crypto if unknown
+    return CATEGORY_MAP.get(clean_symbol, "Crypto")
+
+def get_category(symbol: str) -> str:
+    """Get main category for a symbol. Returns one of: Crypto, Forex, Stocks, Commodities, Index."""
+    sub = get_subcategory(symbol)
+    return _MAIN_CATEGORY.get(sub, "Crypto")

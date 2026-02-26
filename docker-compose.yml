@@ -2,19 +2,23 @@ version: "3.8"
 
 services:
   backend:
-    build: .
+    build: 
+      context: ./websocket
+      dockerfile: Dockerfile
     container_name: osmo-backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     volumes:
-      - .:/app
-      - ../connectors:/app/connectors
-      - ../analysis:/app/analysis
-      - ../agent:/app/agent
+      - ./websocket:/app
+      - ./connectors:/app/connectors
+      - ./analysis:/app/analysis
+      - ./agent:/app/agent
+      - ./contracts:/app/contracts
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
+      - DOCKER_MODE=true
       - CONNECTORS_API_URL=http://backend:8000/api/connectors
       - SAVE_TO_DB=${SAVE_TO_DB:-False}
       - DATABASE_URL=postgresql://osmo_user:osmo_password@db:5432/osmo_db
@@ -80,7 +84,7 @@ services:
     container_name: osmo-uptime-kuma-bootstrap
     working_dir: /bootstrap
     volumes:
-      - ./uptime:/bootstrap
+      - ./websocket/uptime:/bootstrap
     environment:
       - UPTIME_KUMA_URL=http://uptime-kuma:3001
       - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME:-admin}
@@ -88,12 +92,6 @@ services:
       - UPTIME_STATUS_PAGE_SLUG=${UPTIME_STATUS_PAGE_SLUG:-osmo-status}
       - UPTIME_STATUS_PAGE_TITLE=${UPTIME_STATUS_PAGE_TITLE:-Osmo Status}
       - UPTIME_STATUS_PAGE_DESCRIPTION=${UPTIME_STATUS_PAGE_DESCRIPTION:-Real-time status for Osmo backend services}
-      - UPTIME_API_PUBLIC_HEALTH_URL=${UPTIME_API_PUBLIC_HEALTH_URL:-}
-      - UPTIME_FRONTEND_PUBLIC_URL=${UPTIME_FRONTEND_PUBLIC_URL:-}
-      - UPTIME_DISCORD_WEBHOOK_URL=${UPTIME_DISCORD_WEBHOOK_URL:-}
-      - UPTIME_TELEGRAM_BOT_TOKEN=${UPTIME_TELEGRAM_BOT_TOKEN:-}
-      - UPTIME_TELEGRAM_CHAT_ID=${UPTIME_TELEGRAM_CHAT_ID:-}
-      - UPTIME_WEBHOOK_URL=${UPTIME_WEBHOOK_URL:-}
     command: >
       sh -c "pip install --no-cache-dir uptime-kuma-api==1.2.1 &&
       python /bootstrap/bootstrap_kuma.py"
@@ -103,38 +101,6 @@ services:
     restart: "no"
     networks:
       - osmo-network
-
-#  mem0:
-#    image: websocket-mem0:latest
-#    container_name: osmo-mem0
-#    ports:
-#      - "8888:8000"
-#    env_file:
-#      - .env
-#    environment:
-#      - VECTOR_STORE_PROVIDER=qdrant
-#      - QDRANT_HOST=osmo-qdrant
-#      - QDRANT_PORT=6333
-#      - OPENAI_API_KEY=${OPENAI_API_KEY}
-#      - MEM0_DATA_DIR=/data
-#    restart: unless-stopped
-#    depends_on:
-#      - qdrant
-#    volumes:
-#      - ../docker-data/mem0:/data
-#    networks:
-#      - osmo-network
-
-#  qdrant:
-#    image: qdrant/qdrant:latest
-#    container_name: osmo-qdrant
-#    ports:
-#      - "6333:6333"
-#    volumes:
-#      - ../docker-data/qdrant:/qdrant/storage
-#    restart: unless-stopped
-#    networks:
-#      - osmo-network
 
 volumes:
   postgres_data:

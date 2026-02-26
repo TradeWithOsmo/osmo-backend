@@ -12,7 +12,6 @@ from pydantic import BaseModel
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 from Ostium.api_client import OstiumAPIClient
 from Ostium.normalizer import (
-    get_ostium_category,
     get_ostium_max_leverage,
     normalize_ostium_prices,
 )

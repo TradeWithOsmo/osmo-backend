@@ -16,6 +16,8 @@ redis
 pandas_ta
 numpy
 ostium-python-sdk
+avantis-trader-sdk
+lighter-sdk
 langchain
 langchain-openai
 langchain-nvidia-ai-endpoints

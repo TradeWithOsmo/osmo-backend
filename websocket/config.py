@@ -131,9 +131,9 @@ class Settings(BaseSettings):
     GROQ_MODEL_PRICING_USD_PER_1M: str = ""
 
     # Secondary session history cache (development)
-    SECONDARY_HISTORY_ENABLED: bool = True
-    SECONDARY_HISTORY_PREWARM: bool = True
-    SESSION_HISTORY_DAYS: int = 7
+    SECONDARY_HISTORY_ENABLED: bool = False
+    SECONDARY_HISTORY_PREWARM: bool = False
+    SESSION_HISTORY_DAYS: int = 1
     SECONDARY_CRYPTO_ONLY: bool = True
     SECONDARY_NON_CRYPTO_PROVIDER: str = "yahoo"
     SECONDARY_DISABLE_COMMODITIES: bool = True

@@ -1,5 +1,6 @@
 from typing import Dict, Any
 from datetime import datetime
+from services.canonical_source_registry import canonical_registry
 
 def normalize_symbol(asset: str) -> str:
     """
@@ -18,33 +19,7 @@ def normalize_symbol(asset: str) -> str:
     
     return asset
 
-def get_ostium_category(symbol: str) -> str:
-    """
-    Determine category for Ostium asset
-    """
-    s = symbol.upper()
-    
-    # Commodities
-    if any(x in s for x in ["XAU", "XAG", "XPT", "XPD", "HG-", "CL-", "WTI", "BRENT", "GOLD", "SILVER"]):
-        return "Commodities"
-        
-    # Indices
-    if any(x in s for x in ["SPX", "NDX", "DJI", "FTSE", "DAX", "NIK", "HSI", "CAC", "ES-", "NQ-"]):
-        return "index"
-        
-    # Forex - check if it's a currency pair
-    major_currencies = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
-    minor_currencies = ["MXN", "SGD", "HKD", "CNH", "ZAR", "TRY", "BRL", "INR"]
-    all_currencies = major_currencies + minor_currencies
-    
-    parts = s.split("-")
-    if len(parts) == 2:
-        if parts[0] in all_currencies and parts[1] in all_currencies:
-            return "Forex"
-        
-    # Default to Stocks
-    return "Stocks"
-
+# Removed get_ostium_category since it is now centralized in canonical_source_registry
 
 def get_ostium_max_leverage(category: str) -> int:
     """Return safe default max leverage based on category"""
@@ -54,7 +29,7 @@ def get_ostium_max_leverage(category: str) -> int:
         return 20
     if category == "Commodities":
         return 50
-    if category == "index":
+    if category.upper() == "INDEX" or category.lower() == "index":
         return 50
     return 50
 
@@ -86,7 +61,7 @@ def normalize_ostium_prices(data: Any) -> Dict[str, Any]:
             else:
                 timestamp = current_timestamp
             
-            cat = get_ostium_category(symbol)
+            cat = canonical_registry.get_category_sync(symbol)
             normalized[symbol] = {
                 "symbol": symbol,
                 "price": str(mid_price),
@@ -95,7 +70,8 @@ def normalize_ostium_prices(data: Any) -> Dict[str, Any]:
                 "category": cat,
                 "maxLeverage": get_ostium_max_leverage(cat),
                 "is_stale": False,
-                "market_open": item.get('isMarketOpen', True)
+                "market_open": item.get('isMarketOpen', True),
+                "canonical": canonical_registry.is_canonical_source(from_curr, "ostium")
             }
     
     elif isinstance(data, dict):
@@ -109,7 +85,7 @@ def normalize_ostium_prices(data: Any) -> Dict[str, Any]:
                 price = str(price_data)
                 price_timestamp = current_timestamp
             
-            cat = get_ostium_category(symbol)
+            cat = canonical_registry.get_category_sync(symbol)
             normalized[symbol] = {
                 "symbol": symbol,
                 "price": price,
@@ -117,7 +93,8 @@ def normalize_ostium_prices(data: Any) -> Dict[str, Any]:
                 "source": "ostium",
                 "category": cat,
                 "maxLeverage": get_ostium_max_leverage(cat),
-                "is_stale": False
+                "is_stale": False,
+                "canonical": canonical_registry.is_canonical_source(symbol.split("-")[0], "ostium")
             }
     
     return normalized

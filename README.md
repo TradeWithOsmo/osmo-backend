@@ -194,11 +194,194 @@ Default service ports:
 - API: `8000`
 - Postgres: `5432`
 - Redis: `6379`
+- Uptime Kuma: `3002` (container port `3001`)
 - Qdrant: `6333`
 - Mem0 API: `8888`
 - Inngest Dev: `8288`
 - Upload UI: `8501`
 - Langfuse Web (optional profile): `3001`
+
+## VPS Deployment Runbook (tradingapi)
+
+Use this section for operational deployment to the production VPS.
+
+Server connection:
+- Public host: `ip.atlantic-server.com`
+- SSH port: `13318`
+- SSH user: `root`
+- Project path: `/root/backend/websocket`
+- Public API URL: `http://ip.atlantic-server.com:21724`
+- Public WS URL: `ws://ip.atlantic-server.com:21724`
+
+Security note:
+- Do not store passwords or private keys in this repository.
+- Keep current credentials in your team secret manager / secure channel.
+
+### Uptime Kuma (Self-Hosted Monitoring + Status Page)
+
+Uptime Kuma is fully auto-bootstrapped by Docker Compose (no manual checklist in UI required).
+The bootstrap container will:
+- create admin account (first run only),
+- create/update core monitors (API internal/public, TCP, Redis, Postgres),
+- create/update a public status page,
+- attach optional alert channels (Discord/Telegram/Webhook) if env vars are provided.
+
+```bash
+# 1) SSH into VPS
+ssh -p 13318 root@ip.atlantic-server.com
+
+# 2) Go to project path
+cd /root/backend/websocket
+
+# 3) Configure env (important: change default Kuma password)
+cp .env.example .env
+nano .env
+
+# 4) Deploy full stack + monitoring bootstrap
+sh scripts/deploy_stack.sh
+
+# 5) Verify bootstrap result
+docker compose logs --tail=200 uptime-kuma-bootstrap
+```
+
+Access:
+- Local on VPS: `http://127.0.0.1:3002`
+- Public UI (after panel port-forward): `http://<VPS_PUBLIC_IP>:<KUMA_PUBLIC_PORT>`
+- Public status page: `http://<VPS_PUBLIC_IP>:<KUMA_PUBLIC_PORT>/status/<UPTIME_STATUS_PAGE_SLUG>`
+
+Panel port-forward recommendation:
+- Rule name: `UptimeKuma`
+- Internal port: `3002`
+- Protocol: `TCP`
+- Public port example: `12830`
+
+Idempotent re-run (safe any time):
+```bash
+cd /root/backend/websocket
+docker compose run --rm uptime-kuma-bootstrap
+```
+
+### Deploy Steps (Backend API + Monitoring)
+
+```bash
+# 1) SSH into VPS
+ssh -p 13318 root@ip.atlantic-server.com
+
+# 2) Move to project
+cd /root/backend/websocket
+
+# 3) (Optional) sync latest code
+# git pull origin main
+
+# 4) Rebuild full stack + re-bootstrap Kuma monitors/status page
+sh scripts/deploy_stack.sh
+
+# 5) Check service status
+docker compose ps
+curl -sS http://127.0.0.1:8000/health
+```
+
+### Fast File Patch Deploy (without git pull)
+
+From local machine (example for one file):
+
+```bash
+scp -P 13318 websocket/main.py root@ip.atlantic-server.com:/root/backend/websocket/main.py
+ssh -p 13318 root@ip.atlantic-server.com "cd /root/backend/websocket && docker-compose up -d --build backend"
+```
+
+### Troubleshooting: `KeyError: 'ContainerConfig'`
+
+Some VPS setups with legacy `docker-compose` can fail on recreate with:
+`KeyError: 'ContainerConfig'`.
+
+Use:
+
+```bash
+cd /root/backend/websocket
+docker ps -a --filter name=osmo-backend -q | xargs -r docker rm -f
+docker-compose up -d backend
+docker-compose ps
+```
+
+### Market Stream Validation (Orderbook/Trades)
+
+After deploy, validate stream consistency:
+
+```bash
+docker exec osmo-backend python3 /app/check_ob_trades_matrix.py
+```
+
+Useful tuning params:
+
+```bash
+docker exec \
+  -e MAX_PER_SOURCE=20 \
+  -e CHECK_CONCURRENCY=25 \
+  -e WS_TIMEOUT_S=2.5 \
+  -e WS_OPEN_TIMEOUT_S=2.5 \
+  osmo-backend python3 /app/check_ob_trades_matrix.py
+```
+
+Interpretation:
+- `OB OK`/`TR OK` means endpoint produced valid non-zero `px` + `sz`.
+- `Timeout` means no valid payload within timeout window (not always an API crash).
+- Some connectors are price-only or partial-depth by design (for example, no trades feed on certain sources).
+
+### Hasil Test Terbaru (February 25, 2026)
+
+Environment:
+- VPS: `ip.atlantic-server.com`
+- Container: `osmo-backend`
+
+Run 1 (full canonical scan):
+
+```bash
+docker exec \
+  -e MAX_PER_SOURCE=0 \
+  -e CHECK_CONCURRENCY=25 \
+  -e WS_TIMEOUT_S=2.5 \
+  -e WS_OPEN_TIMEOUT_S=2.5 \
+  osmo-backend python3 /app/check_ob_trades_matrix.py
+```
+
+| Source | Tested | OB OK | TR OK | Kesimpulan |
+|---|---:|---:|---:|---|
+| Aster | 146 | 146 | 146 | OB + TR konsisten |
+| Hyperliquid | 224 | 12 | 12 | Parsial, sensitif burst/load |
+| Lighter | 16 | 0 | 16 | Trades ada, orderbook belum |
+| Ostium | 47 | 0 | 0 | Price feed only (tanpa OB/TR) |
+| Vest | 164 | 164 | 0 | Orderbook ada, trades belum |
+
+Run 2 (sample low concurrency, untuk kurangi efek burst):
+
+```bash
+docker exec \
+  -e MAX_PER_SOURCE=20 \
+  -e CHECK_CONCURRENCY=1 \
+  -e WS_TIMEOUT_S=2.5 \
+  -e WS_OPEN_TIMEOUT_S=2.5 \
+  osmo-backend python3 /app/check_ob_trades_matrix.py
+```
+
+| Source | Tested | OB OK | TR OK |
+|---|---:|---:|---:|
+| Aster | 20 | 20 | 20 |
+| Hyperliquid | 20 | 14 | 15 |
+| Lighter | 16 | 0 | 16 |
+| Ostium | 20 | 0 | 0 |
+| Vest | 20 | 20 | 0 |
+
+### Analisis & Fix (February 25, 2026)
+
+| Source | Issue | Root Cause | Fix |
+|---|---|---|---|
+| Lighter | OB = 0 | `get_depth()`: (1) response nested under `order_book` key not always present; (2) level fields use `limit_price`/`amount` not `px`/`sz`; (3) `_market_id_map` empty on cold-start | Reworked `get_depth` to try flat layout first, then nested fallback; normalise all level fields to `{px, sz}` inside the client; auto-refresh market map on first call |
+| Vest | TR = 0 | `get_recent_trades()` called `data.get("trades", [])` but Vest `/trades` returns a **raw JSON array**, not `{"trades": [...]}` — causing `AttributeError` | Fixed to detect `list` vs `dict` response; parse `price`/`qty` directly; derive side from sign of `qty`; return normalised `{px, sz, side, time, id}` |
+
+Files changed:
+- `websocket/Lighter/api_client.py` — `get_depth()` rewritten
+- `websocket/Vest/api_client.py` — `get_recent_trades()` rewritten
 
 ## Local Run (API Only)
 
