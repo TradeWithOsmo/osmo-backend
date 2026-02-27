@@ -853,7 +853,7 @@ async def get_candles(
         asset_type="crypto" # fallback mapping
     )
 # NOTE: /api/markets is now handled by routers/markets.py (mounted at prefix /api/markets)
-# which queries ALL exchanges (hyperliquid, ostium, aster, lighter, vest, avantis).
+# which queries ALL exchanges (hyperliquid, ostium, aster, vest, avantis, orderly, paradex, dydx, aevo).
 # The old endpoint here only returned latest_prices (Hyperliquid WS + Ostium poller).
 
 
@@ -910,9 +910,9 @@ async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
 
 @app.websocket("/ws/{exchange}/{symbol}")
 async def exchange_websocket(websocket: WebSocket, exchange: str, symbol: str):
-    """Stream real-time prices to frontend for various exchanges (ostium, aster, vest, lighter, avantis, hyperliquid)"""
+    """Stream real-time prices to frontend for various exchanges (ostium, aster, vest, avantis, hyperliquid, orderly, paradex, dydx, aevo)"""
     exchange = exchange.lower()
-    if exchange not in ["ostium", "aster", "vest", "lighter", "avantis"]:
+    if exchange not in ["ostium", "aster", "vest", "avantis", "orderly", "paradex", "dydx", "aevo"]:
         if exchange == "hyperliquid": 
             pass # handled above
         else:

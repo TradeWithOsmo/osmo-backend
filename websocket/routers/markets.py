@@ -41,8 +41,14 @@ def _normalize_pair_symbol(symbol: str, default_quote: str = "USD") -> str:
 
     if cleaned.endswith("-PERP"):
         return f"{cleaned[:-5]}-{default_quote}"
-    if cleaned.endswith("-LIGHTER"):
+    if cleaned.endswith("-ORDERLY"):
         return f"{cleaned[:-8]}-{default_quote}"
+    if cleaned.endswith("-PARADEX"):
+        return f"{cleaned[:-8]}-{default_quote}"
+    if cleaned.endswith("-DYDX"):
+        return f"{cleaned[:-5]}-{default_quote}"
+    if cleaned.endswith("-AEVO"):
+        return f"{cleaned[:-5]}-{default_quote}"
     if "-" in cleaned:
         parts = [p for p in cleaned.split("-") if p]
         if len(parts) >= 2:
@@ -60,7 +66,7 @@ def _pair_from_record(record: Dict[str, Any], default_quote: str = "USD") -> str
     quote = _clean_symbol(record.get("to", "")).split("-")[0]
     if base:
         q = quote or default_quote
-        if q in {"PERP", "LIGHTER"}:
+        if q in {"PERP", "ORDERLY", "PARADEX", "DYDX", "AEVO"}:
             q = default_quote
         return f"{base}-{q}"
     return _normalize_pair_symbol(record.get("symbol", ""), default_quote=default_quote)
@@ -179,14 +185,14 @@ async def _fetch_exchange(name: str) -> List[Dict[str, Any]]:
     return []
 
 
-ALL_EXCHANGES = ["hyperliquid", "ostium", "avantis", "aster", "lighter", "vest"]
+ALL_EXCHANGES = ["hyperliquid", "ostium", "avantis", "aster", "vest", "orderly", "paradex", "dydx", "aevo"]
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/")
 async def get_markets(
-    exchange: Optional[str] = Query(None, description="Filter by exchange name (hyperliquid, ostium, avantis, aster, lighter, vest)"),
+    exchange: Optional[str] = Query(None, description="Filter by exchange name (hyperliquid, ostium, avantis, aster, vest, orderly, paradex, dydx, aevo)"),
     canonical_only: bool = Query(False, description="Only return canonical price source entries"),
 ):
     """

@@ -784,8 +784,8 @@ async def get_candles(
     symbol: str = "BTC-USD",
     timeframe: str = "1m",
     limit: int = 100,
-    exchange: Optional[str] = Query(None, description="Internal exchange source (hyperliquid, ostium, avantis, aster, lighter, vest)"),
-    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium|avantis|aster|lighter|vest)$"),
+    exchange: Optional[str] = Query(None, description="Internal exchange source (hyperliquid, ostium, avantis, aster, vest, orderly, paradex, dydx, aevo)"),
+    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium|avantis|aster|vest|orderly|paradex|dydx|aevo)$"),
 ):
     """
     OHLCV candles endpoint for TradingView integration.
@@ -805,7 +805,7 @@ async def get_candles(
         # Clean symbol for cache
         clean_sym = symbol.upper().replace("/", "-")
         coin = clean_sym.split("-")[0]
-        if "-" not in clean_sym and source in {"hyperliquid", "aster", "lighter", "vest", "avantis"}:
+        if "-" not in clean_sym and source in {"hyperliquid", "aster", "vest", "avantis", "orderly", "paradex", "dydx", "aevo"}:
             # Default to USD quote for crypto if not specified
             clean_sym = f"{clean_sym}-USD"
 

@@ -1,17 +1,17 @@
-"""Background polling service for Lighter"""
+"""Background polling service for dYdX v4"""
 import asyncio
 import logging
 from typing import Callable, Optional, List, Dict, Any
 from datetime import datetime
-from .api_client import LighterAPIClient
+from .api_client import DydxAPIClient
 
 logger = logging.getLogger(__name__)
 
 
-class LighterPoller:
-    """Polls Lighter REST API. WebSocket stream integration can be added later."""
+class DydxPoller:
+    """Polls dYdX v4 REST API at a fixed interval."""
 
-    def __init__(self, api_client: LighterAPIClient, poll_interval: int = 3, callback: Optional[Callable] = None):
+    def __init__(self, api_client: DydxAPIClient, poll_interval: int = 5, callback: Optional[Callable] = None):
         self.api_client = api_client
         self.poll_interval = poll_interval
         self.callback = callback
@@ -26,7 +26,7 @@ class LighterPoller:
             return
         self.is_running = True
         self.task = asyncio.create_task(self._poll_loop())
-        logger.info(f"[Lighter] Poller started (interval: {self.poll_interval}s)")
+        logger.info(f"[dYdX] Poller started (interval: {self.poll_interval}s)")
 
     async def stop(self):
         self.is_running = False
@@ -36,7 +36,7 @@ class LighterPoller:
                 await self.task
             except asyncio.CancelledError:
                 pass
-        logger.info("[Lighter] Poller stopped")
+        logger.info("[dYdX] Poller stopped")
 
     async def _poll_loop(self):
         while self.is_running:
@@ -52,7 +52,7 @@ class LighterPoller:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[Lighter] Poll error: {e}")
+                logger.error(f"[dYdX] Poll error: {e}")
                 await asyncio.sleep(self.poll_interval * 2)
 
     def get_last_prices(self) -> List[Dict[str, Any]]:
