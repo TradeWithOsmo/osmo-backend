@@ -21,7 +21,7 @@ class ParadexAPIClient:
         try:
             async with httpx.AsyncClient(verify=False, timeout=20) as client:
                 # Fetch summary stats
-                resp_sum = await client.get(f"{self.base_url}/markets/summary")
+                resp_sum = await client.get(f"{self.base_url}/markets/summary", params={"market": "ALL"})
                 resp_sum.raise_for_status()
                 results_raw = resp_sum.json().get("results", [])
 
