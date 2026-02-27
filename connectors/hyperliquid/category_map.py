@@ -118,15 +118,15 @@ CATEGORY_MAP = {
 
 # Main category mapping: sub-categories → main frontend category
 _MAIN_CATEGORY = {
-    "Layer 1": "Crypto",
-    "Layer 2": "Crypto",
-    "Meme": "Crypto",
-    "AI & Big Data": "Crypto",
-    "DeFi": "Crypto",
-    "DePIN": "Crypto",
-    "RWA": "Crypto",
-    "Gaming": "Crypto",
-    "Infrastructure": "Crypto",
+    "Layer 1": "L1",
+    "Layer 2": "L2",
+    "Meme": "MEME",
+    "AI & Big Data": "AI",
+    "DeFi": "DEFI",
+    "DePIN": "DEPIN",  # Optional, frontend might map to default Crypto
+    "RWA": "RWA",
+    "Gaming": "GAMING",
+    "Infrastructure": "Crypto",  # No direct match, map to Crypto
     "Crypto": "Crypto",
     "Forex": "Forex",
     "Stocks": "Stocks",
@@ -135,11 +135,11 @@ _MAIN_CATEGORY = {
 }
 
 def get_subcategory(symbol: str) -> str:
-    """Get detailed sub-category for a symbol (e.g. Layer 1, DeFi, Meme)."""
+    """Get detailed sub-category for a symbol."""
     clean_symbol = symbol.split("-")[0].replace("/USD", "")
     return CATEGORY_MAP.get(clean_symbol, "Crypto")
 
 def get_category(symbol: str) -> str:
-    """Get main category for a symbol. Returns one of: Crypto, Forex, Stocks, Commodities, Index."""
+    """Get category for a symbol matching the frontend expected categories."""
     sub = get_subcategory(symbol)
     return _MAIN_CATEGORY.get(sub, "Crypto")
