@@ -110,9 +110,32 @@ class LighterAPIClient:
 
     async def get_markets(self) -> List[Dict[str, Any]]:
         """Return list of Lighter markets."""
-        if not self._sdk_available:
-            return []
-        results = await self.get_markets_via_sdk()
+        results = []
+        if self._sdk_available:
+            results = await self.get_markets_via_sdk()
+        
+        if not results:
+            logger.warning("[Lighter] SDK failed or unavailable. Using known market fallbacks.")
+            known_lighter = [("WETH", 0), ("WBTC", 1), ("ARB", 2), ("EZETH", 3), ("WEETH", 4), ("USDCE", 5)]
+            for base, m_id in known_lighter:
+                base_clean = base.upper().replace("USDC", "").replace("-", "")
+                unified_symbol = f"{base_clean}-USD"
+                
+                self._market_id_map[unified_symbol] = m_id
+                self._market_id_map[f"{base_clean}-LIGHTER"] = m_id
+                self._market_id_map[base_clean] = m_id
+                
+                results.append({
+                    "symbol": unified_symbol,
+                    "tradingSymbol": f"{base_clean}-LIGHTER",
+                    "from": base_clean,
+                    "to": "USD",
+                    "price": 0.0,
+                    "source": "lighter",
+                    "market_id": m_id,
+                    "market_type": "perp",
+                })
+        
         if results:
             self.last_successful_fetch = datetime.now()
         return results

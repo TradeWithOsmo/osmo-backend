@@ -161,15 +161,16 @@ async def _fetch_exchange(name: str) -> List[Dict[str, Any]]:
                 sym = _pair_from_record(m, default_quote="USDT" if name == "aster" else "USD")
                 base = m.get("from") or (sym.split("-")[0] if "-" in sym else sym)
                 m["symbol"] = sym
-                if not m.get("category"):
-                    m["category"] = canonical_registry.get_category_sync(base)
-                if not m.get("sub_category"):
-                    m["sub_category"] = canonical_registry.get_subcategory_sync(base)
-                if not m.get("sub_category"):
-                    m["sub_category"] = canonical_registry.get_subcategory_sync(base)
                 # Always expose connector key as source for frontend routing consistency.
                 m["source"] = name
                 m["canonical"] = canonical_registry.is_canonical_source(base, name)
+                
+                # Assign category if missing
+                if not m.get("category"):
+                    m["category"] = canonical_registry.get_category_sync(m.get("symbol", ""))
+                if not m.get("sub_category"):
+                    m["sub_category"] = canonical_registry.get_subcategory_sync(m.get("symbol", ""))
+                    
                 enriched.append(m)
             return enriched
 
@@ -264,7 +265,7 @@ async def get_exchanges():
 @router.get("/symbols")
 async def get_symbols(
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
-    canonical_only: bool = Query(True, description="Only canonical entries"),
+    canonical_only: bool = Query(False, description="Only canonical entries"),
 ):
     """
     Return symbol registry from symbol_registry.json.
@@ -315,14 +316,12 @@ async def get_symbol(symbol: str):
         or _clean_symbol(s.get("chainlinkSymbol", "")) == query_pair
     ]
 
+    # Remove aggressive canonical filtering to allow UI to show and use alternative connectors (e.g for TradingView).
     if not matches and query_base:
         matches = [
             s for s in cfg.get("symbols", [])
             if _clean_symbol(s.get("chainlinkSymbol", "")).split("-")[0] == query_base
         ]
-        canonical_matches = [s for s in matches if s.get("canonical", False)]
-        if canonical_matches:
-            matches = canonical_matches
 
     if not matches:
         raise HTTPException(404, f"Symbol '{symbol}' not found. Update symbol_registry.json and refresh /markets/symbols/refresh.")

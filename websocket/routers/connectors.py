@@ -781,35 +781,103 @@ async def get_funding_rate(symbol: str):
 
 @router.get("/candles/{symbol}")
 async def get_candles(
-    symbol: str,
-    timeframe: str = "1H",
+    symbol: str = "BTC-USD",
+    timeframe: str = "1m",
     limit: int = 100,
-    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium)$"),
+    exchange: Optional[str] = Query(None, description="Internal exchange source (hyperliquid, ostium, avantis, aster, lighter, vest)"),
+    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium|avantis|aster|lighter|vest)$"),
 ):
     """
-    OHLCV candles endpoint used by agent market-data tools.
+    OHLCV candles endpoint for TradingView integration.
+    Routes to the session-scoped candle cache with exchange-specific fallbacks.
     """
     try:
-        normalized_asset = asset_type.lower()
+        from Hyperliquid.http_client import http_client as hl_client
+        from Aster.api_client import AsterAPIClient
+        from Vest.api_client import VestAPIClient
+        import time
+        from typing import List, Dict, Any
+        
+        # Priority: exchange parameter > asset_type
+        source = (exchange or asset_type).lower()
         safe_limit = max(1, min(int(limit or 100), 1500))
+        
+        # Clean symbol for cache
+        clean_sym = symbol.upper().replace("/", "-")
+        coin = clean_sym.split("-")[0]
+        if "-" not in clean_sym and source in {"hyperliquid", "aster", "lighter", "vest", "avantis"}:
+            # Default to USD quote for crypto if not specified
+            clean_sym = f"{clean_sym}-USD"
 
-        if normalized_asset in {"crypto", "hyperliquid"}:
-            connector = _require_connector("hyperliquid")
-            normalized_symbol = _normalize_hl_symbol(symbol)
-        else:
-            connector = _require_connector("ostium")
-            normalized_symbol = (symbol or "").upper().replace("-", "").replace("/", "")
+        logger.info(f"[connectors] Candles request symbol={symbol} (clean={clean_sym}) source={source} timeframe={timeframe}")
 
-        return await connector.fetch(
-            normalized_symbol,
-            data_type="candles",
-            timeframe=timeframe,
-            limit=safe_limit,
-        )
-    except HTTPException:
-        raise
+        # Map timeframe to HL interval
+        interval_map = {
+            "1": "1m", "5": "5m", "15": "15m", "30": "30m", "60": "1h", "240": "4h",
+            "D": "1d", "1D": "1d", "W": "1w", "1W": "1w",
+            "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w"
+        }
+        interval = interval_map.get(timeframe, "1h")
+        
+        bars = []
+        
+        if source == "aster":
+            try:
+                # Aster API might need symbol like BTCUSDT
+                aster_sym = clean_sym.replace("-USD", "USDT")
+                aster_client = AsterAPIClient()
+                aster_data = await aster_client.get_klines(symbol=aster_sym, interval=interval, limit=safe_limit)
+                await aster_client.close()
+                if isinstance(aster_data, list):
+                    # Aster/Binance format: [Open time, Open, High, Low, Close, Volume, Close time, ...]
+                    for b in aster_data:
+                        if len(b) >= 6:
+                            bars.append({
+                                "t": int(b[0]),
+                                "o": float(b[1]),
+                                "h": float(b[2]),
+                                "l": float(b[3]),
+                                "c": float(b[4]),
+                                "v": float(b[5])
+                            })
+            except Exception as e:
+                logger.error(f"[connectors] Aster candles failed: {e}")
+                
+        elif source == "vest":
+            try:
+                vest_client = VestAPIClient()
+                vest_sym = clean_sym # usually ETH-USD
+                vest_data = await vest_client.get_klines(symbol=vest_sym, interval=interval, limit=safe_limit)
+                await vest_client.close()
+                if isinstance(vest_data, list):
+                    # Format standard vest data if it diverges, for now assume standard HL like format
+                    # but get_klines in Vest returns [{"t": ..., "o": ..., "h": ..., "l": ..., "c": ..., "v": ...}]
+                    bars = vest_data
+            except Exception as e:
+                logger.error(f"[connectors] Vest candles failed: {e}")
+        
+        # If not fetched by specific exchanges, or fallback
+        if not bars:
+            try:
+                bars_raw = await hl_client.get_candles(coin, interval)
+                bars_raw = bars_raw[-safe_limit:] if bars_raw else []
+                for b in bars_raw:
+                    bars.append({
+                        "t": int(b.get("timestamp", 0)),
+                        "o": float(b.get("open", 0)),
+                        "h": float(b.get("high", 0)),
+                        "l": float(b.get("low", 0)),
+                        "c": float(b.get("close", 0)),
+                        "v": float(b.get("volume", 0))
+                    })
+            except Exception as e:
+                logger.debug(f"[connectors] Hyperliquid fallback failed for {coin}: {e}")
+        
+        return bars
     except Exception as exc:
+        logger.error(f"[connectors] Candles fetch failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
 
 
 @router.get("/analysis/technical/{symbol}")

@@ -4,11 +4,21 @@ import logging
 import time
 
 from Hyperliquid.http_client import http_client as hl_client
-from services.session_candle_cache import session_candle_cache, to_timeframe
+
 # Example: from ..Ostium.api_client import ostium_client # If implemented
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+def to_timeframe(resolution_or_tf: Optional[str]) -> str:
+    if not resolution_or_tf:
+        return "1m"
+    raw = str(resolution_or_tf).strip()
+    _map = {
+        "1": "1m", "5": "5m", "15": "15m", "30": "30m", "60": "1h", "240": "4h",
+        "D": "1d", "1D": "1d", "W": "1w", "1W": "1w"
+    }
+    return _map.get(raw, raw)
 
 @router.get("")
 async def get_history(
@@ -23,21 +33,7 @@ async def get_history(
     """
     try:
         timeframe = to_timeframe(resolution)
-        if timeframe in {"1m", "15m", "30m"}:
-            try:
-                bars = await session_candle_cache.get_candles(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    limit=5000,
-                    source_hint=source,
-                )
-                if bars:
-                    # TV `from`/`to` are seconds. Cache uses milliseconds.
-                    from_ms = int(from_ts * 1000)
-                    to_ms = int(to_ts * 1000)
-                    return [b for b in bars if int(b.get("timestamp", 0)) >= from_ms and int(b.get("timestamp", 0)) <= to_ms]
-            except Exception as cache_exc:
-                logger.warning(f"Session cache history failed for {symbol}: {cache_exc}")
+
 
         if source.lower() == "hyperliquid":
             # Map TV resolution to HL interval
