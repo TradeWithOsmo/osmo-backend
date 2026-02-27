@@ -247,6 +247,33 @@ After preparation:
 - Commit/push to `main` to auto-deploy
 - Or run workflow manually and set `ref` input if you want a non-main branch/tag deploy
 
+### GitHub Actions Auto Deploy (No Inbound SSH, Recommended for Idle VPS)
+
+Workflow file: `.github/workflows/deploy-vps-runner.yml`
+
+This mode runs deployment directly on VPS using a self-hosted GitHub runner.
+It does not require inbound SSH from GitHub Actions runner to your VPS.
+
+One-time setup on VPS (from provider web console):
+
+```bash
+cd /root
+mkdir -p actions-runner && cd actions-runner
+
+# Download latest runner from GitHub docs/release page as needed
+curl -o actions-runner-linux-x64.tar.gz -L https://github.com/actions/runner/releases/download/v2.328.0/actions-runner-linux-x64-2.328.0.tar.gz
+tar xzf ./actions-runner-linux-x64.tar.gz
+
+# Use URL/token from GitHub Repo -> Settings -> Actions -> Runners -> New self-hosted runner
+./config.sh --url https://github.com/TradeWithOsmo/osmo-backend --token <RUNNER_REG_TOKEN> --labels tradingapi --unattended
+./svc.sh install
+./svc.sh start
+```
+
+After setup:
+- Ensure runner status is `Online` in GitHub repo settings.
+- Push to `main` or run workflow manually.
+
 ### Uptime Kuma (Self-Hosted Monitoring + Status Page)
 
 Uptime Kuma is fully auto-bootstrapped by Docker Compose (no manual checklist in UI required).
