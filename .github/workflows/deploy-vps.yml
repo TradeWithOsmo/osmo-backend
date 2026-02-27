@@ -57,15 +57,15 @@ jobs:
 
           REPO_SLUG="TradeWithOsmo/osmo-backend"
           APP_DIR="/root/backend"
+          AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$DEPLOY_REPO_TOKEN" | base64 -w0)"
 
           if [ ! -d "$APP_DIR/.git" ]; then
-            git clone "https://github.com/${REPO_SLUG}.git" "$APP_DIR"
+            git -c "http.extraHeader=${AUTH_HEADER}" clone "https://github.com/${REPO_SLUG}.git" "$APP_DIR"
           fi
 
           cd "$APP_DIR"
           git remote set-url origin "https://github.com/${REPO_SLUG}.git"
 
-          AUTH_HEADER="Authorization: Basic $(printf 'x-access-token:%s' "$DEPLOY_REPO_TOKEN" | base64 -w0)"
           git -c "http.extraHeader=${AUTH_HEADER}" fetch --prune origin "$TARGET_REF"
           git checkout -B "$TARGET_REF" "FETCH_HEAD"
 
