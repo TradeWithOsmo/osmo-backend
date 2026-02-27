@@ -11,7 +11,9 @@ ENV PYTHONUNBUFFERED=1 \
 # Install system dependencies (needed for psycopg2 and others)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+    build-essential \
     gcc \
+    libc6-dev \
     libpq-dev \
     curl \
     && apt-get clean \
