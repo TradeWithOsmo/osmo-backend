@@ -230,6 +230,7 @@ Required GitHub repository secrets:
 - `VPS_PORT` -> `13318`
 - `VPS_USER` -> `root`
 - `VPS_SSH_PRIVATE_KEY` -> private key content for VPS login (recommended `ed25519`)
+- `VPS_PASSWORD` -> optional fallback if key is not configured
 - `DEPLOY_REPO_TOKEN` -> GitHub token with `repo` read access for this repository
 
 Minimal one-time server preparation:

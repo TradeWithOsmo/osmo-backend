@@ -25,8 +25,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "${VPS_SSH_PRIVATE_KEY:-}" ]; then
+            printf '%s' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+          fi
           ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy on VPS
@@ -34,18 +36,30 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
           DEPLOY_REPO_TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
           INPUT_REF: ${{ github.event.inputs.ref }}
           EVENT_NAME: ${{ github.event_name }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [ -z "${VPS_PASSWORD:-}" ] && [ ! -f ~/.ssh/id_ed25519 ]; then
+            echo "Either VPS_PASSWORD or VPS_SSH_PRIVATE_KEY must be configured."
+            exit 1
+          fi
           TARGET_REF="$GITHUB_REF_NAME"
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "${INPUT_REF:-}" ]; then
             TARGET_REF="$INPUT_REF"
           fi
 
-          ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+          SSH_BIN="ssh -p $VPS_PORT"
+          if [ -n "${VPS_PASSWORD:-}" ]; then
+            sudo apt-get update
+            sudo apt-get install -y sshpass
+            SSH_BIN="sshpass -p '$VPS_PASSWORD' ssh -o StrictHostKeyChecking=yes -p $VPS_PORT"
+          fi
+
+          eval "$SSH_BIN" "$VPS_USER@$VPS_HOST" \
             "TARGET_REF='$TARGET_REF' DEPLOY_REPO_TOKEN='$DEPLOY_REPO_TOKEN' bash -s" <<'REMOTE'
           set -euo pipefail
 
