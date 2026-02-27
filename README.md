@@ -217,6 +217,36 @@ Security note:
 - Do not store passwords or private keys in this repository.
 - Keep current credentials in your team secret manager / secure channel.
 
+### GitHub Actions Auto Deploy
+
+Workflow file: `.github/workflows/deploy-vps.yml`
+
+Trigger:
+- Push to `main`
+- Manual run from Actions tab (`workflow_dispatch`)
+
+Required GitHub repository secrets:
+- `VPS_HOST` -> `ip.atlantic-server.com`
+- `VPS_PORT` -> `13318`
+- `VPS_USER` -> `root`
+- `VPS_SSH_PRIVATE_KEY` -> private key content for VPS login (recommended `ed25519`)
+- `DEPLOY_REPO_TOKEN` -> GitHub token with `repo` read access for this repository
+
+Minimal one-time server preparation:
+
+```bash
+# On local machine, generate deploy key pair
+ssh-keygen -t ed25519 -f ~/.ssh/osmo_deploy -C github-actions-deploy
+
+# Add public key to VPS
+ssh-copy-id -i ~/.ssh/osmo_deploy.pub -p 13318 root@ip.atlantic-server.com
+```
+
+After preparation:
+- Put content of `~/.ssh/osmo_deploy` into GitHub secret `VPS_SSH_PRIVATE_KEY`
+- Commit/push to `main` to auto-deploy
+- Or run workflow manually and set `ref` input if you want a non-main branch/tag deploy
+
 ### Uptime Kuma (Self-Hosted Monitoring + Status Page)
 
 Uptime Kuma is fully auto-bootstrapped by Docker Compose (no manual checklist in UI required).
