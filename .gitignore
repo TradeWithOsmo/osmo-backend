@@ -44,6 +44,7 @@ Thumbs.db
 
 # Project Specific
 secret/
+.deploy/
 *.log
 **/__pycache__
 ostium_test_output.txt

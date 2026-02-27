@@ -229,8 +229,7 @@ Required GitHub repository secrets:
 - `VPS_HOST` -> `ip.atlantic-server.com`
 - `VPS_PORT` -> `13318`
 - `VPS_USER` -> `root`
-- `VPS_SSH_PRIVATE_KEY` -> private key content for VPS login (recommended `ed25519`)
-- `VPS_PASSWORD` -> optional fallback if key is not configured
+- `VPS_SSH_PRIVATE_KEY` -> private key content for VPS login (`ed25519`, required)
 - `DEPLOY_REPO_TOKEN` -> GitHub token with `repo` read access for this repository
 
 Minimal one-time server preparation:
