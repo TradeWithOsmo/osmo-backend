@@ -765,6 +765,7 @@ from routers.watchlist import router as watchlist_router # NEW
 from routers.tools import router as tools_router
 from routers.arena import router as arena_router
 from routers.trade_setups import router as trade_setups_router  # NEW: GP/GL monitoring
+from routers.tradebook import router as tradebook_router  # NEW: multi-exchange tradebook
 
 app.include_router(user_router, prefix="/api/user", tags=["user"])
 app.include_router(leaderboard_router, prefix="/api/leaderboard", tags=["leaderboard"])
@@ -781,6 +782,8 @@ app.include_router(history_router, prefix="/api/history", tags=["history"]) # NE
 app.include_router(watchlist_router, tags=["watchlist"]) # NEW: /api/watchlist (prefix already in router)
 app.include_router(tools_router)
 app.include_router(trade_setups_router)  # NEW: /api/trade-setups (GP/GL monitoring)
+app.include_router(tradebook_router, prefix="/api/tradebook", tags=["tradebook"])  # REST: /api/tradebook/{symbol}/orderbook
+app.include_router(tradebook_router)  # WS: /ws/orderbook/{symbol} and /ws/trades/{symbol}
 
 
 
@@ -956,53 +959,25 @@ async def exchange_websocket(websocket: WebSocket, exchange: str, symbol: str):
 
 
 @app.websocket("/ws/orderbook/{symbol}")
-async def orderbook_websocket(websocket: WebSocket, symbol: str):
-    """Stream L2 Orderbook data"""
-    await websocket.accept()
-    
-    coin = symbol.split("-")[0]
-    
-    if symbol not in connected_l2book_clients:
-        connected_l2book_clients[symbol] = set()
-    connected_l2book_clients[symbol].add(websocket)
-    
-    # Subscribe to Hyperliquid
-    if hyperliquid_client and hyperliquid_client.is_connected:
-        await hyperliquid_client.subscribe("l2Book", handle_l2book_message, coin=coin)
-        
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        pass
-    finally:
-        if symbol in connected_l2book_clients:
-            connected_l2book_clients[symbol].discard(websocket)
+async def orderbook_websocket(websocket: WebSocket, symbol: str, exchange: str = "hyperliquid"):
+    """
+    Stream orderbook data — routes to the multi-exchange tradebook router.
+    For Hyperliquid: subscribes to native WS l2Book feed.
+    For all others: polls exchange REST API via tradebook modules.
+    """
+    from routers.tradebook import ws_orderbook
+    await ws_orderbook(websocket, symbol=symbol, exchange=exchange, interval=1.5)
 
 
 @app.websocket("/ws/trades/{symbol}")
-async def trades_websocket(websocket: WebSocket, symbol: str):
-    """Stream Trades data"""
-    await websocket.accept()
-    
-    coin = symbol.split("-")[0]
-    
-    if symbol not in connected_trades_clients:
-        connected_trades_clients[symbol] = set()
-    connected_trades_clients[symbol].add(websocket)
-    
-    # Subscribe to Hyperliquid
-    if hyperliquid_client and hyperliquid_client.is_connected:
-        await hyperliquid_client.subscribe("trades", handle_trades_message, coin=coin)
-        
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        pass
-    finally:
-        if symbol in connected_trades_clients:
-            connected_trades_clients[symbol].discard(websocket)
+async def trades_websocket(websocket: WebSocket, symbol: str, exchange: str = "hyperliquid"):
+    """
+    Stream recent trades — routes to the multi-exchange tradebook router.
+    For Hyperliquid: subscribes to native WS trades feed.
+    For all others: polls exchange REST API via tradebook modules.
+    """
+    from routers.tradebook import ws_trades
+    await ws_trades(websocket, symbol=symbol, exchange=exchange, interval=2.0)
 
 
 @app.websocket("/ws/bridge/{address}")
