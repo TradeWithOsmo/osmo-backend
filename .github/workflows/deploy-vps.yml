@@ -70,5 +70,8 @@ jobs:
           git checkout -B "$TARGET_REF" "FETCH_HEAD"
 
           cd websocket
+          if [ ! -f .env ]; then
+            touch .env
+          fi
           sh scripts/deploy_stack.sh
           REMOTE
