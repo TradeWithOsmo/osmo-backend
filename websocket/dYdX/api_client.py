@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,8 @@ class DydxAPIClient:
         """
         Fetch perpetual market data from dYdX v4 indexer.
         GET /perpetualMarkets returns: ticker, status, oraclePrice, priceChange24H,
-        volume24H, trades24H, openInterest, nextFundingRate, high_24h, low_24h
+        volume24H, trades24H, openInterest, nextFundingRate, initialMarginFraction.
+        max_leverage = 1 / initialMarginFraction
         """
         try:
             async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as client:
@@ -32,6 +33,11 @@ class DydxAPIClient:
                     oracle = float(p.get("oraclePrice") or 0)
                     change_24h = float(p.get("priceChange24H") or 0)
                     change_pct = (change_24h / (oracle - change_24h) * 100) if (oracle - change_24h) != 0 else 0.0
+
+                    # max_leverage = 1 / initialMarginFraction (e.g. 0.05 → 20x)
+                    imf = float(p.get("initialMarginFraction") or 0.05)
+                    max_lev = int(1 / imf) if imf > 0 else 20
+
                     prices.append({
                         "symbol": display,
                         "from": base,
@@ -45,6 +51,7 @@ class DydxAPIClient:
                         "change_24h": change_24h,
                         "change_percent_24h": change_pct,
                         "trades_24h": int(p.get("trades24H") or 0),
+                        "max_leverage": max_lev,
                         "source": "dydx",
                     })
                 return prices

@@ -142,6 +142,10 @@ class AsterAPIClient:
             quote = meta.get("quoteAsset", "USDC")
             base = base.upper()
 
+            # Max leverage from requiredMarginPercent (e.g. 5% → 20x)
+            req_margin = float(meta.get("requiredMarginPercent") or 10)
+            max_lev = int(100 / req_margin) if req_margin > 0 else 20
+
             results.append({
                 "symbol": sym,
                 "tradingSymbol": sym,
@@ -155,6 +159,7 @@ class AsterAPIClient:
                 "change_percent_24h": float(ticker.get("priceChangePercent") or 0),
                 "funding_rate": float(ticker.get("lastFundingRate") or 0),
                 "open_interest": float(ticker.get("openInterest") or 0),
+                "max_leverage": max_lev,
                 "source": "aster",
             })
 

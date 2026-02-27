@@ -14,8 +14,9 @@ class OrderlyAPIClient:
     async def get_latest_prices(self) -> List[Dict[str, Any]]:
         """
         Fetch live futures data from Orderly.
-        GET /public/futures returns: symbol, index_price, mark_price, volume_24h,
-        open_interest, est_funding_rate, last_funding_rate, change_24h, change_percent_24h, high_24h, low_24h
+        GET /public/futures — returns per-market stats + risk params.
+        Fields: symbol, index_price, mark_price, volume_24h, open_interest,
+                est_funding_rate, high_24h, low_24h, imr_factor (initial margin ratio)
         """
         try:
             async with httpx.AsyncClient(verify=False, timeout=20) as client:
@@ -34,6 +35,11 @@ class OrderlyAPIClient:
                     close_p = float(row.get("close_24h") or mark)
                     change_24h = close_p - open_p
                     change_pct = (change_24h / open_p * 100) if open_p else 0.0
+
+                    # Max leverage from imr_factor (initial margin ratio, e.g. 0.05 → 20x)
+                    imr = float(row.get("imr_factor", 0) or row.get("base_imr", 0) or 0.05)
+                    max_lev = int(1 / imr) if imr > 0 else 20
+
                     prices.append({
                         "symbol": display,
                         "from": base,
@@ -46,6 +52,7 @@ class OrderlyAPIClient:
                         "funding_rate": float(row.get("est_funding_rate") or row.get("last_funding_rate") or 0),
                         "change_24h": change_24h,
                         "change_percent_24h": change_pct,
+                        "max_leverage": max_lev,
                         "source": "orderly",
                     })
                 return prices

@@ -126,37 +126,54 @@ async def _fetch_exchange(name: str) -> List[Dict[str, Any]]:
                     sym = f"{coin}-USD"
                     try:
                         price = float(ctx.get("midPx") or ctx.get("markPx") or 0)
+                        # Hyperliquid specific parsing (prevDayPx is available in ctx)
+                        prev_px = float(ctx.get("prevDayPx") or price)
+                        change_24h = price - prev_px
+                        change_pct = (change_24h / prev_px * 100) if prev_px else 0
+
+                        results.append({
+                            "symbol": sym,
+                            "from": coin,
+                            "to": "USD",
+                            "price": price,
+                            "change_24h": change_24h,
+                            "change_percent_24h": change_pct,
+                            "volume_24h": float(ctx.get("dayNtlVlm") or 0),
+                            "funding_rate": float(ctx.get("funding") or 0),
+                            "open_interest": float(ctx.get("openInterest") or 0),
+                            "max_leverage": int(asset_info.get("maxLeverage") or 50),
+                            "source": "hyperliquid",
+                            "canonical": canonical_registry.is_canonical_source(coin, "hyperliquid"),
+                            "category": canonical_registry.get_category_sync(sym),
+                            "sub_category": canonical_registry.get_subcategory_sync(sym)
+                        })
                     except Exception:
-                        price = 0.0
-                    results.append({
-                        "symbol": sym,
-                        "from": coin,
-                        "to": "USD",
-                        "price": price,
-                        "source": "hyperliquid",
-                        "canonical": canonical_registry.is_canonical_source(coin, "hyperliquid"),
-                        "category": canonical_registry.get_category_sync(sym),
-                        "sub_category": canonical_registry.get_subcategory_sync(sym)
-                    })
+                        continue
             return results
 
         if name == "ostium":
             from Ostium.api_client import OstiumAPIClient
-            from services.canonical_source_registry import canonical_registry
+            from Ostium.normalizer import normalize_ostium_prices
             client = OstiumAPIClient()
             raw = await client.get_latest_prices()
-            if not raw or not isinstance(raw, list):
+            if not raw:
                 return []
-            return [
-                {"symbol": f"{item.get('from')}-{item.get('to', 'USD')}",
-                 "from": item.get("from"), "to": item.get("to", "USD"),
-                 "price": float(item.get("mid", 0)),
-                  "source": "ostium", 
-                  "canonical": canonical_registry.is_canonical_source(item.get("from"), "ostium"),
-                  "category": canonical_registry.get_category_sync(f"{item.get('from')}"),
-                  "sub_category": canonical_registry.get_subcategory_sync(f"{item.get('from')}")}
-                for item in raw if item.get("from")
-            ]
+            
+            normalized_map = normalize_ostium_prices(raw)
+            results = []
+            for symbol, data in normalized_map.items():
+                results.append({
+                    "symbol": symbol,
+                    "from": symbol.split("-")[0],
+                    "to": symbol.split("-")[1] if "-" in symbol else "USD",
+                    "price": float(data.get("price", 0)),
+                    "source": "ostium",
+                    "canonical": data.get("canonical", False),
+                    "category": data.get("category", "Crypto"),
+                    "max_leverage": data.get("maxLeverage", 50),
+                    "sub_category": data.get("sub_category")
+                })
+            return results
 
         client = _get_client(name)
         if client and hasattr(client, "get_markets"):
@@ -195,6 +212,8 @@ async def _fetch_exchange(name: str) -> List[Dict[str, Any]]:
                     ("fundingRate",        "funding_rate"),
                     ("open_interest",      "open_interest"),
                     ("openInterest",       "open_interest"),
+                    ("max_leverage",       "max_leverage"),
+                    ("maxLeverage",        "max_leverage"),
                 ]:
                     if src_key in m and dst_key not in m:
                         m[dst_key] = m[src_key]

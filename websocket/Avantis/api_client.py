@@ -167,6 +167,7 @@ class AvantisAPIClient:
                 "to": p["to"],
                 "price": None,   # price comes from Pyth feeds, not REST
                 "pair_index": p.get("pair_index"),
+                "max_leverage": 50,  # Avantis default max leverage
                 "source": "avantis",
             })
 

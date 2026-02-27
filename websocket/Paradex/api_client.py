@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +14,24 @@ class ParadexAPIClient:
     async def get_latest_prices(self) -> List[Dict[str, Any]]:
         """
         Fetch market summary from Paradex.
-        GET /markets/summary returns: symbol, mark_price, last_traded_price, volume_24h,
-        open_interest, funding_rate, price_change_24h_percent, high_24h, low_24h
+        GET /markets/summary — mark_price, volume_24h, open_interest, funding_rate,
+                              price_change_24h_percent, high_24h, low_24h.
+        GET /markets — max_leverage per market.
         """
         try:
             async with httpx.AsyncClient(verify=False, timeout=20) as client:
-                resp = await client.get(f"{self.base_url}/markets/summary")
-                resp.raise_for_status()
-                results_raw = resp.json().get("results", [])
+                # Fetch summary stats
+                resp_sum = await client.get(f"{self.base_url}/markets/summary")
+                resp_sum.raise_for_status()
+                results_raw = resp_sum.json().get("results", [])
+
+                # Fetch market configs for max_leverage
+                resp_mkts = await client.get(f"{self.base_url}/markets")
+                markets_cfg: Dict[str, Dict] = {}
+                if resp_mkts.status_code == 200:
+                    for m in (resp_mkts.json().get("results", []) or []):
+                        markets_cfg[m.get("symbol", "")] = m
+
                 prices = []
                 for item in results_raw:
                     sym = item.get("symbol", "")
@@ -31,6 +41,11 @@ class ParadexAPIClient:
                     display = f"{base}-USD"
                     mark = float(item.get("mark_price") or item.get("last_traded_price") or 0)
                     change_pct = float(item.get("price_change_24h_percent") or 0)
+
+                    # max_leverage from market config
+                    cfg = markets_cfg.get(sym, {})
+                    max_lev = int(cfg.get("max_leverage") or 20)
+
                     prices.append({
                         "symbol": display,
                         "from": base,
@@ -43,6 +58,7 @@ class ParadexAPIClient:
                         "funding_rate": float(item.get("funding_rate") or 0),
                         "change_percent_24h": change_pct,
                         "change_24h": mark * change_pct / 100 if mark else 0,
+                        "max_leverage": max_lev,
                         "source": "paradex",
                     })
                 return prices
