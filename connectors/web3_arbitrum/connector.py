@@ -4,8 +4,19 @@ from pathlib import Path
 from typing import Any, Optional, Dict, List
 from web3 import Web3
 from web3.contract import Contract
-from web3.middleware import ExtraDataToPOAMiddleware
 from eth_account import Account
+
+try:
+    # web3.py v6/v7 can expose POA middleware from different module paths.
+    from web3.middleware import ExtraDataToPOAMiddleware as PoAMiddleware
+except ImportError:
+    try:
+        from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware as PoAMiddleware
+    except ImportError:
+        try:
+            from web3.middleware import geth_poa_middleware as PoAMiddleware
+        except ImportError:
+            PoAMiddleware = None
 
 try:
     from backend.websocket.config import settings
@@ -40,10 +51,11 @@ class ArbitrumWeb3Connector:
             request_kwargs={'timeout': settings.WEB3_PROVIDER_TIMEOUT}
         ))
         
-        # Add middleware for POA chains if needed (Arbitrum handles this, but good practice)
-        # Web3.py v7 uses middleware_onion or distinct middleware management.
-        # Ensure we use the class directly.
-        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        # Add middleware for POA chains if available (Arbitrum generally tolerates extraData).
+        if PoAMiddleware is not None:
+            self.w3.middleware_onion.inject(PoAMiddleware, layer=0)
+        else:
+            logger.warning("POA middleware not available in installed web3 package; continuing without it.")
         
         # Verify connection
         if not self.w3.is_connected():
