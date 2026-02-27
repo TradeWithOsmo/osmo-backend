@@ -292,6 +292,80 @@ async def get_exchanges():
     return {"exchanges": cfg.get("exchange_metadata", {})}
 
 
+@router.get("/filters")
+async def get_filters():
+    """
+    Return dynamic filter options for the symbol selector UI.
+    Reads from symbol_registry.json and returns:
+      - categories: sorted list of unique categories with market counts
+      - sub_categories: sorted list of unique sub-categories with counts
+      - exchanges: list of exchange names with counts
+    Frontend should replace its hardcoded CATEGORIES array with this endpoint.
+    """
+    cfg = _load_symbol_registry()
+    symbols = cfg.get("symbols", [])
+
+    # Base ordering for categories (user-friendly sort order)
+    PREFERRED_ORDER = [
+        "Crypto", "AI", "MEME", "DEFI", "L1", "L2", "GAMING",
+        "RWA", "DEGEN", "STABLE", "LST", "BTC-ECO", "DEPIN", "MODULAR",
+        "Forex", "Stocks", "Commodities", "Index"
+    ]
+    ORDER_MAP = {c.upper(): i for i, c in enumerate(PREFERRED_ORDER)}
+
+    from collections import defaultdict
+    cat_counts: dict = defaultdict(int)
+    sub_counts: dict = defaultdict(int)
+    exchange_counts: dict = defaultdict(int)
+
+    seen_canonical: set = set()
+    for sym in symbols:
+        chain_sym = sym.get("chainlinkSymbol", "") or sym.get("symbol", "")
+        if chain_sym in seen_canonical:
+            continue
+        seen_canonical.add(chain_sym)
+
+        cat = (sym.get("category") or "Crypto").strip()
+        cat_counts[cat] += 1
+
+        sub = sym.get("subCategory") or sym.get("sub_category") or ""
+        for s in [x.strip() for x in sub.split(",") if x.strip()]:
+            sub_counts[s] += 1
+
+        for ex in (sym.get("exchanges") or [sym.get("exchange")] if sym.get("exchange") else []):
+            if ex:
+                exchange_counts[ex.lower()] += 1
+
+    def sort_cats(items):
+        return sorted(items, key=lambda x: (ORDER_MAP.get(x[0].upper(), 999), x[0]))
+
+    categories = [
+        {"name": name, "count": count}
+        for name, count in sort_cats(cat_counts.items())
+        if count > 0
+    ]
+
+    sub_categories = [
+        {"name": name, "count": count}
+        for name, count in sorted(sub_counts.items(), key=lambda x: (-x[1], x[0]))
+        if count > 0
+    ][:30]  # Top 30 subcategories
+
+    exchanges = [
+        {"name": name, "count": count}
+        for name, count in sorted(exchange_counts.items(), key=lambda x: (-x[1], x[0]))
+    ]
+
+    return {
+        "categories": categories,
+        "sub_categories": sub_categories,
+        "exchanges": exchanges,
+        "total_symbols": len(seen_canonical),
+    }
+
+
+
+
 @router.get("/symbols")
 async def get_symbols(
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
