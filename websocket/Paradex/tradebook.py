@@ -30,10 +30,7 @@ async def get_orderbook(symbol: str, depth: int = 20) -> Optional[Dict[str, Any]
     paradex_sym = _to_paradex_symbol(symbol)
     try:
         async with httpx.AsyncClient(timeout=8, verify=False) as client:
-            resp = await client.get(
-                f"{_BASE}/orderbook",
-                params={"market": paradex_sym},
-            )
+            resp = await client.get(f"{_BASE}/orderbook/{paradex_sym}")
             resp.raise_for_status()
             data = resp.json()
             bids = data.get("bids", [])
