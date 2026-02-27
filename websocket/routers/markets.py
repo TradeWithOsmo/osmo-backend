@@ -170,13 +170,37 @@ async def _fetch_exchange(name: str) -> List[Dict[str, Any]]:
                 # Always expose connector key as source for frontend routing consistency.
                 m["source"] = name
                 m["canonical"] = canonical_registry.is_canonical_source(base, name)
-                
+
                 # Assign category if missing
                 if not m.get("category"):
                     m["category"] = canonical_registry.get_category_sync(m.get("symbol", ""))
                 if not m.get("sub_category"):
                     m["sub_category"] = canonical_registry.get_subcategory_sync(m.get("symbol", ""))
-                    
+
+                # Normalise 24h stat field names (some clients use snake_case, some camelCase)
+                # Ensures consistent keys for marketService.ts frontend mapping
+                for src_key, dst_key in [
+                    ("change_percent_24h", "change_percent_24h"),
+                    ("priceChangePercent", "change_percent_24h"),
+                    ("change_24h",         "change_24h"),
+                    ("priceChange",        "change_24h"),
+                    ("high_24h",          "high_24h"),
+                    ("highPrice",          "high_24h"),
+                    ("low_24h",           "low_24h"),
+                    ("lowPrice",           "low_24h"),
+                    ("volume_24h",        "volume_24h"),
+                    ("quoteVolume",        "volume_24h"),
+                    ("funding_rate",       "funding_rate"),
+                    ("lastFundingRate",    "funding_rate"),
+                    ("fundingRate",        "funding_rate"),
+                    ("open_interest",      "open_interest"),
+                    ("openInterest",       "open_interest"),
+                ]:
+                    if src_key in m and dst_key not in m:
+                        m[dst_key] = m[src_key]
+                    elif src_key in m and m.get(dst_key, 0) == 0 and m[src_key] != 0:
+                        m[dst_key] = m[src_key]
+
                 enriched.append(m)
             return enriched
 

@@ -9,31 +9,17 @@ class DydxAPIClient:
         self.base_url = "https://indexer.dydx.trade/v4"
 
     async def get_markets(self) -> List[Dict[str, Any]]:
-        try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
-                resp = await client.get(f"{self.base_url}/perpetualMarkets", timeout=20)
-                resp.raise_for_status()
-                markets = []
-                data = resp.json().get("markets", {})
-                for key, p in data.items():
-                    sym = p.get("ticker", "")
-                    if p.get("status") == "ACTIVE" and sym.endswith("-USD"):
-                        base = sym.replace("-USD", "").upper()
-                        markets.append({
-                            "symbol": f"{base}-USD",
-                            "from": base,
-                            "to": "USD",
-                        })
-                return markets
-        except Exception as e:
-            logger.error(f"[dYdX] get_markets failed: {e}")
-            return []
+        return await self.get_latest_prices() or []
 
     async def get_latest_prices(self) -> List[Dict[str, Any]]:
-        """Fetch live market data including prices from dYdX v4 indexer."""
+        """
+        Fetch perpetual market data from dYdX v4 indexer.
+        GET /perpetualMarkets returns: ticker, status, oraclePrice, priceChange24H,
+        volume24H, trades24H, openInterest, nextFundingRate, high_24h, low_24h
+        """
         try:
-            async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
-                resp = await client.get(f"{self.base_url}/perpetualMarkets", timeout=20)
+            async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=20) as client:
+                resp = await client.get(f"{self.base_url}/perpetualMarkets")
                 resp.raise_for_status()
                 prices = []
                 data = resp.json().get("markets", {})
@@ -43,13 +29,23 @@ class DydxAPIClient:
                         continue
                     base = sym.replace("-USD", "").upper()
                     display = f"{base}-USD"
+                    oracle = float(p.get("oraclePrice") or 0)
+                    change_24h = float(p.get("priceChange24H") or 0)
+                    change_pct = (change_24h / (oracle - change_24h) * 100) if (oracle - change_24h) != 0 else 0.0
                     prices.append({
                         "symbol": display,
-                        "price": p.get("oraclePrice") or p.get("priceChange24H") or 0,
-                        "oracle_price": p.get("oraclePrice") or 0,
-                        "volume_24h": p.get("volume24H") or 0,
-                        "open_interest": p.get("openInterest") or 0,
-                        "next_funding_rate": p.get("nextFundingRate") or 0,
+                        "from": base,
+                        "to": "USD",
+                        "price": oracle,
+                        "volume_24h": float(p.get("volume24H") or 0),
+                        "high_24h": float(p.get("high24h") or 0),
+                        "low_24h": float(p.get("low24h") or 0),
+                        "open_interest": float(p.get("openInterest") or 0),
+                        "funding_rate": float(p.get("nextFundingRate") or 0),
+                        "change_24h": change_24h,
+                        "change_percent_24h": change_pct,
+                        "trades_24h": int(p.get("trades24H") or 0),
+                        "source": "dydx",
                     })
                 return prices
         except Exception as e:

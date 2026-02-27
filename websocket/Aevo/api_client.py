@@ -9,34 +9,20 @@ class AevoAPIClient:
         self.base_url = "https://api.aevo.xyz"
 
     async def get_markets(self) -> List[Dict[str, Any]]:
-        try:
-            async with httpx.AsyncClient(verify=False) as client:
-                resp = await client.get(f"{self.base_url}/markets", timeout=20)
-                resp.raise_for_status()
-                markets = []
-                for p in resp.json():
-                    if isinstance(p, dict) and p.get("instrument_type") == "PERPETUAL":
-                        base = p.get("underlying_asset", "").upper()
-                        markets.append({
-                            "symbol": f"{base}-USD",
-                            "from": base,
-                            "to": "USD",
-                        })
-                return markets
-        except Exception as e:
-            logger.error(f"[Aevo] get_markets failed: {e}")
-            return []
+        return await self.get_latest_prices() or []
 
     async def get_latest_prices(self) -> List[Dict[str, Any]]:
-        """Fetch live tickers from Aevo's statistics endpoint."""
+        """
+        Fetch live statistics from Aevo.
+        GET /statistics returns perpetual instruments with 24h stats.
+        """
         try:
-            async with httpx.AsyncClient(verify=False) as client:
-                # Use the markets endpoint — it returns instruments including tickers
-                resp = await client.get(f"{self.base_url}/statistics", timeout=20)
+            async with httpx.AsyncClient(verify=False, timeout=20) as client:
+                resp = await client.get(f"{self.base_url}/statistics")
                 resp.raise_for_status()
-                prices = []
                 data = resp.json()
                 perps = data if isinstance(data, list) else data.get("data", [])
+                prices = []
                 for item in perps:
                     if not isinstance(item, dict):
                         continue
@@ -45,14 +31,22 @@ class AevoAPIClient:
                         continue
                     base = instr.replace("-PERP", "").upper()
                     symbol = f"{base}-USD"
+                    mark = float(item.get("mark_price") or item.get("index_price") or 0)
+                    change_pct = float(item.get("change_24h") or 0)  # Aevo uses "change_24h" as percent
                     prices.append({
                         "symbol": symbol,
+                        "from": base,
+                        "to": "USD",
                         "instrument_name": instr,
-                        "underlying_asset": base,
-                        "price": item.get("mark_price") or item.get("index_price") or 0,
-                        "volume": item.get("volume") or 0,
-                        "open_interest": item.get("open_interest") or 0,
-                        "funding_rate": item.get("funding_rate") or 0,
+                        "price": mark,
+                        "volume_24h": float(item.get("volume") or item.get("volume_24h") or 0),
+                        "high_24h": float(item.get("high") or item.get("high_24h") or 0),
+                        "low_24h": float(item.get("low") or item.get("low_24h") or 0),
+                        "open_interest": float(item.get("open_interest") or 0),
+                        "funding_rate": float(item.get("funding_rate") or 0),
+                        "change_percent_24h": change_pct,
+                        "change_24h": mark * change_pct / 100 if mark else 0,
+                        "source": "aevo",
                     })
                 return prices
         except Exception as e:

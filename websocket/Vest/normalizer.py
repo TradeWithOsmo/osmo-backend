@@ -22,6 +22,10 @@ def normalize_vest_prices(data: Any) -> Dict[str, Any]:
             "funding_rate": item.get("funding_rate") or 0,
             "open_interest": item.get("open_interest") or 0,
             "volume_24h": item.get("volume_24h") or 0,
+            "high_24h": item.get("high_24h") or 0,
+            "low_24h": item.get("low_24h") or 0,
+            "change_24h": item.get("change_24h") or 0,
+            "change_percent_24h": item.get("change_percent_24h") or 0,
             "is_stale": False,
         }
     return normalized

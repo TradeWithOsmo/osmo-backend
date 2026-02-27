@@ -120,7 +120,7 @@ class VestAPIClient:
     async def get_latest_prices(self) -> Optional[List[Dict[str, Any]]]:
         """
         Main polling method — fetches exchange info (for symbol list) +
-        latest tickers (for prices/funding). Returns normalized list.
+        latest tickers (for prices/funding) + 24hr tickers (for OHLC/volume/change).
         """
         if not self.circuit_breaker.can_attempt():
             return None
@@ -139,6 +139,10 @@ class VestAPIClient:
         if tickers is None:
             return None
 
+        # Also get 24h stats for change%, high, low, volume
+        tickers_24h_list = await self.get_24h_tickers() or []
+        tickers_24h: Dict[str, Dict] = {t.get("symbol", ""): t for t in tickers_24h_list}
+
         results = []
         for ticker in tickers:
             sym = ticker.get("symbol", "")
@@ -151,18 +155,32 @@ class VestAPIClient:
             quote = parts[1].upper() if len(parts) > 1 else "USD"
 
             meta = symbols_meta.get(sym, {})
+            t24 = tickers_24h.get(sym, {})
+
+            mark_price = float(ticker.get("markPrice") or 0)
+            open_price = float(t24.get("openPrice") or mark_price)
+            close_price = float(t24.get("lastPrice") or mark_price)
+            change_24h = close_price - open_price
+            change_pct = (change_24h / open_price * 100) if open_price else 0.0
+
             results.append({
                 "symbol": sym,
                 "tradingSymbol": sym,
                 "from": base,
                 "to": quote,
-                "price": float(ticker.get("markPrice") or 0),
+                "price": mark_price,
                 "index_price": float(ticker.get("indexPrice") or 0),
                 "funding_rate": float(ticker.get("oneHrFundingRate") or 0),
                 "status": ticker.get("status", "TRADING"),
                 "imbalance": float(ticker.get("imbalance") or 0),
                 "max_leverage": int(1 / float(meta.get("initMarginRatio") or 0.1)),
                 "source": "vest",
+                "high_24h": float(t24.get("highPrice") or 0),
+                "low_24h": float(t24.get("lowPrice") or 0),
+                "volume_24h": float(t24.get("volume") or t24.get("quoteVolume") or 0),
+                "change_24h": change_24h,
+                "change_percent_24h": change_pct,
+                "open_interest": float(ticker.get("openInterest") or 0),
             })
 
         self.circuit_breaker.record_success()
