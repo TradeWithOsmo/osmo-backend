@@ -37,10 +37,12 @@ class Mem0Connector(BaseConnector):
         self.mem0_embedder_provider = str(
             config.get("mem0_embedder_provider", os.getenv("MEM0_EMBEDDER_PROVIDER", "openai"))
         ).strip().lower()
+        _is_google_llm = self.mem0_llm_provider in ("gemini", "google_genai")
+        _is_google_embed = self.mem0_embedder_provider in ("gemini", "google_genai")
         self.mem0_llm_model = str(
             config.get(
                 "mem0_llm_model",
-                os.getenv("MEM0_LLM_MODEL", "gemini-2.0-flash" if self.mem0_llm_provider == "gemini" else "gpt-4o-mini"),
+                os.getenv("MEM0_LLM_MODEL", "gemini-2.0-flash" if _is_google_llm else "gpt-4o-mini"),
             )
         ).strip()
         self.mem0_embedder_model = str(
@@ -48,14 +50,14 @@ class Mem0Connector(BaseConnector):
                 "mem0_embedder_model",
                 os.getenv(
                     "MEM0_EMBEDDER_MODEL",
-                    "models/text-embedding-004" if self.mem0_embedder_provider == "gemini" else "text-embedding-3-small",
+                    "models/text-embedding-004" if _is_google_embed else "text-embedding-3-small",
                 ),
             )
         ).strip()
         self.embedding_dims = int(
             config.get(
                 "mem0_embedding_dims",
-                os.getenv("MEM0_EMBEDDING_DIMS", "768" if self.mem0_embedder_provider == "gemini" else "1536"),
+                os.getenv("MEM0_EMBEDDING_DIMS", "768" if _is_google_embed else "1536"),
             )
         )
 
@@ -69,7 +71,7 @@ class Mem0Connector(BaseConnector):
 
     def _provider_api_key(self, provider: str) -> Optional[str]:
         p = (provider or "").strip().lower()
-        return self.google_api_key if p == "gemini" else self.openai_api_key
+        return self.google_api_key if p in ("gemini", "google_genai") else self.openai_api_key
 
     def _init_memory_client(self) -> None:
         try:
@@ -108,7 +110,11 @@ class Mem0Connector(BaseConnector):
             if embed_api_key:
                 mem0_config["embedder"]["config"]["api_key"] = embed_api_key
 
-            self.memory_client = Memory(config=mem0_config)
+            init_fn = getattr(Memory, "from_config", None)
+            if init_fn:
+                self.memory_client = Memory.from_config(mem0_config)
+            else:
+                self.memory_client = Memory(config=mem0_config)
             self.status = ConnectorStatus.HEALTHY
             logger.info(
                 "mem0 connector enabled: "

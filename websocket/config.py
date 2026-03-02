@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Network Mode
     NETWORK_MODE: Literal["testnet", "mainnet"] = "testnet"
-    NETWORK_NAME: str = "arbitrum_sepolia"
+    NETWORK_NAME: str = "base_sepolia"
 
     # Security
     JWT_SECRET: Optional[str] = None
@@ -45,10 +45,10 @@ class Settings(BaseSettings):
     OSMO_BUILDER_FEE_BPS: int = 50
 
     # Web3 & Smart Contracts
-    ARBITRUM_RPC_URL: str = "https://lb.drpc.live/arbitrum-sepolia/Ap-mSigiUE5YpeoVD1OiMP2Wh_Av-QMR8JYggtEkfQq9"
-    ARBITRUM_BACKUP_RPC_URL: str = "https://sepolia-rollup.arbitrum.io/rpc"
-    CHAIN_ID: int = 421614
-    BLOCK_EXPLORER_URL: str = "https://sepolia.arbiscan.io"
+    ARBITRUM_RPC_URL: str = "https://sepolia.base.org"
+    ARBITRUM_BACKUP_RPC_URL: str = "https://base-sepolia-rpc.publicnode.com"
+    CHAIN_ID: int = 84532
+    BLOCK_EXPLORER_URL: str = "https://sepolia.basescan.org"
 
     # Faucet (Testnet Only)
     FAUCET_ENABLED: bool = True
@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     OSTIUM_ADAPTER_ADDRESS: Optional[str] = None
     FEE_MANAGER_ADDRESS: Optional[str] = None
     USDC_ADDRESS: Optional[str] = None
+    CUSTOM_MARKET_DATA_FEED_ADDRESS: Optional[str] = None
 
     # Web3 Settings
     WEB3_PROVIDER_TIMEOUT: int = 30

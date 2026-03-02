@@ -604,7 +604,7 @@ class OnchainConnector(BaseConnector):
                     logger.warning(f"Primary RPC get_logs failed for {contract_event.event_name}, trying backup: {e}")
                     try:
                         if not self._backup_w3:
-                            backup_url = getattr(settings, "ARBITRUM_BACKUP_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc")
+                            backup_url = getattr(settings, "ARBITRUM_BACKUP_RPC_URL", "https://base-sepolia-rpc.publicnode.com")
                             self._backup_w3 = Web3(Web3.HTTPProvider(backup_url, request_kwargs={'timeout': 15}))
                         
                         vault_addr = Web3.to_checksum_address(settings.TRADING_VAULT_ADDRESS)

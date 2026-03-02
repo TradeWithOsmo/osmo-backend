@@ -24,4 +24,6 @@ langchain-community
 deepagents>=0.3.5
 fastembed
 qdrant-client
+mem0ai
+google-generativeai
 langfuse

@@ -10,7 +10,7 @@ import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, Set, List, Any
+from typing import Dict, Set, List, Any, Optional
 import httpx
 
 from config import settings
@@ -737,10 +737,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Routers
-app.include_router(orders_router, prefix="/api/orders", tags=["orders"])
-app.include_router(web3_router, prefix="/api/v1", tags=["web3"])
-
 # Add Prometheus metrics to FastAPI
 # We need to expose /metrics endpoint
 from starlette.responses import Response
@@ -764,13 +760,18 @@ from routers.history import router as history_router # NEW
 from routers.watchlist import router as watchlist_router # NEW
 from routers.tools import router as tools_router
 from routers.arena import router as arena_router
+from routers.referrals import router as referrals_router
 from routers.trade_setups import router as trade_setups_router  # NEW: GP/GL monitoring
 from routers.tradebook import router as tradebook_router  # NEW: multi-exchange tradebook
+from routers.global_chat import router as global_chat_router
+from routers.icons import router as icons_router
 
+app.include_router(icons_router, prefix="/api/icons", tags=["icons"])
 app.include_router(user_router, prefix="/api/user", tags=["user"])
 app.include_router(leaderboard_router, prefix="/api/leaderboard", tags=["leaderboard"])
 app.include_router(orders_router, prefix="/api/orders", tags=["orders"])
 app.include_router(arena_router, prefix="/api/arena", tags=["arena"])
+app.include_router(referrals_router, prefix="/api/referrals", tags=["referrals"])
 app.include_router(web3_router, prefix="/api/v1", tags=["web3"])
 app.include_router(usage_router, prefix="/api/usage", tags=["usage"])
 
@@ -784,6 +785,7 @@ app.include_router(tools_router)
 app.include_router(trade_setups_router)  # NEW: /api/trade-setups (GP/GL monitoring)
 app.include_router(tradebook_router, prefix="/api/tradebook", tags=["tradebook"])  # REST: /api/tradebook/{symbol}/orderbook
 app.include_router(tradebook_router)  # WS: /ws/orderbook/{symbol} and /ws/trades/{symbol}
+app.include_router(global_chat_router, prefix="/api/chat", tags=["chat"])
 
 
 
@@ -844,8 +846,22 @@ async def get_candles(
 ):
     """Get OHLC candles for a symbol, routed to connectors.py robust implementation."""
     from routers.connectors import get_candles as connector_get_candles
-    from services.session_candle_cache import to_timeframe
-    
+
+    def to_timeframe(raw: str) -> str:
+        value = str(raw or "1m").strip().lower()
+        mapping = {
+            "1": "1m", "1m": "1m",
+            "5": "5m", "5m": "5m",
+            "15": "15m", "15m": "15m",
+            "30": "30m", "30m": "30m",
+            "60": "1h", "1h": "1h",
+            "240": "4h", "4h": "4h",
+            "1d": "1d", "d": "1d",
+            "1w": "1w", "w": "1w",
+            "1mo": "1mo", "m": "1mo",
+        }
+        return mapping.get(value, "1m")
+
     tf = to_timeframe(timeframe or resolution or "1m")
     
     return await connector_get_candles(
@@ -859,11 +875,101 @@ async def get_candles(
 # which queries ALL exchanges (hyperliquid, ostium, aster, vest, avantis, orderly, paradex, dydx, aevo).
 # The old endpoint here only returned latest_prices (Hyperliquid WS + Ostium poller).
 
+_PRICE_WS_REFRESH_SECONDS = 2.0
+_EXCHANGE_SNAPSHOT_TTL_SECONDS = 6.0
+_exchange_snapshot_cache: Dict[str, List[Dict[str, Any]]] = {}
+_exchange_snapshot_cache_ts: Dict[str, float] = {}
+_exchange_snapshot_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _normalize_symbol_ws(raw: str) -> str:
+    return str(raw or "").strip().upper().replace("/", "-").replace("_", "-")
+
+
+def _symbol_candidates_ws(symbol: str) -> List[str]:
+    normalized = _normalize_symbol_ws(symbol)
+    candidates = {normalized}
+    compact = normalized.replace("-", "")
+    if compact:
+        candidates.add(compact)
+    parts = [p for p in normalized.split("-") if p]
+    if len(parts) == 2:
+        base, quote = parts
+        candidates.add(f"{base}{quote}")
+        if quote == "USD":
+            candidates.add(f"{base}-USDT")
+            candidates.add(f"{base}USDT")
+            candidates.add(f"{base}-USDC")
+            candidates.add(f"{base}USDC")
+        if quote in {"USDT", "USDC"}:
+            candidates.add(f"{base}-USD")
+            candidates.add(f"{base}USD")
+    return list(candidates)
+
+
+def _to_float_ws(value: Any, default: float = 0.0) -> float:
+    try:
+        f = float(value)
+        return f if f == f else default
+    except Exception:
+        return default
+
+
+def _price_payload_from_row(row: Dict[str, Any], symbol: str, exchange: str) -> Dict[str, Any]:
+    payload = dict(row or {})
+    payload["symbol"] = symbol
+    payload["source"] = exchange
+    payload["price"] = _to_float_ws(payload.get("price"), 0.0)
+    payload["high_24h"] = _to_float_ws(payload.get("high_24h"), _to_float_ws(payload.get("high24h"), 0.0))
+    payload["low_24h"] = _to_float_ws(payload.get("low_24h"), _to_float_ws(payload.get("low24h"), 0.0))
+    payload["volume_24h"] = _to_float_ws(payload.get("volume_24h"), _to_float_ws(payload.get("volume24h"), 0.0))
+    payload["change_24h"] = _to_float_ws(payload.get("change_24h"), _to_float_ws(payload.get("change24h"), 0.0))
+    payload["change_percent_24h"] = _to_float_ws(
+        payload.get("change_percent_24h"), _to_float_ws(payload.get("change24hPercent"), 0.0)
+    )
+    payload["funding_rate"] = _to_float_ws(payload.get("funding_rate"), _to_float_ws(payload.get("fundingRate"), 0.0))
+    payload["timestamp"] = int(time.time() * 1000)
+    return payload
+
+
+async def _fetch_symbol_snapshot(exchange: str, symbol: str) -> Optional[Dict[str, Any]]:
+    try:
+        from routers.markets import _fetch_exchange  # local import to avoid heavy import at startup
+        now = time.time()
+        rows = _exchange_snapshot_cache.get(exchange)
+        ts = _exchange_snapshot_cache_ts.get(exchange, 0.0)
+        if not rows or (now - ts) > _EXCHANGE_SNAPSHOT_TTL_SECONDS:
+            lock = _exchange_snapshot_locks.setdefault(exchange, asyncio.Lock())
+            async with lock:
+                # Double-check after waiting lock
+                now = time.time()
+                rows = _exchange_snapshot_cache.get(exchange)
+                ts = _exchange_snapshot_cache_ts.get(exchange, 0.0)
+                if not rows or (now - ts) > _EXCHANGE_SNAPSHOT_TTL_SECONDS:
+                    rows = await _fetch_exchange(exchange)
+                    _exchange_snapshot_cache[exchange] = rows or []
+                    _exchange_snapshot_cache_ts[exchange] = time.time()
+        rows = rows or []
+        if not rows:
+            return None
+
+        candidates = set(_symbol_candidates_ws(symbol))
+        for row in rows:
+            row_sym = _normalize_symbol_ws(row.get("symbol"))
+            if not row_sym:
+                continue
+            if row_sym in candidates or row_sym.replace("-", "") in candidates:
+                return _price_payload_from_row(row, symbol=symbol, exchange=exchange)
+    except Exception as e:
+        logger.debug(f"[WS] snapshot fetch failed {exchange}/{symbol}: {e}")
+    return None
+
 
 # WebSocket endpoint for Hyperliquid price streaming
 @app.websocket("/ws/hyperliquid/{symbol}")
 async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
     """Stream real-time Hyperliquid prices to frontend"""
+    symbol = _normalize_symbol_ws(symbol)
     await websocket.accept()
     
     # Add to connected clients
@@ -891,6 +997,19 @@ async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
                 "data": latest_prices[symbol]
             }))
             logger.info(f"âœ… Initial price sent for {symbol}")
+        else:
+            snapshot = await _fetch_symbol_snapshot("hyperliquid", symbol)
+            if snapshot:
+                latest_prices[symbol] = {**latest_prices.get(symbol, {}), **snapshot}
+                await websocket.send_text(json.dumps({
+                    "type": "price_update",
+                    "data": latest_prices[symbol]
+                }))
+            else:
+                await websocket.send_text(json.dumps({
+                    "type": "price_update",
+                    "data": {"symbol": symbol, "source": "hyperliquid", "price": 0, "available": False}
+                }))
     except Exception as e:
         logger.error(f"âŒ Failed to send initial prices: {e}")
         # Don't close connection, just log the error
@@ -904,6 +1023,8 @@ async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
     
     except WebSocketDisconnect:
         logger.info(f"ðŸ“´ Client disconnected from {symbol}")
+    except RuntimeError as e:
+        logger.info(f"WebSocket runtime close ({symbol}): {e}")
     
     finally:
         # Remove from connected clients
@@ -915,6 +1036,14 @@ async def hyperliquid_websocket(websocket: WebSocket, symbol: str):
 async def exchange_websocket(websocket: WebSocket, exchange: str, symbol: str):
     """Stream real-time prices to frontend for various exchanges (ostium, aster, vest, avantis, hyperliquid, orderly, paradex, dydx, aevo)"""
     exchange = exchange.lower()
+    symbol = _normalize_symbol_ws(symbol)
+    # Avoid generic route swallowing dedicated websocket endpoints.
+    if exchange == "notifications":
+        await notification_websocket(websocket, symbol)
+        return
+    if exchange == "bridge":
+        await bridge_websocket(websocket, symbol)
+        return
     if exchange not in ["ostium", "aster", "vest", "avantis", "orderly", "paradex", "dydx", "aevo"]:
         if exchange == "hyperliquid": 
             pass # handled above
@@ -931,18 +1060,56 @@ async def exchange_websocket(websocket: WebSocket, exchange: str, symbol: str):
     active_connections.labels(module=exchange, symbol=symbol).inc()
     
     logger.info(f"ðŸ“¡ {exchange.capitalize()} client connected to {symbol}")
-    
-    # Send latest price immediately
-    try:
-        if symbol in latest_prices:
+
+    async def send_snapshot(force_fetch: bool = False):
+        data = latest_prices.get(symbol)
+        row_source = str((data or {}).get("source", "")).lower()
+        if data and not force_fetch and (row_source in {"", exchange}):
+            await websocket.send_text(json.dumps({"type": "price_update", "data": data}))
+            return True
+
+        if force_fetch and not data:
+            # Send immediate placeholder so clients don't wait on slow upstream fetches.
             await websocket.send_text(json.dumps({
                 "type": "price_update",
-                "data": latest_prices[symbol]
+                "data": {"symbol": symbol, "source": exchange, "price": 0, "available": False}
             }))
-            logger.info(f"âœ… Initial {exchange.capitalize()} price sent for {symbol}")
+            return False
+
+        snapshot = await _fetch_symbol_snapshot(exchange, symbol)
+        if snapshot:
+            latest_prices[symbol] = {**latest_prices.get(symbol, {}), **snapshot}
+            await websocket.send_text(json.dumps({"type": "price_update", "data": latest_prices[symbol]}))
+            return True
+
+        if data and force_fetch:
+            await websocket.send_text(json.dumps({"type": "price_update", "data": data}))
+            return True
+
+        await websocket.send_text(json.dumps({
+            "type": "price_update",
+            "data": {"symbol": symbol, "source": exchange, "price": 0, "available": False}
+        }))
+        return False
+
+    refresh_task = None
+    try:
+        await send_snapshot(force_fetch=True)
+
+        async def periodic_refresh():
+            while True:
+                await asyncio.sleep(_PRICE_WS_REFRESH_SECONDS)
+                try:
+                    await send_snapshot(force_fetch=False)
+                except Exception as refresh_err:
+                    logger.debug(f"[WS] periodic refresh failed {exchange}/{symbol}: {refresh_err}")
+                    break
+
+        refresh_task = asyncio.create_task(periodic_refresh())
+
     except Exception as e:
         logger.error(f"â Œ Failed to send initial {exchange.capitalize()} price: {e}")
-    
+
     try:
         # Keep connection alive
         while True:
@@ -951,8 +1118,12 @@ async def exchange_websocket(websocket: WebSocket, exchange: str, symbol: str):
     
     except WebSocketDisconnect:
         logger.info(f"ðŸ“´ {exchange.capitalize()} client disconnected from {symbol}")
+    except RuntimeError as e:
+        logger.info(f"{exchange.capitalize()} websocket runtime close ({symbol}): {e}")
     
     finally:
+        if refresh_task:
+            refresh_task.cancel()
         # Remove from connected clients
         connected_clients[symbol].discard(websocket)
         active_connections.labels(module=exchange, symbol=symbol).dec()

@@ -71,6 +71,16 @@ def _pair_from_record(record: Dict[str, Any], default_quote: str = "USD") -> str
         return f"{base}-{q}"
     return _normalize_pair_symbol(record.get("symbol", ""), default_quote=default_quote)
 
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+        if out != out:  # NaN
+            return default
+        return out
+    except Exception:
+        return default
+
 # ── Symbol registry cache ─────────────────────────────────────────────────────
 _SYMBOL_REGISTRY_CONFIG: Optional[Dict] = None
 
@@ -178,7 +188,12 @@ async def _fetch_exchange(name: str) -> List[Dict[str, Any]]:
         client = _get_client(name)
         if client and hasattr(client, "get_markets"):
             from services.canonical_source_registry import canonical_registry
-            raw = await client.get_markets() or []
+            timeout_s = float(os.getenv("MARKETS_EXCHANGE_TIMEOUT_S", "8"))
+            try:
+                raw = await asyncio.wait_for(client.get_markets(), timeout=timeout_s) or []
+            except asyncio.TimeoutError:
+                logger.warning(f"[markets] {name} get_markets timed out after {timeout_s}s")
+                return []
             enriched = []
             for m in raw:
                 sym = _pair_from_record(m, default_quote="USDT" if name == "aster" else "USD")
@@ -296,6 +311,39 @@ async def get_markets(
                         m[m_field] = cached[c_field]
     except Exception as e:
         logger.debug(f"[markets] price cache enrich skipped: {e}")
+
+    # Final fallback: fill missing Avantis prices from any available priced source
+    # (typically Hyperliquid/Ostium) so symbol selector does not show 0 for Avantis rows.
+    try:
+        priced_by_symbol: Dict[str, float] = {}
+        priced_by_base: Dict[str, float] = {}
+        for m in combined:
+            sym = _normalize_pair_symbol(m.get("symbol", ""))
+            px = _to_float(m.get("price"), 0.0)
+            if not sym or px <= 0:
+                continue
+            if sym not in priced_by_symbol:
+                priced_by_symbol[sym] = px
+            base = sym.split("-")[0] if "-" in sym else sym
+            if base and base not in priced_by_base:
+                priced_by_base[base] = px
+
+        for m in combined:
+            if str(m.get("source", "")).lower() != "avantis":
+                continue
+            current = _to_float(m.get("price"), 0.0)
+            if current > 0:
+                continue
+
+            sym = _normalize_pair_symbol(m.get("symbol", ""))
+            fallback = priced_by_symbol.get(sym, 0.0)
+            if fallback <= 0 and sym:
+                base = sym.split("-")[0] if "-" in sym else sym
+                fallback = priced_by_base.get(base, 0.0)
+            if fallback > 0:
+                m["price"] = fallback
+    except Exception as e:
+        logger.debug(f"[markets] Avantis price fallback skipped: {e}")
 
     return {
         "markets": combined,

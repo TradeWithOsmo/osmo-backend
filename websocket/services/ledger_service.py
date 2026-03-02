@@ -1,7 +1,7 @@
-import json
 import os
 import uuid
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 from database.connection import AsyncSessionLocal
 from database.models import FundingHistory, LedgerAccount, Order, Position
@@ -38,7 +38,12 @@ class LedgerService:
             await session.flush()
         return account
 
-    async def _notify_user(self, user_address: str, event_type: str = "account_update"):
+    async def _notify_user(
+        self,
+        user_address: str,
+        event_type: str = "account_update",
+        meta: Optional[Dict[str, Any]] = None,
+    ):
         """Publish notification to Redis for WebSocket broadcast"""
         try:
             # We fetch latest positions & summary to send the full state for "instant" update
@@ -51,6 +56,8 @@ class LedgerService:
                 "type": event_type,
                 "address": user_address.lower(),
                 "data": state,
+                "meta": meta or {},
+                "timestamp": datetime.utcnow().isoformat(),
             }
             await redis_manager.publish(
                 f"user_notifications:{user_address.lower()}", message
@@ -105,7 +112,11 @@ class LedgerService:
             session.add(history)
             await session.commit()
             print(f"[Ledger] Deposited {amount} USDC for {user_address}")
-            await self._notify_user(user_address, "deposit_confirmed")
+            await self._notify_user(
+                user_address,
+                "deposit_confirmed",
+                meta={"asset": "USDC", "amount": amount, "tx_hash": tx_hash},
+            )
 
     async def process_withdrawal(self, user_address: str, amount: float, tx_hash: str):
         """Debit user balance from on-chain withdrawal"""
@@ -151,7 +162,11 @@ class LedgerService:
             session.add(history)
             await session.commit()
             print(f"[Ledger] Withdrawn {amount} USDC for {user_address}")
-            await self._notify_user(user_address, "withdrawal_confirmed")
+            await self._notify_user(
+                user_address,
+                "withdrawal_confirmed",
+                meta={"asset": "USDC", "amount": amount, "tx_hash": tx_hash},
+            )
 
     async def process_trade_open(
         self,
@@ -322,7 +337,19 @@ class LedgerService:
 
             await session.commit()
             print(f"[Ledger] Opened/Increased {side} {symbol} for {user_address}")
-            await self._notify_user(user_address, "trade_filled")
+            await self._notify_user(
+                user_address,
+                "trade_filled",
+                meta={
+                    "symbol": symbol,
+                    "side": norm_side,
+                    "exchange": exchange,
+                    "size_tokens": size_token,
+                    "entry_price": entry_price,
+                    "leverage": leverage,
+                    "margin_used": margin_used,
+                },
+            )
 
     async def process_position_close_event(
         self, position_id_hex: str, user_address: str, price: float, pnl: float
@@ -390,7 +417,17 @@ class LedgerService:
             session.add(trade_record)
 
             await session.commit()
-            await self._notify_user(user_address, "trade_filled")
+            await self._notify_user(
+                user_address,
+                "trade_filled",
+                meta={
+                    "symbol": position.symbol,
+                    "side": position.side,
+                    "exchange": position.exchange,
+                    "close_price": price,
+                    "realized_pnl": pnl,
+                },
+            )
 
     async def process_trade_close(
         self,
@@ -493,7 +530,28 @@ class LedgerService:
 
             await session.commit()
             print(f"[Ledger] Closed {symbol} PnL: {pnl} USDC")
-            await self._notify_user(user_address, "trade_closed")
+
+            # Heuristic liquidation signal: close happened very near liquidation price.
+            liquidation_price = float(position.liquidation_price or 0)
+            is_full_close = close_size >= (close_size + float(position.size or 0)) - 1e-6
+            is_near_liq = (
+                liquidation_price > 0
+                and close_price > 0
+                and abs(close_price - liquidation_price) / liquidation_price <= 0.0025
+            )
+            event_type = "liquidation" if (is_full_close and is_near_liq) else "trade_closed"
+            await self._notify_user(
+                user_address,
+                event_type,
+                meta={
+                    "symbol": symbol,
+                    "side": position.side,
+                    "exchange": exchange,
+                    "close_price": close_price,
+                    "realized_pnl": pnl,
+                    "liquidation_price": liquidation_price if liquidation_price > 0 else None,
+                },
+            )
 
     async def update_position_unrealized_pnl(
         self,
