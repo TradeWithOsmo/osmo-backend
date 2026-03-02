@@ -5,6 +5,7 @@ Orchestrates order placement, validation, and routing across exchanges.
 """
 
 import asyncio
+import math
 import os
 import sys
 import uuid
@@ -15,6 +16,7 @@ from database.connection import AsyncSessionLocal
 from database.models import Order, Position, PositionRiskConfig
 
 from connectors.init_connectors import connector_registry
+from storage.redis_manager import redis_manager
 
 
 class OrderService:
@@ -34,6 +36,18 @@ class OrderService:
         return str(value).strip()
 
     @staticmethod
+    def _to_positive_float(value: Any, field_name: str) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field_name} must be a valid number")
+        if not math.isfinite(parsed) or parsed <= 0:
+            raise ValueError(f"{field_name} must be greater than 0")
+        return parsed
+
+    @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
         try:
             if value is None:
@@ -41,6 +55,26 @@ class OrderService:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    async def _publish_user_notification(
+        self,
+        user_address: str,
+        event_type: str,
+        data: Dict[str, Any],
+    ) -> None:
+        try:
+            message = {
+                "type": event_type,
+                "address": user_address.lower(),
+                "data": data,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            await redis_manager.publish(
+                f"user_notifications:{user_address.lower()}",
+                message,
+            )
+        except Exception as exc:
+            print(f"[OrderService] Failed to publish {event_type}: {exc}")
 
     @classmethod
     def _estimate_liquidation_price(
@@ -182,241 +216,99 @@ class OrderService:
         tp_value = self._normalize_tpsl_value(tp)
         sl_value = self._normalize_tpsl_value(sl)
 
+        # 2. Validate order (sanity + risk checks)
+        await self._validate_order(
+            user_address=user_address,
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            amount_usd=amount_usd,
+            leverage=leverage,
+            price=price,
+            stop_price=stop_price,
+            tp=tp_value,
+            sl=sl_value,
+            exchange=exchange,
+            reduce_only=reduce_only,
+            post_only=post_only,
+            time_in_force=time_in_force,
+        )
+
+        # 3. Simulation flow is isolated in a dedicated service module.
         if exchange == "simulation":
-            # Simulation doesn't need a connector
-            connector = None
-        else:
-            # 2. Get connector
-            connector = connector_registry.get_connector(exchange)
-            if not connector:
-                raise ValueError(f"Exchange {exchange} not found or not initialized")
+            from services.simulation_order_service import simulation_order_service
 
-        # 3. Validate order (risk checks)
-        await self._validate_order(user_address, symbol, amount_usd, leverage)
+            return await simulation_order_service.place_order(
+                user_address=user_address,
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                amount_usd=amount_usd,
+                leverage=leverage,
+                price=price,
+                stop_price=stop_price,
+                tp=tp_value,
+                sl=sl_value,
+                gp=gp,
+                gl=gl,
+                reduce_only=reduce_only,
+                post_only=post_only,
+                time_in_force=time_in_force,
+                update_position_tpsl_cb=self.update_position_tpsl,
+            )
 
-        # 4. Calculate position size (Legacy Connector Path)
+        # 4. Non-simulation connector flow
+        connector = connector_registry.get_connector(exchange)
+        if not connector:
+            raise ValueError(f"Exchange {exchange} not found or not initialized")
+
+        # 5. Calculate position size
         current_price = 0
         size = 0
 
-        if connector:
-            try:
-                market_data = await connector.fetch(
-                    symbol.split("-")[0], data_type="price"
-                )
-                current_price = float(market_data.get("data", {}).get("price", 0))
-            except Exception as e:
-                print(
-                    f"[OrderService] Warning: Could not fetch price for {symbol}: {e}"
-                )
-                current_price = 0
+        try:
+            market_data = await connector.fetch(symbol.split("-")[0], data_type="price")
+            current_price = float(market_data.get("data", {}).get("price", 0))
+        except Exception as e:
+            print(f"[OrderService] Warning: Could not fetch price for {symbol}: {e}")
+            current_price = 0
 
-            if current_price == 0:
-                # If price is provided in arguments (Limit Order), use it?
-                if price and price > 0:
-                    current_price = price
-                else:
-                    raise ValueError(f"Cannot fetch current price for {symbol}")
-
-            # Size calculation
-            if exchange == "hyperliquid":
-                # Crypto: size = USD / price
-                size = amount_usd / current_price
-            elif exchange == "onchain":
-                # On-chain: size is AmountUSD (collateral)
-                size = amount_usd
-            else:
-                # Ostium RWA: notional in USD
-                size = amount_usd
-
-        if exchange == "simulation":
-            # Simulation Mode: Interact directly with LedgerService
-            from services.ledger_service import ledger_service
-
-            # Checks
-            if not price or price <= 0:
-                # Market Order Price Fetch
-                try:
-                    p_conn = connector_registry.get_connector("hyperliquid")
-                    if not p_conn:
-                        p_conn = connector_registry.get_connector("ostium")
-                    if p_conn:
-                        md = await p_conn.fetch(symbol.split("-")[0], data_type="price")
-                        current_price = float(md.get("data", {}).get("price", 0))
-                    else:
-                        current_price = 0
-                except:
-                    current_price = 0
-
-            if current_price <= 0:
-                    # Fallback: use a hardcoded price for testing/development
-                    fallback_prices = {
-                        "BTC-USD": 95000.0,
-                        "ETH-USD": 3500.0,
-                        "SOL-USD": 180.0,
-                    }
-                    current_price = fallback_prices.get(symbol, 50000.0)
-                    print(f"[OrderService] Using fallback price {current_price} for {symbol}")
-            else:
+        if current_price == 0:
+            if price and price > 0:
                 current_price = price
-
-            # In simulation mode, interpret input amount_usd as margin/collateral.
-            # Notional exposure is margin * leverage.
-            simulation_notional_usd = (
-                amount_usd * leverage if leverage > 0 else amount_usd
-            )
-            size_tokens = (
-                (simulation_notional_usd / current_price) if current_price > 0 else 0
-            )
-            margin_used = amount_usd
-
-            # Execute via Ledger (OR Match Engine for Limit/Stop)
-            order_id = str(uuid.uuid4())
-            is_pending = order_type in ["limit", "stop_market", "stop_limit"]
-
-            if is_pending:
-                # It's a Pending Order.
-                # Do NOT call ledger_service.process_trade_open yet.
-                # Just return 'pending' status. The matching_engine will pick it up.
-
-                # NOTE: Ideally we should lock margin here to prevent overspending,
-                # but for V1 we check margin on Fill.
-
-                # Create DB Record is handled below (outside this block).
-                # We just set response to Pending.
-                exchange_response = {
-                    "status": "pending",  # or 'open'
-                    "exchange_order_id": f"sim_{order_id[:8]}",
-                }
-                # We still calculate size/margin for reference in the Order record
-                size = size_tokens
-
             else:
-                # Market Order -> Instant Fill
-                await ledger_service.process_trade_open(
-                    user_address=user_address,
-                    symbol=symbol,
-                    side=side,
-                    size_token=size_tokens,
-                    entry_price=current_price,
-                    leverage=leverage,
-                    margin_used=margin_used,
-                    order_id=order_id,
-                    tp=tp_value,
-                    sl=sl_value,
-                    gp=gp,
-                    gl=gl,
-                )
+                raise ValueError(f"Cannot fetch current price for {symbol}")
 
-                # Mock Response
-                exchange_response = {
-                    "status": "filled",
-                    "exchange_order_id": f"sim_{order_id[:8]}",
-                }
-                size = size_tokens
-
-            # Mock Response Logic moved inside if/else block above
-
+        # Size calculation
+        if exchange == "hyperliquid":
+            size = amount_usd / current_price
+        elif exchange == "onchain":
+            size = amount_usd
         else:
-            # 5. Submit to exchange
-            try:
-                exchange_response = await connector.place_order(
-                    user_address=user_address,
-                    symbol=symbol,
-                    side=side,
-                    order_type=order_type,
-                    size=size,
-                    price=price,
-                    stop_price=stop_price,
-                    leverage=leverage,
-                    reduce_only=reduce_only,
-                    post_only=post_only,
-                    time_in_force=time_in_force,
-                    trigger_condition=trigger_condition,
-                )
-            except NotImplementedError as e:
-                # Handle Ostium not implemented gracefully
-                raise ValueError(
-                    f"Order placement not supported on {exchange}: {str(e)}"
-                )
+            size = amount_usd
 
-        # 6. Store in database
-        # If order_id was generated in simulation, use it. But wait, ledger_service might have already created the record!
-        # If ledger_service created it, we should Check existence or Update, not just Add.
+        # 6. Submit to exchange
+        try:
+            exchange_response = await connector.place_order(
+                user_address=user_address,
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                size=size,
+                price=price,
+                stop_price=stop_price,
+                leverage=leverage,
+                reduce_only=reduce_only,
+                post_only=post_only,
+                time_in_force=time_in_force,
+                trigger_condition=trigger_condition,
+            )
+        except NotImplementedError as e:
+            raise ValueError(f"Order placement not supported on {exchange}: {str(e)}")
 
-        # Actually, simpler: If exchange == 'simulation', we assume ledger_service created the order record.
-        # But we might want to update it with more details if ledger_service created a minimal one?
-        # ledger_service creates a fairly complete one now.
-
-        if exchange == "simulation":
-            # Skip duplicate insertion, but ensure ID corresponds to return value
-            # The order_id variable in the simulation block is local to that scope in Python 3? No, function scope.
-            # But line 174 `order_id = str(uuid.uuid4())` unconditionally overwrites it.
-
-            # Let's recover the simulation order ID if set
-            # We need to restructure slightly to not overwrite order_id
-            pass
-        else:
-            order_id = str(uuid.uuid4())
-
-        # Refactored Logic:
-        if exchange == "simulation":
-            # Ledger service created the order if MARKET/FILLED.
-            # If PENDING, we skipped ledger call, so we MUST create the order record here.
-
-            is_pending = exchange_response.get("status") == "pending"
-
-            if is_pending:
-                # Create Pending Order Record
-                async with AsyncSessionLocal() as session:
-                    order = Order(
-                        id=order_id,  # This is the UUID from simulation block
-                        user_address=user_address.lower(),
-                        exchange=exchange,
-                        symbol=symbol,
-                        side=side,
-                        order_type=order_type,
-                        price=price,
-                        stop_price=stop_price,
-                        size=size,
-                        notional_usd=simulation_notional_usd,
-                        leverage=leverage,
-                        reduce_only=reduce_only,
-                        post_only=post_only,
-                        time_in_force=time_in_force,
-                        exchange_order_id=exchange_response.get("exchange_order_id"),
-                        status="OPEN",  # OPEN means pending in simulation
-                        created_at=datetime.utcnow(),
-                        filled_size=0,
-                        trigger_condition="BELOW"
-                        if side == "sell"
-                        else "ABOVE",  # heuristic
-                        trigger_price=stop_price,
-                    )
-                    session.add(order)
-                    await session.commit()
-
-            if tp_value is not None or sl_value is not None:
-                await self.update_position_tpsl(
-                    user_address=user_address,
-                    symbol=symbol,
-                    tp=tp_value,
-                    sl=sl_value,
-                    exchange=exchange,
-                )
-
-            return {
-                "order_id": order_id,
-                "exchange": exchange,
-                "symbol": symbol,
-                "status": exchange_response.get("status"),
-                "exchange_order_id": exchange_response.get("exchange_order_id"),
-                "message": "Order placed on simulation",
-            }
-
-        # For non-simulation, we continue to insert.
+        # 7. Store in database
         order_id = str(uuid.uuid4())
         async with AsyncSessionLocal() as session:
-            # ... existing insert logic ...
             order = Order(
                 id=order_id,
                 user_address=user_address.lower(),
@@ -435,12 +327,11 @@ class OrderService:
                 status=exchange_response.get("status", "pending"),
                 exchange_order_id=exchange_response.get("exchange_order_id"),
                 created_at=datetime.utcnow(),
-                # Populate fill details if filled (Simulation)
                 filled_at=datetime.utcnow()
                 if exchange_response.get("status") == "filled"
                 else None,
                 filled_size=size if exchange_response.get("status") == "filled" else 0,
-                avg_fill_price=price
+                avg_fill_price=(price if price and price > 0 else current_price)
                 if exchange_response.get("status") == "filled"
                 else None,
             )
@@ -448,7 +339,7 @@ class OrderService:
             await session.commit()
             await session.refresh(order)
 
-        # 7. Optimistic Shadow Update for On-chain
+        # 8. Optimistic Shadow Update for On-chain
         if False:#exchange == "onchain":
             try:
                 # We reuse the logic from report_onchain_order to update shadow position record
@@ -484,6 +375,25 @@ class OrderService:
                 print(
                     f"[OrderService] Warning: Failed to persist TP/SL on {exchange}: {e}"
                 )
+
+        await self._publish_user_notification(
+            user_address=user_address,
+            event_type="order_placed",
+            data={
+                "order_id": order_id,
+                "exchange": exchange,
+                "symbol": symbol,
+                "side": side.lower(),
+                "order_type": order_type,
+                "status": order.status,
+                "price": price if price is not None else current_price,
+                "amount_usd": amount_usd,
+                "leverage": leverage,
+                "reduce_only": reduce_only,
+                "post_only": post_only,
+                "time_in_force": time_in_force,
+            },
+        )
 
         return {
             "order_id": order_id,
@@ -565,6 +475,22 @@ class OrderService:
             )
             session.add(order)
             await session.commit()
+            await self._publish_user_notification(
+                user_address=user_address,
+                event_type="order_placed",
+                data={
+                    "order_id": order_id,
+                    "exchange": exchange,
+                    "symbol": symbol,
+                    "side": side.lower(),
+                    "order_type": order_type,
+                    "status": "filled",
+                    "price": price,
+                    "amount_usd": amount_usd,
+                    "leverage": leverage,
+                    "reduce_only": reduce_only,
+                },
+            )
             return {
                 "order_id": order_id,
                 "status": "reported",
@@ -756,7 +682,21 @@ class OrderService:
         return "ostium"
 
     async def _validate_order(
-        self, user_address: str, symbol: str, amount_usd: float, leverage: int
+        self,
+        user_address: str,
+        symbol: str,
+        side: str,
+        order_type: str,
+        amount_usd: float,
+        leverage: int,
+        price: Optional[float] = None,
+        stop_price: Optional[float] = None,
+        tp: Optional[Any] = None,
+        sl: Optional[Any] = None,
+        exchange: Optional[str] = None,
+        reduce_only: bool = False,
+        post_only: bool = False,
+        time_in_force: Optional[str] = "GTC",
     ):
         """
         Validate order against risk limits.
@@ -770,13 +710,101 @@ class OrderService:
         We only validate obvious errors before submitting to exchange.
         """
 
-        # Sanity check: Leverage too high (exchange will enforce actual limits)
+        symbol_value = str(symbol or "").strip().upper()
+        if not symbol_value or "-" not in symbol_value:
+            raise ValueError("Invalid symbol format. Expected BASE-QUOTE (e.g. BTC-USD)")
+
+        side_value = str(side or "").strip().lower()
+        if side_value not in {"buy", "sell"}:
+            raise ValueError("Invalid side. Must be 'buy' or 'sell'")
+
+        order_type_value = str(order_type or "").strip().lower()
+        allowed_order_types = {"market", "limit", "stop_market", "stop_limit"}
+        if order_type_value not in allowed_order_types:
+            raise ValueError(
+                "Invalid order_type. Must be one of: market, limit, stop_market, stop_limit"
+            )
+
+        # Sanity check: leverage range (exchange will enforce exact per-market limits)
+        if leverage < 1:
+            raise ValueError("Leverage must be at least 1x")
         if leverage > 100:
             raise ValueError("Leverage sanity check failed: max 100x")
 
         # Minimum order size
         if amount_usd < 10:
             raise ValueError("Minimum order size is $10")
+        if not math.isfinite(float(amount_usd)):
+            raise ValueError("amount_usd must be a valid number")
+
+        price_value = self._to_positive_float(price, "price")
+        stop_price_value = self._to_positive_float(stop_price, "stop_price")
+        tp_value = self._to_positive_float(tp, "tp")
+        sl_value = self._to_positive_float(sl, "sl")
+
+        if order_type_value in {"limit", "stop_limit"} and price_value is None:
+            raise ValueError("Limit/stop-limit order requires price")
+        if order_type_value in {"stop_market", "stop_limit"} and stop_price_value is None:
+            raise ValueError("Stop order requires stop_price")
+
+        if post_only and order_type_value != "limit":
+            raise ValueError("post_only is only valid for limit orders")
+
+        tif = str(time_in_force or "GTC").strip().upper()
+        if tif not in {"GTC", "IOC", "FOK"}:
+            raise ValueError("Invalid time_in_force. Must be GTC, IOC, or FOK")
+
+        if tp_value is not None and sl_value is not None and tp_value == sl_value:
+            raise ValueError("tp and sl cannot be equal")
+
+        # TP/SL direction sanity relative to reference price when available.
+        reference_price = (
+            price_value
+            if price_value is not None
+            else stop_price_value
+        )
+        if reference_price is not None:
+            is_buy = side_value == "buy"
+            if tp_value is not None:
+                if is_buy and tp_value <= reference_price:
+                    raise ValueError("For buy orders, tp must be above reference price")
+                if (not is_buy) and tp_value >= reference_price:
+                    raise ValueError("For sell orders, tp must be below reference price")
+            if sl_value is not None:
+                if is_buy and sl_value >= reference_price:
+                    raise ValueError("For buy orders, sl must be below reference price")
+                if (not is_buy) and sl_value <= reference_price:
+                    raise ValueError("For sell orders, sl must be above reference price")
+
+        # Reduce-only requires an open position for symbol/exchange.
+        if reduce_only:
+            positions_packet = await self.get_user_positions(
+                user_address=user_address,
+                exchange=exchange,
+            )
+            positions = (
+                positions_packet.get("positions", [])
+                if isinstance(positions_packet, dict)
+                else []
+            )
+            matched = False
+            for pos in positions:
+                if not isinstance(pos, dict):
+                    continue
+                pos_symbol = str(pos.get("symbol") or "").strip().upper()
+                if pos_symbol != symbol_value:
+                    continue
+                try:
+                    pos_size = float(pos.get("size") or pos.get("size_tokens") or 0)
+                except (TypeError, ValueError):
+                    pos_size = 0.0
+                if pos_size > 0:
+                    matched = True
+                    break
+            if not matched:
+                raise ValueError(
+                    f"reduce_only requires an existing open position for {symbol_value}"
+                )
 
         # TODO: Implement additional validation
         # - Check user balance
@@ -1693,6 +1721,4 @@ class OrderService:
             "skipped": skipped,
             "errors": errors,
         }
-
-
 order_service = OrderService()

@@ -35,12 +35,12 @@ PRICE_FEED_ABI = [
     }
 ]
 
-# Chainlink Price Feed addresses on Arbitrum
+# Chainlink Price Feed addresses on Base Sepolia
 PRICE_FEEDS = {
-    "BTC-USD": "0x6ce185860a4963106506C203335A2910413708e9",  # Arbitrum
-    "ETH-USD": "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612",  # Arbitrum
-    "SOL-USD": "0x24ceA4b8ce57cdA5058b924B9B9987992450590c",  # Arbitrum
-    # Add more as needed
+    "BTC-USD": "0x56a43EB56Da12C0dc1D972ACb089c06a5dEF8e69",  # Base Sepolia
+    "ETH-USD": "0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165",  # Base Sepolia
+    "LINK-USD": "0x0FB99723Aee6f420beAD13e6bBB79b7E6F034298",  # Base Sepolia
+    # SOL-USD not available on Base Sepolia testnet
 }
 
 
@@ -52,20 +52,20 @@ class ChainlinkConnector(BaseConnector):
     - Fallback price verification when DEX feeds unavailable
     - Oracle price for GP/GL calculation
     - Cross-verification with DEX prices
-    
-    Network: Arbitrum (free RPC)
+
+    Network: Base Sepolia
     """
-    
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__("chainlink", config)
-        
+
         self.rpc_url = config.get(
             "rpc_url",
-            os.getenv("CHAINLINK_RPC_URL", "https://arb1.arbitrum.io/rpc")
+            os.getenv("CHAINLINK_RPC_URL", "https://sepolia.base.org")
         )
         self.backup_rpc = config.get(
             "backup_rpc",
-            os.getenv("CHAINLINK_BACKUP_RPC", "https://arbitrum.llamarpc.com")
+            os.getenv("CHAINLINK_BACKUP_RPC", "https://base-sepolia-rpc.publicnode.com")
         )
         
         # Initialize Web3

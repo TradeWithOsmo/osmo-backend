@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -7,6 +8,7 @@ from database.connection import get_db
 from database.models import Order
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from services.leaderboard_service import LeaderboardService
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,6 +122,28 @@ class OverallLeaderboardEntry(BaseModel):
 class OverallLeaderboardResponse(BaseModel):
     data: List[OverallLeaderboardEntry]
     pagination: dict
+
+
+@router.get("/agents")
+async def get_arena_agents_leaderboard(
+    timeframe: str = "24h",
+    snapshot_date: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Backward-compatible agent leaderboard endpoint used by frontend:
+    /api/arena/agents?timeframe=...&page=...&limit=...
+    """
+    parsed_date = date.fromisoformat(snapshot_date) if snapshot_date else None
+    service = LeaderboardService(db)
+    return await service.get_model_leaderboard(
+        timeframe=timeframe,
+        snapshot_date=parsed_date,
+        page=page,
+        limit=limit,
+    )
 
 
 @router.post("/pick")

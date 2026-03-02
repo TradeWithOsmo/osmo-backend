@@ -32,12 +32,24 @@ services:
     depends_on:
       - db
       - redis
+      - qdrant
     restart: unless-stopped
     networks:
       - osmo-network
     dns:
       - 8.8.8.8
       - 1.1.1.1
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: osmo-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - osmo-network
 
   redis:
     image: redis:7-alpine
@@ -105,6 +117,7 @@ services:
 volumes:
   postgres_data:
   uptime_kuma_data:
+  qdrant_storage:
 
 networks:
   osmo-network:

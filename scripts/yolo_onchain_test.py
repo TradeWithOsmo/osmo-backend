@@ -30,7 +30,7 @@ async def main():
     logger.info(f"   Connected to: {web3_connector.w3.provider}")
     
     # HARDCODED CONTRACT DATA
-    ORDER_ROUTER_ADDRESS = "0xFd8b09f95E4B2dd9dA7B5c22CC0eBb0186B14358"
+    ORDER_ROUTER_ADDRESS = "0xfDA93F59D39ADC38a2adE1Cdc9a1E325F1AdFd09"
     ORDER_ROUTER_ABI = [
       {
         "inputs": [
@@ -116,7 +116,7 @@ async def main():
                 logger.info("✅ Simulation SUCCESS (Unexpected)")
             except Exception as e:
                 logger.info(f"✅ Simulation Reverted (Expected!): {e}")
-                logger.info("   -> Connectivity to Arbitrum Sepolia CONFIRMED.")
+                logger.info("   -> Connectivity to Base Sepolia CONFIRMED.")
                 logger.info("   -> Contract 'placeOrder' interaction attempted.")
             
             return

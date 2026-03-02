@@ -35,12 +35,17 @@ import asyncio
 import json
 import logging
 import importlib
+import time
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Exchanges that do not expose public recent-trades endpoints.
+_TRADES_UNAVAILABLE_EXCHANGES = {"ostium"}
+_ORDERBOOK_UNAVAILABLE_EXCHANGES = {"ostium", "avantis"}
 
 # ── Exchange → module map ──────────────────────────────────────────────────────
 _TRADEBOOK_MODULES = {
@@ -143,7 +148,30 @@ async def ws_orderbook(
 
     logger.info(f"[Tradebook WS] Orderbook connected: {exchange}/{symbol}")
 
+    first_payload_sent = False
+
+    # Immediate first payload to avoid client-side timeout skeletons on slow upstream responses.
+    try:
+        if exchange in _ORDERBOOK_UNAVAILABLE_EXCHANGES:
+            await websocket.send_text(json.dumps({
+                "type": "orderbook_unavailable",
+                "exchange": exchange,
+                "symbol": symbol,
+            }))
+        else:
+            await websocket.send_text(json.dumps({
+                "type": "orderbook",
+                "exchange": exchange,
+                "symbol": symbol,
+                "data": {"bids": [], "asks": []},
+            }))
+        first_payload_sent = True
+    except Exception:
+        await websocket.close()
+        return
+
     async def _poll():
+        nonlocal first_payload_sent
         while True:
             try:
                 book = await mod.get_orderbook(symbol)
@@ -161,9 +189,21 @@ async def ws_orderbook(
                         "data": book,
                     })
                 await websocket.send_text(payload)
+                first_payload_sent = True
             except Exception as e:
                 logger.debug(f"[Tradebook WS] Orderbook poll error {exchange}/{symbol}: {e}")
-                break
+                # Keep socket alive on transient upstream failures.
+                if not first_payload_sent:
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": "orderbook",
+                            "exchange": exchange,
+                            "symbol": symbol,
+                            "data": {"bids": [], "asks": []},
+                        }))
+                        first_payload_sent = True
+                    except Exception:
+                        break
             await asyncio.sleep(interval)
 
     poll_task = asyncio.create_task(_poll())
@@ -207,34 +247,81 @@ async def ws_trades(
     logger.info(f"[Tradebook WS] Trades connected: {exchange}/{symbol}")
 
     seen_ids: set = set()
+    first_payload_sent = False
+    last_emit_ts = 0.0
+
+    # Immediate first payload so client gets deterministic WS response quickly.
+    try:
+        initial_payload = {
+            "type": "trades",
+            "exchange": exchange,
+            "symbol": symbol,
+            "data": [],
+        }
+        if exchange in _TRADES_UNAVAILABLE_EXCHANGES:
+            initial_payload["available"] = False
+        await websocket.send_text(json.dumps(initial_payload))
+        first_payload_sent = True
+        last_emit_ts = time.time()
+    except Exception:
+        await websocket.close()
+        return
 
     async def _poll():
-        nonlocal seen_ids
+        nonlocal seen_ids, first_payload_sent, last_emit_ts
         while True:
             try:
                 trades = await mod.get_recent_trades(symbol, limit=30)
+                # Only send NEW trades (de-duplicate by id or px+time).
+                new_trades = []
                 if trades:
-                    # Only send NEW trades (de-duplicate by id or px+time)
-                    new_trades = []
                     for t in trades:
                         tid = t.get("id") or f"{t.get('px')}-{t.get('time')}"
                         if tid not in seen_ids:
                             seen_ids.add(tid)
                             new_trades.append(t)
-                    # Keep seen_ids from growing unbounded
-                    if len(seen_ids) > 500:
-                        seen_ids = set(list(seen_ids)[-200:])
 
-                    if new_trades:
-                        await websocket.send_text(json.dumps({
+                # Keep seen_ids from growing unbounded
+                if len(seen_ids) > 500:
+                    seen_ids = set(list(seen_ids)[-200:])
+
+                now = time.time()
+                should_emit_empty = (
+                    not first_payload_sent
+                    or (now - last_emit_ts) >= 10.0
+                )
+
+                # Always emit at least one payload soon after connect.
+                # This prevents frontend from waiting forever on quiet/unavailable feeds.
+                if new_trades or should_emit_empty:
+                    payload = {
+                        "type": "trades",
+                        "exchange": exchange,
+                        "symbol": symbol,
+                        "data": new_trades if new_trades else [],
+                    }
+                    if exchange in _TRADES_UNAVAILABLE_EXCHANGES:
+                        payload["available"] = False
+                    await websocket.send_text(json.dumps(payload))
+                    first_payload_sent = True
+                    last_emit_ts = now
+            except Exception as e:
+                logger.debug(f"[Tradebook WS] Trades poll error {exchange}/{symbol}: {e}")
+                # Keep socket alive on transient upstream failures.
+                if not first_payload_sent:
+                    try:
+                        payload = {
                             "type": "trades",
                             "exchange": exchange,
                             "symbol": symbol,
-                            "data": new_trades,
-                        }))
-            except Exception as e:
-                logger.debug(f"[Tradebook WS] Trades poll error {exchange}/{symbol}: {e}")
-                break
+                            "data": [],
+                            "available": exchange not in _TRADES_UNAVAILABLE_EXCHANGES,
+                        }
+                        await websocket.send_text(json.dumps(payload))
+                        first_payload_sent = True
+                        last_emit_ts = time.time()
+                    except Exception:
+                        break
             await asyncio.sleep(interval)
 
     poll_task = asyncio.create_task(_poll())

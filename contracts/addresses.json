@@ -1,20 +1,21 @@
 {
-    "arbitrum_sepolia":  {
-                             "chainId":  421614,
-                             "contracts":  {
-                                               "OsmoHub":  "0x21fd7b6378f24846ad2c9b3f1e55d439e9371c33",
-                                               "TradingVault":  "0x5df0d27eb1adf66581f41356764b4acc1b2b995e",
-                                               "AIVault":  "0xAC6c4fe3Ce5761922770A78bA075ED0873600F0b",
-                                               "OrderRouter":  "0xa07439471644a4e4cb3999d9da0d4c74ea0fb487",
-                                               "PositionManager":  "0x5a7ee30c09302da7a0ac5acc9da73bcbc7db19a3",
-                                               "SessionKeyManager":  "0x3ca2ec165a6085acf2239027dd1bb31e22ca681e",
-                                               "Faucet":  "0x40cb86cd24f4444ecb936dc04ae08d65ae678ad2",
-                                               "PriceFeed":  "0xe7ae39ee127a1c76336376f18854d7d6ba50d7d0",
-                                               "SymbolRegistry":  "0xa97b38d0956c3bb407b447e27fb61374c0eb3cc2",
-                                               "RiskManager":  "0x8ac355e54b009b73aab7aaf230103f7fff096ba9",
-                                               "OstiumAdapter":  "0x309b7245ff835892c59c2ae6b8cf4d5131de0f28",
-                                               "FeeManager":  "0x78e13c51787144c5c179780acdf44a71d2aa374e",
-                                               "USDC":  "0x0519dd1411d65fa508b7a68f563b173b02a4bb65"
-                                           }
-                         }
+    "base_sepolia":  {
+                         "chainId":  84532,
+                         "contracts":  {
+                                           "OsmoHub":  "0x31939E681C557Dc919537b739e36f326DE066672",
+                                           "TradingVault":  "0xbBB5E6239C4D3d8F111705Aa6b2ff30184AB8d2d",
+                                           "AIVault":  "0x83a0EF385e20Fe255441bef2B154e909911798b7",
+                                           "OrderRouter":  "0xfDA93F59D39ADC38a2adE1Cdc9a1E325F1AdFd09",
+                                           "PositionManager":  "0x624b56e32f10e5069420De3c5B4840a286D57ee6",
+                                           "SessionKeyManager":  "0xa2197Db35c41fE7C63EB4fA0dbE72Cd96c49642d",
+                                           "Faucet":  "0x0BBD5BAc4477e1328E790Cd81A6c7f2fEb3F395B",
+                                           "PriceFeed":  "0x613E94C3Ac57E34C2Bf3C5724A2aAa6ccE93c5Da",
+                                           "SymbolRegistry":  "0x25C92233e1dF2B1C440EEE66445f5bb33f3b3b09",
+                                           "RiskManager":  "0x6Bb1EE95660FE5D630C246CC2A3e7F6916d351B5",
+                                           "OstiumAdapter":  "0xe1D0d9366E9d166262570233b7B2CCc464B643Aa",
+                                           "FeeManager":  "0xEE7c500DE788803fCaCA6F340EeBDB32dfC346f9",
+                                           "USDC":  "0x666351CDbd5fA293360d266DB06d73E8Ea7C41F7",
+                                           "CustomMarketDataFeed": "0x3044C64982874dC3401428F4e3eed96976bb4131"
+                                       }
+                     }
 }

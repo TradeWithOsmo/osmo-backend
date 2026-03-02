@@ -246,6 +246,14 @@ class GetActiveIndicatorsRequest(BaseModel):
     timeframe: str = "1D"
     tool_states: Optional[Dict[str, Any]] = None
 
+
+class TechnicalContextRequest(BaseModel):
+    symbol: str
+    timeframe: str = "1D"
+    asset_type: str = "crypto"
+    tool_states: Optional[Dict[str, Any]] = None
+    include_active_indicators: bool = True
+
 class ResearchMarketRequest(BaseModel):
     symbol: str
     timeframe: str = "1H"
@@ -271,6 +279,43 @@ class KnowledgeSearchRequest(BaseModel):
     query: str
     category: Optional[str] = None
     top_k: int = 3
+
+
+async def _collect_market_technical_bundle(
+    *,
+    symbol: str,
+    timeframe: str = "1D",
+    asset_type: str = "crypto",
+    tool_states: Optional[Dict[str, Any]] = None,
+    include_analysis: bool = True,
+    include_active_indicators: bool = True,
+) -> Dict[str, Any]:
+    bundle: Dict[str, Any] = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "asset_type": asset_type,
+    }
+
+    if include_analysis:
+        bundle["technical_analysis"] = await get_technical_analysis(
+            symbol, timeframe, asset_type
+        )
+
+    if include_active_indicators:
+        chart_ctx = await get_active_indicators(
+            symbol=symbol,
+            timeframe=timeframe,
+            tool_states=tool_states or {},
+        )
+        bundle["chart_context"] = chart_ctx
+        active = []
+        if isinstance(chart_ctx, dict):
+            data = chart_ctx.get("data", {})
+            if isinstance(data, dict) and isinstance(data.get("active_indicators"), list):
+                active = data.get("active_indicators", [])
+        bundle["active_indicators"] = active
+
+    return bundle
 
 # --- Endpoints ---
 
@@ -447,13 +492,16 @@ async def execute_get_levels(request: GetHighLowLevelsRequest):
 
 
 @router.post("/data/active_indicators")
-@router.post("/data/get_active_indicators")
 async def execute_get_active_indicators(request: GetActiveIndicatorsRequest):
-    return await get_active_indicators(
+    # Keep legacy response shape, but source data from unified collector.
+    bundle = await _collect_market_technical_bundle(
         symbol=request.symbol,
         timeframe=request.timeframe,
         tool_states=request.tool_states or {},
+        include_analysis=False,
+        include_active_indicators=True,
     )
+    return bundle.get("chart_context", {})
 
 # 6. Research & Analysis
 @router.post("/research/market")
@@ -465,9 +513,16 @@ async def execute_scan_overview(request: ScanOverviewRequest):
     return await scan_market_overview(request.asset_class)
 
 @router.post("/analysis/technical")
-async def execute_technical_analysis(request: GetPriceRequest):
-    # Reusing GetPriceRequest structure as it has symbol and asset_type
-    return await get_technical_analysis(request.symbol, "1D", request.asset_type)
+async def execute_technical_analysis(request: TechnicalContextRequest):
+    # Unified technical endpoint: TA + active chart indicators in one payload.
+    return await _collect_market_technical_bundle(
+        symbol=request.symbol,
+        timeframe=request.timeframe,
+        asset_type=request.asset_type,
+        tool_states=request.tool_states or {},
+        include_analysis=True,
+        include_active_indicators=request.include_active_indicators,
+    )
 
 # 7. Web & Knowledge
 @router.post("/web/search")

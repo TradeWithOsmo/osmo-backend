@@ -110,8 +110,8 @@ class ConnectorRegistry:
         """Register Chainlink connector"""
         try:
             config = {
-                "rpc_url": os.getenv("CHAINLINK_RPC_URL", "https://arb1.arbitrum.io/rpc"),
-                "backup_rpc": os.getenv("CHAINLINK_BACKUP_RPC", "https://arbitrum.llamarpc.com")
+                "rpc_url": os.getenv("CHAINLINK_RPC_URL", "https://sepolia.base.org"),
+                "backup_rpc": os.getenv("CHAINLINK_BACKUP_RPC", "https://base-sepolia-rpc.publicnode.com")
             }
             
             from connectors.chainlink import ChainlinkConnector
@@ -204,14 +204,16 @@ class ConnectorRegistry:
             }
 
             if config["enabled"]:
-                if config["mem0_llm_provider"] == "gemini" and not config["google_api_key"]:
+                _google_providers = ("gemini", "google_genai")
+                if config["mem0_llm_provider"] in _google_providers and not config["google_api_key"]:
                     logger.warning("MEM0 enabled with Gemini LLM but GOOGLE_API_KEY/GEMINI_API_KEY missing")
-                if config["mem0_embedder_provider"] == "gemini" and not config["google_api_key"]:
+                if config["mem0_embedder_provider"] in _google_providers and not config["google_api_key"]:
                     logger.warning("MEM0 enabled with Gemini embedder but GOOGLE_API_KEY/GEMINI_API_KEY missing")
-                if config["mem0_llm_provider"] != "gemini" and not config["openai_api_key"]:
-                    logger.warning("MEM0 enabled with OpenAI LLM but OPENAI_API_KEY missing")
-                if config["mem0_embedder_provider"] != "gemini" and not config["openai_api_key"]:
-                    logger.warning("MEM0 enabled with OpenAI embedder but OPENAI_API_KEY missing")
+                _has_openai_compat = config["openai_api_key"] or os.getenv("OPENROUTER_API_KEY")
+                if config["mem0_llm_provider"] not in _google_providers and not _has_openai_compat:
+                    logger.warning("MEM0 enabled with OpenAI LLM but OPENAI_API_KEY/OPENROUTER_API_KEY missing")
+                if config["mem0_embedder_provider"] not in _google_providers and not _has_openai_compat:
+                    logger.warning("MEM0 enabled with OpenAI embedder but OPENAI_API_KEY/OPENROUTER_API_KEY missing")
 
             from connectors.mem0 import Mem0Connector
             connector = Mem0Connector(config)
@@ -244,7 +246,7 @@ class ConnectorRegistry:
         """Register Web3 On-chain Trading connector"""
         try:
             config = {
-                "chain_id": os.getenv("CHAIN_ID", 421614)
+                "chain_id": os.getenv("CHAIN_ID", 84532)
             }
             # Import locally to avoid circular dependency issues if any
             from connectors.web3_arbitrum.onchain_connector import OnchainConnector
