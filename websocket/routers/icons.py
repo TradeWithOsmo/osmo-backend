@@ -1,15 +1,17 @@
 """
 Icon Resolver API
 =================
-Resolves icon URLs for market symbols with persistent Redis caching.
+Resolves icon data for market symbols with persistent Redis caching.
 
 Endpoints:
-  GET /api/icons?symbols=BTC,ETH,AAPL,EURUSD  – batch resolve icon URLs
+  GET /api/icons?symbols=BTC,ETH,AAPL,EUR-USD  – batch resolve icon data
 
-Flow:
-1. Check Redis for each symbol (30-day TTL)
-2. Cache miss → probe fallback sources via HEAD requests
-3. Return map: {symbol → {url, source}} or {symbol → {type:"forex", base, quote}}
+Response types per symbol:
+  {type:"forex", base, quote}   – forex pair (use dual-flag UI)
+  {type:"package", code}        – metal/commodity in global-trade-react-icon
+  {type:"local", key}           – asset with bundled SVG in frontend
+  {url:"..."}                   – resolved CDN/repo URL
+  {url:null}                    – no icon found
 """
 
 import asyncio
@@ -46,6 +48,51 @@ def detect_forex(symbol: str) -> Optional[Dict[str, str]]:
         b, q = clean[:3], clean[3:]
         if b in FIAT_CURRENCIES and q in FIAT_CURRENCIES:
             return {"type": "forex", "base": b, "quote": q}
+    return None
+
+
+# ── Codes handled by global-trade-react-icon npm package ──────────────────────
+# Metals: XAU=Gold, XAG=Silver, XPD=Palladium, XPT=Platinum, CPR=Copper
+# Commodities: OIL, GAS, NGS=NatGas, SOY, WHT=Wheat, CCO=Cocoa,
+#              CFF=Coffee, CTN=Cotton, CRN=Corn, SGR=Sugar
+PACKAGE_CODES = {
+    'XAU', 'XAG', 'XPD', 'XPT', 'CPR',
+    'OIL', 'GAS', 'NGS', 'SOY', 'WHT', 'CCO', 'CFF', 'CTN', 'CRN', 'SGR',
+}
+
+# ── Codes with bundled SVG assets in the frontend ─────────────────────────────
+LOCAL_CODES = {
+    # Commodities (local SVG, not in package)
+    'CL', 'HG',
+    # Stocks
+    'AAPL', 'AMD', 'AMZN', 'BMNR', 'COST', 'CRCL', 'CVX', 'GLXY', 'GOOG', 'HOOD',
+    'META', 'MSFT', 'MSTR', 'NFLX', 'NVDA', 'ORCL', 'PLTR', 'RIVN', 'XOM', 'COIN',
+    'TSLA', 'SBET',
+    # Indices (base and compound forms, e.g. DAX and DAXEUR)
+    'DAX', 'DJI', 'FTSE', 'HSI', 'NDX', 'NIK', 'SPX',
+    'DAXEUR', 'DJIUSD', 'FTSEGBP', 'HSIHKD', 'NDXUSD', 'NIKJPY', 'SPXUSD',
+}
+
+
+def classify_no_probe(sym: str) -> Optional[Dict[str, Any]]:
+    """Classify symbol without HTTP probing. Returns None if probing is needed."""
+    forex = detect_forex(sym)
+    if forex:
+        return forex
+
+    # Extract base for compound pairs like XAU-USD → XAU, SPX-USD → SPX
+    parts = sym.split('-')
+    base = parts[0] if len(parts) >= 2 else sym
+
+    if sym in PACKAGE_CODES or base in PACKAGE_CODES:
+        code = base if base in PACKAGE_CODES else sym
+        return {"type": "package", "code": code}
+
+    if sym in LOCAL_CODES:
+        return {"type": "local", "key": sym}
+    if base in LOCAL_CODES:
+        return {"type": "local", "key": base}
+
     return None
 
 
@@ -128,24 +175,24 @@ async def get_icons(symbols: str = Query(..., description="Comma-separated list 
     else:
         to_resolve = symbol_list[:]
 
-    # ── Detect forex (no HTTP probe needed) ──────────────────────────────────
-    non_forex: List[str] = []
+    # ── Classify without probing (forex, package, local) ─────────────────────
+    to_probe: List[str] = []
     for sym in to_resolve:
-        forex = detect_forex(sym)
-        if forex:
-            result[sym] = forex
+        classified = classify_no_probe(sym)
+        if classified:
+            result[sym] = classified
             if r:
-                await r.setex(f"{REDIS_KEY_PREFIX}{sym}", REDIS_TTL, json.dumps(forex))
+                await r.setex(f"{REDIS_KEY_PREFIX}{sym}", REDIS_TTL, json.dumps(classified))
         else:
-            non_forex.append(sym)
+            to_probe.append(sym)
 
     # ── Probe remaining symbols concurrently ─────────────────────────────────
-    if non_forex:
+    if to_probe:
         async with httpx.AsyncClient() as client:
             resolved = await asyncio.gather(
-                *[resolve_symbol(client, sym) for sym in non_forex]
+                *[resolve_symbol(client, sym) for sym in to_probe]
             )
-        for sym, data in zip(non_forex, resolved):
+        for sym, data in zip(to_probe, resolved):
             result[sym] = data
             if r and data.get("url"):
                 await r.setex(f"{REDIS_KEY_PREFIX}{sym}", REDIS_TTL, json.dumps(data))
