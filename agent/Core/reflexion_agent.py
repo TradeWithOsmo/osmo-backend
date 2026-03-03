@@ -142,7 +142,6 @@ _TOOL_CATEGORIES: Dict[str, List[str]] = {
         "press_key",
         "reset_view",
         "focus_latest",
-        "get_screenshot",
         "hover_candle",
         "mouse_move",
         "inspect_cursor",

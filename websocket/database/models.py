@@ -499,6 +499,15 @@ class ChatMessage(Base):
         Index('idx_message_session', 'session_id', 'timestamp'),
     )
 
+class IconCache(Base):
+    """Permanent icon URL cache — probed once, stored forever."""
+    __tablename__ = "icon_cache"
+
+    symbol = Column(String, primary_key=True)   # e.g. 'BTC', 'AAPL'
+    url = Column(Text, nullable=True)            # null = probed, no icon found
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class GlobalChatMessage(Base):
     """Global chat messages valid for 24 hours UTC"""
     __tablename__ = "global_chat_messages"

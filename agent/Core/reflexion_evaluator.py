@@ -68,7 +68,6 @@ _NAV_TOOLS = {
     "press_key",
     "reset_view",
     "focus_latest",
-    "get_screenshot",
     "get_photo_chart",
     "hover_candle",
     "mouse_move",

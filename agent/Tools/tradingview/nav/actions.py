@@ -109,10 +109,6 @@ async def get_box(symbol: str) -> Dict[str, Any]:
     """Get canvas bounding box (coordinates)."""
     return await _send_command(symbol, "get_box", {"selector": "#tv_chart_container canvas"})
 
-async def get_screenshot(symbol: str) -> Dict[str, Any]:
-    """Get a screenshot of the chart canvas."""
-    return await _send_command(symbol, "get_screenshot", {"target": "canvas"})
-
 async def get_photo_chart(symbol: str, target: str = "canvas") -> Dict[str, Any]:
     """
     Capture a chart photo (PNG-oriented screenshot helper).

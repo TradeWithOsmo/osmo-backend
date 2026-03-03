@@ -1,32 +1,30 @@
 """
 Icon Resolver API
 =================
-Resolves icon data for market symbols with persistent Redis caching.
+Resolves icon data for market symbols with permanent PostgreSQL caching.
 
-Endpoints:
-  GET /api/icons?symbols=BTC,ETH,AAPL,EUR-USD  – batch resolve icon data
+Lookup order per symbol:
+  1. _ICON_MAP  — in-memory dict from icon_map.json (7943+ symbols, instant)
+  2. icon_cache — PostgreSQL permanent table (survives restarts, no TTL)
+  3. classify_no_probe — forex / commodity shortcuts (no I/O)
+  4. CDN probe  — HTTP HEAD checks, result saved to icon_cache forever
 
-Response types per symbol:
-  {type:"forex", base, quote}   – forex pair (use dual-flag UI)
-  {type:"package", code}        – metal/commodity in global-trade-react-icon
-  {type:"local", key}           – asset with bundled SVG in frontend
-  {url:"..."}                   – resolved CDN/repo URL
-  {url:null}                    – no icon found
+Endpoint:
+  GET /api/icons?symbols=BTC,ETH,AAPL,EUR-USD
 """
 
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Query
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-REDIS_KEY_PREFIX = "icon:"
-REDIS_TTL = 30 * 24 * 3600  # 30 days
 
 # ── Forex detection ────────────────────────────────────────────────────────────
 FIAT_CURRENCIES = {
@@ -51,24 +49,30 @@ def detect_forex(symbol: str) -> Optional[Dict[str, str]]:
     return None
 
 
-# ── Codes handled by global-trade-react-icon npm package ──────────────────────
-# Metals: XAU=Gold, XAG=Silver, XPD=Palladium, XPT=Platinum, CPR=Copper
-# Commodities: OIL, GAS, NGS=NatGas, SOY, WHT=Wheat, CCO=Cocoa,
-#              CFF=Coffee, CTN=Cotton, CRN=Corn, SGR=Sugar
-PACKAGE_CODES = {
-    'XAU', 'XAG', 'XPD', 'XPT', 'CPR',
-    'OIL', 'GAS', 'NGS', 'SOY', 'WHT', 'CCO', 'CFF', 'CTN', 'CRN', 'SGR',
+# ── Commodity/metal icon URLs (TradingView CDN) ────────────────────────────────
+_TV = 'https://s3-symbol-logo.tradingview.com'
+COMMODITY_URLS: dict = {
+    'XAU': f'{_TV}/metal/gold--big.svg',
+    'XAG': f'{_TV}/metal/silver--big.svg',
+    'XPD': f'{_TV}/metal/palladium--big.svg',
+    'XPT': f'{_TV}/metal/platinum--big.svg',
+    'CPR': f'{_TV}/metal/copper--big.svg',
+    'XCU': f'{_TV}/metal/copper--big.svg',
+    'WHT': f'{_TV}/commodity/wheat--big.svg',
+    'CRN': f'{_TV}/commodity/corn--big.svg',
+    'SGR': f'{_TV}/commodity/sugar--big.svg',
+    'CTN': f'{_TV}/commodity/cotton--big.svg',
+    'CFF': f'{_TV}/commodity/coffee--big.svg',
+    'SOY': f'{_TV}/commodity/soybean--big.svg',
+    'OIL': None, 'GAS': None, 'NGS': None, 'CCO': None,
 }
 
 # ── Codes with bundled SVG assets in the frontend ─────────────────────────────
 LOCAL_CODES = {
-    # Commodities (local SVG, not in package)
     'CL', 'HG',
-    # Stocks
     'AAPL', 'AMD', 'AMZN', 'BMNR', 'COST', 'CRCL', 'CVX', 'GLXY', 'GOOG', 'HOOD',
     'META', 'MSFT', 'MSTR', 'NFLX', 'NVDA', 'ORCL', 'PLTR', 'RIVN', 'XOM', 'COIN',
     'TSLA', 'SBET',
-    # Indices (base and compound forms, e.g. DAX and DAXEUR)
     'DAX', 'DJI', 'FTSE', 'HSI', 'NDX', 'NIK', 'SPX',
     'DAXEUR', 'DJIUSD', 'FTSEGBP', 'HSIHKD', 'NDXUSD', 'NIKJPY', 'SPXUSD',
 }
@@ -79,54 +83,150 @@ def classify_no_probe(sym: str) -> Optional[Dict[str, Any]]:
     forex = detect_forex(sym)
     if forex:
         return forex
-
-    # Extract base for compound pairs like XAU-USD → XAU, SPX-USD → SPX
     parts = sym.split('-')
     base = parts[0] if len(parts) >= 2 else sym
-
-    if sym in PACKAGE_CODES or base in PACKAGE_CODES:
-        code = base if base in PACKAGE_CODES else sym
-        return {"type": "package", "code": code}
-
+    if sym in COMMODITY_URLS or base in COMMODITY_URLS:
+        code = base if base in COMMODITY_URLS else sym
+        return {"url": COMMODITY_URLS[code]}
     if sym in LOCAL_CODES:
         return {"type": "local", "key": sym}
     if base in LOCAL_CODES:
         return {"type": "local", "key": base}
-
     return None
 
 
-# ── Icon source lists ──────────────────────────────────────────────────────────
+# ── In-memory icon map (loaded once at startup) ────────────────────────────────
+# Support both VPS path and Docker path
+ICON_REPOS_PATH = next((p for p in ['/root/icon-repos', '/app/icon-repos'] if os.path.isdir(p)), '/app/icon-repos')
+_ICON_MAP_PATH = f'{ICON_REPOS_PATH}/icon_map.json'
+# Self-hosted base URL — eliminates GitHub/jsDelivr CDN hops for frontend
+ICONS_BASE_URL = os.environ.get('ICONS_BASE_URL', 'http://76.13.219.146:8000/icons')
+
+
+def _build_icon_map() -> dict:
+    _b = ICONS_BASE_URL
+    sources = [
+        (f'{ICON_REPOS_PATH}/nvstly/ticker_icons', '.png',
+         f'{_b}/nvstly/ticker_icons/{{u}}.png'),
+        (f'{ICON_REPOS_PATH}/web3icons/raw-svgs/tokens/branded', '.svg',
+         f'{_b}/web3icons/raw-svgs/tokens/branded/{{u}}.svg'),
+        (f'{ICON_REPOS_PATH}/web3icons/raw-svgs/tokens/background', '.svg',
+         f'{_b}/web3icons/raw-svgs/tokens/background/{{u}}.svg'),
+        (f'{ICON_REPOS_PATH}/atomiclabs/128/color', '.png',
+         f'{_b}/atomiclabs/128/color/{{l}}.png'),
+        (f'{ICON_REPOS_PATH}/erikthiart/16', '.png',
+         f'{_b}/erikthiart/16/{{l}}.png'),
+        (f'{ICON_REPOS_PATH}/pymmdrza/PNG', '.png',
+         'https://cdn.jsdelivr.net/gh/Pymmdrza/CryptocurrencyIcons@main/PNG/{u}.png'),
+        (f'{ICON_REPOS_PATH}/cryptofont/SVG', '.svg',
+         f'{_b}/cryptofont/SVG/{{l}}.svg'),
+    ]
+    m: dict = {}
+    for directory, ext, tmpl in sources:
+        if not os.path.isdir(directory):
+            continue
+        for fname in os.listdir(directory):
+            if not fname.endswith(ext):
+                continue
+            stem = fname[:-len(ext)]
+            sym = stem.upper()
+            if sym not in m:
+                m[sym] = tmpl.format(u=stem.upper(), l=stem.lower())
+    return m
+
+
+def _load_icon_map() -> dict:
+    if os.path.isfile(_ICON_MAP_PATH):
+        try:
+            with open(_ICON_MAP_PATH) as f:
+                data = json.load(f)
+            logger.info(f'Icon map loaded: {len(data)} symbols')
+            return data
+        except Exception as e:
+            logger.warning(f'Failed to load icon_map.json: {e}')
+    if os.path.isdir(ICON_REPOS_PATH):
+        logger.info('Generating icon_map.json from repos...')
+        data = _build_icon_map()
+        try:
+            with open(_ICON_MAP_PATH, 'w') as f:
+                json.dump(data, f, separators=(',', ':'))
+        except Exception:
+            pass
+        return data
+    logger.warning('Icon repos not found — using CDN probe only')
+    return {}
+
+
+_ICON_MAP: dict = _load_icon_map()
+
+
+def find_local_icon(base: str) -> Optional[str]:
+    return _ICON_MAP.get(base.upper())
+
+
+# ── PostgreSQL permanent cache ─────────────────────────────────────────────────
+async def _db_batch_get(symbols: List[str]) -> Dict[str, Any]:
+    """Batch lookup from icon_cache. Only returns symbols that exist in DB."""
+    try:
+        from database.connection import engine
+        async with engine.connect() as conn:
+            rows = await conn.execute(
+                text("SELECT symbol, url FROM icon_cache WHERE symbol = ANY(:syms)"),
+                {"syms": symbols}
+            )
+            return {row[0]: row[1] for row in rows}
+    except Exception as e:
+        logger.warning(f'icon_cache DB lookup failed: {e}')
+        return {}
+
+
+async def _db_save_many(entries: List[tuple]) -> None:
+    """Batch insert (symbol, url) pairs into icon_cache. Ignores conflicts."""
+    if not entries:
+        return
+    try:
+        from database.connection import engine
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO icon_cache (symbol, url)
+                    SELECT unnest(:syms::text[]), unnest(:urls::text[])
+                    ON CONFLICT (symbol) DO NOTHING
+                """),
+                {"syms": [e[0] for e in entries], "urls": [e[1] for e in entries]}
+            )
+    except Exception as e:
+        logger.warning(f'icon_cache DB save failed: {e}')
+
+
+# ── CDN probe ─────────────────────────────────────────────────────────────────
 def get_sources(sym: str) -> List[str]:
-    """Return ordered list of candidate URLs for any symbol (crypto + RWA)."""
     s = sym.lower()
+    b = ICONS_BASE_URL
     return [
-        # Stocks / RWA first (nvstly has excellent stock coverage)
-        f"https://raw.githubusercontent.com/nvstly/icons/main/ticker_icons/{sym}.png",
-        # Crypto SVGs (web3icons — 2500+ curated tokens)
-        f"https://raw.githubusercontent.com/0xa3k5/web3icons/main/raw-svgs/tokens/{sym}.svg",
-        f"https://cdn.jsdelivr.net/gh/0xa3k5/web3icons@main/raw-svgs/tokens/{sym}.svg",
-        # Crypto SVGs (cryptofont — 1200+ tokens)
-        f"https://raw.githubusercontent.com/Cryptofonts/cryptofont/master/SVG/{s}.svg",
-        f"https://cdn.jsdelivr.net/gh/Cryptofonts/cryptofont@master/SVG/{s}.svg",
-        # Stocks — Parqet (EU + US coverage)
-        f"https://assets.parqet.com/logos/symbol/{sym}",
-        # Stocks — n3tn1nja
-        f"https://raw.githubusercontent.com/n3tn1nja/StockTickerIcons/main/icons/{sym}.png",
-        # Crypto — CoinCap CDN
+        # ── Self-hosted repos (fastest — no external CDN hop) ────────────────
+        f"{b}/nvstly/ticker_icons/{sym}.png",
+        f"{b}/web3icons/raw-svgs/tokens/branded/{sym}.svg",
+        f"{b}/atomiclabs/128/color/{s}.png",
+        f"{b}/erikthiart/16/{s}.png",
+        # ── External CDNs for repos not self-hosted ──────────────────────────
+        f"https://cdn.jsdelivr.net/gh/Pymmdrza/CryptocurrencyIcons@main/PNG/{sym}.png",
+        # ── TradingView CDN (crypto + stock) ────────────────────────────────
+        f"https://s3-symbol-logo.tradingview.com/crypto/XTVC{sym}--big.svg",
+        f"https://s3-symbol-logo.tradingview.com/{s}--big.svg",
+        # ── Crypto asset CDNs ───────────────────────────────────────────────
         f"https://assets.coincap.io/assets/icons/{s}@2x.png",
-        # Crypto — AtomicLabs (~800 coins)
-        f"https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@master/128/color/{s}.png",
-        # Crypto — ErikThiart (3000+ coins)
-        f"https://raw.githubusercontent.com/ErikThiart/cryptocurrency-icons/master/16/{s}.png",
-        # Stocks — Financial Modeling Prep
+        f"https://lcw.nyc3.cdn.digitaloceanspaces.com/production/currencies/128/{s}.webp",
+        # ── Stock / financial logos ──────────────────────────────────────────
+        f"https://assets.parqet.com/logos/symbol/{sym}",
         f"https://financialmodelingprep.com/image-stock/{sym}.png",
-        # Stocks — Clearbit (works when ticker matches company .com domain)
         f"https://logo.clearbit.com/{s}.com",
+        # ── Fallback: background-shaped / mono icons (last resort) ───────────
+        f"{b}/web3icons/raw-svgs/tokens/background/{sym}.svg",
+        f"{b}/cryptofont/SVG/{s}.svg",
     ]
 
 
-# ── URL probe ─────────────────────────────────────────────────────────────────
 async def probe_url(client: httpx.AsyncClient, url: str) -> bool:
     try:
         resp = await client.head(url, follow_redirects=True, timeout=5.0)
@@ -136,65 +236,74 @@ async def probe_url(client: httpx.AsyncClient, url: str) -> bool:
 
 
 async def resolve_symbol(client: httpx.AsyncClient, sym: str) -> Dict[str, Any]:
-    """Find the first reachable icon URL for sym, probing in batches of 5."""
-    sources = get_sources(sym)
+    parts = sym.split('-')
+    base = parts[0] if len(parts) >= 2 else sym
+
+    local_url = find_local_icon(base)
+    if local_url:
+        return {"url": local_url}
+
+    sources = get_sources(base) if base != sym else get_sources(sym)
     batch_size = 5
     for i in range(0, len(sources), batch_size):
         batch = sources[i:i + batch_size]
         results = await asyncio.gather(*[probe_url(client, u) for u in batch])
         for url, ok in zip(batch, results):
             if ok:
-                logger.debug(f"Resolved icon for {sym}: {url}")
                 return {"url": url}
-    logger.debug(f"No icon found for {sym}")
     return {"url": None}
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 @router.get("")
 async def get_icons(symbols: str = Query(..., description="Comma-separated list of market symbols")):
-    from storage.redis_manager import redis_manager
-
     symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
     if not symbol_list:
         return {}
 
     result: Dict[str, Any] = {}
-    to_resolve: List[str] = []
+    need_db: List[str] = []
 
-    # ── Check Redis cache ────────────────────────────────────────────────────
-    r = redis_manager._redis
-    if r:
-        keys = [f"{REDIS_KEY_PREFIX}{sym}" for sym in symbol_list]
-        cached_values = await r.mget(*keys)
-        for sym, val in zip(symbol_list, cached_values):
-            if val:
-                result[sym] = json.loads(val)
+    # 1. In-memory icon_map — instant, no I/O
+    for sym in symbol_list:
+        parts = sym.split('-')
+        base = parts[0] if len(parts) >= 2 else sym
+        url = find_local_icon(base)
+        if url:
+            result[sym] = {"url": url}
+        else:
+            need_db.append(sym)
+
+    # 2. PostgreSQL permanent cache — single batch query
+    if need_db:
+        db_hits = await _db_batch_get(need_db)
+        still_missing: List[str] = []
+        for sym in need_db:
+            if sym in db_hits:
+                result[sym] = {"url": db_hits[sym]}
             else:
-                to_resolve.append(sym)
-    else:
-        to_resolve = symbol_list[:]
+                still_missing.append(sym)
+        need_db = still_missing
 
-    # ── Classify without probing (forex, package, local) ─────────────────────
+    # 3. Classify forex/commodity (no I/O)
     to_probe: List[str] = []
-    for sym in to_resolve:
+    for sym in need_db:
         classified = classify_no_probe(sym)
         if classified:
             result[sym] = classified
-            if r:
-                await r.setex(f"{REDIS_KEY_PREFIX}{sym}", REDIS_TTL, json.dumps(classified))
         else:
             to_probe.append(sym)
 
-    # ── Probe remaining symbols concurrently ─────────────────────────────────
+    # 4. CDN probe — all concurrent, save to DB permanently
     if to_probe:
         async with httpx.AsyncClient() as client:
             resolved = await asyncio.gather(
                 *[resolve_symbol(client, sym) for sym in to_probe]
             )
+        to_save: List[tuple] = []
         for sym, data in zip(to_probe, resolved):
             result[sym] = data
-            if r and data.get("url"):
-                await r.setex(f"{REDIS_KEY_PREFIX}{sym}", REDIS_TTL, json.dumps(data))
+            to_save.append((sym, data.get("url")))
+        await _db_save_many(to_save)
 
     return result
