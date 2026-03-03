@@ -80,6 +80,19 @@ def _get_tradebook(exchange: str):
 
 # ── REST endpoints ─────────────────────────────────────────────────────────────
 
+@router.get("/availability")
+async def get_exchange_availability(
+    exchange: str = Query("hyperliquid", description="Exchange name"),
+):
+    """Returns whether orderbook and trades are available for the given exchange."""
+    ex = exchange.lower()
+    return {
+        "exchange": ex,
+        "orderbook": ex not in _ORDERBOOK_UNAVAILABLE_EXCHANGES,
+        "trades": ex not in _TRADES_UNAVAILABLE_EXCHANGES,
+    }
+
+
 @router.get("/{symbol}/orderbook")
 async def rest_orderbook(
     symbol: str,

@@ -1,6 +1,7 @@
 ﻿from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # Trigger Reload 1
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import make_asgi_app, Counter, Gauge, Histogram
 import signal
 import sys
@@ -786,6 +787,12 @@ app.include_router(trade_setups_router)  # NEW: /api/trade-setups (GP/GL monitor
 app.include_router(tradebook_router, prefix="/api/tradebook", tags=["tradebook"])  # REST: /api/tradebook/{symbol}/orderbook
 app.include_router(tradebook_router)  # WS: /ws/orderbook/{symbol} and /ws/trades/{symbol}
 app.include_router(global_chat_router, prefix="/api/chat", tags=["chat"])
+
+# Serve locally cloned icon repos as static files — eliminates GitHub/jsDelivr CDN hops
+import os as _os
+_ICON_REPOS_DIR = next((p for p in ['/app/icon-repos', '/root/icon-repos'] if _os.path.isdir(p)), None)
+if _ICON_REPOS_DIR:
+    app.mount("/icons", StaticFiles(directory=_ICON_REPOS_DIR), name="icon-repos")
 
 
 
