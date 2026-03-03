@@ -177,20 +177,6 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
         "get_price": {
             "description": "Get latest market price for a symbol.",
         },
-        "get_candles": {
-            "description": "Fetch OHLC candles for a symbol and timeframe.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string"},
-                    "timeframe": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "asset_type": {"type": "string"},
-                },
-                "required": ["symbol"],
-                "additionalProperties": True,
-            },
-        },
         "get_high_low_levels": {
             "description": "Compute support/resistance from candles.",
             "parameters": {

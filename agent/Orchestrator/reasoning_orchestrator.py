@@ -198,16 +198,6 @@ class ReasoningOrchestrator:
                         args={"symbol": symbol, "asset_type": asset_type},
                     ),
                     ToolCall(
-                        name="get_candles",
-                        reason="Gather OHLC context for timeframe analysis",
-                        args={
-                            "symbol": symbol,
-                            "timeframe": tf,
-                            "limit": 120,
-                            "asset_type": asset_type,
-                        },
-                    ),
-                    ToolCall(
                         name="get_technical_analysis",
                         reason="Generate compact technical summary",
                         args={

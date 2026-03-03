@@ -8,9 +8,8 @@ Usage:
 """
 
 from .market import (
-    get_price, 
-    get_candles, 
-    get_orderbook, 
+    get_price,
+    get_orderbook,
     get_funding_rate, 
     get_ticker_stats,
     get_chainlink_price,
@@ -67,7 +66,7 @@ from .research import (
 
 __all__ = [
     # Market
-    'get_price', 'get_candles', 'get_orderbook', 'get_funding_rate', 
+    'get_price', 'get_orderbook', 'get_funding_rate',
     'get_ticker_stats', 'get_chainlink_price', 'get_high_low_levels',
     # Analysis
     'get_technical_analysis', 'get_patterns', 'get_indicators', 'get_technical_summary',

@@ -368,6 +368,10 @@ async def get_high_low_levels(
     low_col = f"low_{effective_lookback}"
     degraded = effective_lookback < requested_lookback
 
+    # Find timestamps of the candles where resistance/support formed
+    resistance_candle = max(recent, key=lambda r: float(r.get("high", 0)))
+    support_candle = min(recent, key=lambda r: float(r.get("low", float("inf"))))
+
     return {
         "status": "ok",
         "symbol": symbol,
@@ -378,11 +382,14 @@ async def get_high_low_levels(
         "degraded": degraded,
         "candle_count": int(available),
         "support": support,
+        "support_time": support_candle.get("time"),
         "resistance": resistance,
+        "resistance_time": resistance_candle.get("time"),
         "midpoint": midpoint,
         "latest_high": float(latest.get("high", 0.0)),
         "latest_low": float(latest.get("low", 0.0)),
         "latest_close": float(latest.get("close", 0.0)),
+        "latest_time": latest.get("time"),
         "levels": {
             high_col: resistance,
             low_col: support,

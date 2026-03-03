@@ -13,7 +13,6 @@ from .data.analysis import (
 from .data.analytics import get_token_distribution, get_whale_activity
 from .data.knowledge import search_knowledge_base
 from .data.market import (
-    get_candles,
     get_chainlink_price,
     get_funding_rate,
     get_high_low_levels,
@@ -75,7 +74,6 @@ from .tradingview.nav.actions import (
 __all__ = [
     "place_order",
     "get_price",
-    "get_candles",
     "get_orderbook",
     "get_funding_rate",
     "get_ticker_stats",
