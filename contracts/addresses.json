@@ -1,21 +1,35 @@
 {
-    "base_sepolia":  {
-                         "chainId":  84532,
-                         "contracts":  {
-                                           "OsmoHub":  "0x31939E681C557Dc919537b739e36f326DE066672",
-                                           "TradingVault":  "0xbBB5E6239C4D3d8F111705Aa6b2ff30184AB8d2d",
-                                           "AIVault":  "0x83a0EF385e20Fe255441bef2B154e909911798b7",
-                                           "OrderRouter":  "0xfDA93F59D39ADC38a2adE1Cdc9a1E325F1AdFd09",
-                                           "PositionManager":  "0x624b56e32f10e5069420De3c5B4840a286D57ee6",
-                                           "SessionKeyManager":  "0xa2197Db35c41fE7C63EB4fA0dbE72Cd96c49642d",
-                                           "Faucet":  "0x0BBD5BAc4477e1328E790Cd81A6c7f2fEb3F395B",
-                                           "PriceFeed":  "0x613E94C3Ac57E34C2Bf3C5724A2aAa6ccE93c5Da",
-                                           "SymbolRegistry":  "0x25C92233e1dF2B1C440EEE66445f5bb33f3b3b09",
-                                           "RiskManager":  "0x6Bb1EE95660FE5D630C246CC2A3e7F6916d351B5",
-                                           "OstiumAdapter":  "0xe1D0d9366E9d166262570233b7B2CCc464B643Aa",
-                                           "FeeManager":  "0xEE7c500DE788803fCaCA6F340EeBDB32dfC346f9",
-                                           "USDC":  "0x666351CDbd5fA293360d266DB06d73E8Ea7C41F7",
-                                           "CustomMarketDataFeed": "0x3044C64982874dC3401428F4e3eed96976bb4131"
-                                       }
-                     }
+    "base_sepolia": {
+        "chainId": 84532,
+        "contracts": {
+            "OsmoHub":               "0x31939E681C557Dc919537b739e36f326DE066672",
+            "TradingVault":          "0xbBB5E6239C4D3d8F111705Aa6b2ff30184AB8d2d",
+            "AIVault":               "0x83a0EF385e20Fe255441bef2B154e909911798b7",
+            "OrderRouter":           "0xfDA93F59D39ADC38a2adE1Cdc9a1E325F1AdFd09",
+            "PositionManager":       "0x624b56e32f10e5069420De3c5B4840a286D57ee6",
+            "SessionKeyManager":     "0xa2197Db35c41fE7C63EB4fA0dbE72Cd96c49642d",
+            "Faucet":                "0x0BBD5BAc4477e1328E790Cd81A6c7f2fEb3F395B",
+            "PriceFeed":             "0x613E94C3Ac57E34C2Bf3C5724A2aAa6ccE93c5Da",
+            "SymbolRegistry":        "0x25C92233e1dF2B1C440EEE66445f5bb33f3b3b09",
+            "RiskManager":           "0x6Bb1EE95660FE5D630C246CC2A3e7F6916d351B5",
+            "OstiumAdapter":         "0xe1D0d9366E9d166262570233b7B2CCc464B643Aa",
+            "FeeManager":            "0xEE7c500DE788803fCaCA6F340EeBDB32dfC346f9",
+            "USDC":                  "0x666351CDbd5fA293360d266DB06d73E8Ea7C41F7",
+            "CustomMarketDataFeed":  "0x3044C64982874dC3401428F4e3eed96976bb4131",
+            "ReferralRegistry":      "0x08DFfff07f8A390f0E9321F28A256D7eb828cB79",
+            "SecurityModule":        "0xFF2fe1798D5F9CE73521DFCc28E443a95febbf12",
+            "ArenaSecurity":         "0x9d4Bf95362cAF4b369c78e324095cFB3CC25fEB3",
+            "ArenaPoints":           "0x2d779D31bB8a6221B56763d677381974D85Fd84d",
+            "ArenaChooseSide":       "0x6DEd33A19e86D381b7cf2aFc3c13103EC93F63C1",
+            "HyperliquidAdapter":    "0xd58E45e524069f0cFb18D780b0852C04Cb705E4a",
+            "AvantisAdapter":        "0xeb127A69647d78CEa6a11A86ec3909Dc07Ef2eFf",
+            "AsterAdapter":          "0xD2267196A0dCb9d0F3Fbf357Ced742a3C8fE0679",
+            "LighterAdapter":        "0x07c3f8C4694c7e71fD7ad50F2a6cE0375E93283C",
+            "VestAdapter":           "0xbCC8a3825aA60d392C3EFd9b0D2f38097d774Bc1",
+            "AevoAdapter":           "0x9ad326FEF1F8a9C15D84a449F3423d11f9dd9Aad",
+            "DydxAdapter":           "0xC9F20f0fd5FCe0fEF45468DAEc3c1378E648b735",
+            "ParadexAdapter":        "0x53cb4d59d0766060940DcD958C5815810fE37f83",
+            "OrderlyAdapter":        "0x631f9f5b1dCDd8F2C551Ed47a90eDa93cc68F8d8"
+        }
+    }
 }
