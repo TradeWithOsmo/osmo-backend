@@ -74,16 +74,18 @@ class ConnectorManager:
         Returns:
             Normalized data dict
         """
-        # Check cache first
-        if use_cache and self.redis:
-            cache_key = f"{category.value}:{symbol}"
-            cached_data = await self._get_from_cache(cache_key)
-            if cached_data:
-                return cached_data
-        
         # Route to appropriate connector
         connector_id = self._route_connector(category, asset_type)
         connector = self.get_connector(connector_id)
+
+        # Check cache first (key includes exchange + all params that affect result)
+        if use_cache and self.redis:
+            timeframe = kwargs.get("timeframe", "")
+            limit = kwargs.get("limit", "")
+            cache_key = f"{connector_id}:{category.value}:{symbol}:{timeframe}:{limit}"
+            cached_data = await self._get_from_cache(cache_key)
+            if cached_data:
+                return cached_data
 
         if not connector:
             raise ValueError(f"Connector not found: {connector_id}")

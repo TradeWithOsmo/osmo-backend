@@ -1,5 +1,4 @@
 from agent.Tools.data.market import (
-    get_candles,
     get_chainlink_price,
     get_funding_rate,
     get_high_low_levels,
@@ -10,7 +9,6 @@ from agent.Tools.data.market import (
 
 __all__ = [
     "get_price",
-    "get_candles",
     "get_orderbook",
     "get_funding_rate",
     "get_ticker_stats",

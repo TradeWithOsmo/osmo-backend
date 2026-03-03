@@ -69,7 +69,6 @@ DISCOVERY_TOOLS = {"list_supported_draw_tools", "list_supported_indicator_aliase
 # Core trading-analysis workflow (in human-natural order)
 ANALYSIS_WORKFLOW_TOOLS = [
     "get_price",
-    "get_candles",
     "get_technical_analysis",
     "get_high_low_levels",
     "get_active_indicators",
@@ -103,7 +102,6 @@ _TOOL_CATEGORIES: Dict[str, List[str]] = {
     ],
     "data": [
         "get_price",
-        "get_candles",
         "get_orderbook",
         "get_funding_rate",
         "get_ticker_stats",
@@ -1169,10 +1167,6 @@ class ReflexionAgent:
         if tool_name == "get_price" and symbol:
             if isinstance(result, dict):
                 state.ingest_price_result(symbol, result)
-
-        elif tool_name == "get_candles" and symbol:
-            if isinstance(result, dict):
-                state.ingest_candles_result(symbol, result)
 
         elif (
             tool_name in {"get_technical_analysis", "get_patterns", "get_indicators"}

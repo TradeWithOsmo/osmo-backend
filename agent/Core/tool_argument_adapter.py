@@ -5,7 +5,6 @@ from typing import Any, Dict, Set
 
 TOOL_NAME_ALIASES: Dict[str, str] = {
     "price": "get_price",
-    "candles": "get_candles",
     "technical_analysis": "get_technical_analysis",
     "active_indicators": "get_active_indicators",
     "clear_drawing": "clear_drawings",

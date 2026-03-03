@@ -859,7 +859,13 @@ async def get_candles(
         # If not fetched by specific exchanges, or fallback
         if not bars:
             try:
-                bars_raw = await hl_client.get_candles(coin, interval)
+                interval_minutes = {
+                    "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+                    "1h": 60, "4h": 240, "1d": 1440, "1w": 10080,
+                }.get(interval, 60)
+                now_ms = int(time.time() * 1000)
+                start_ms = now_ms - ((safe_limit + 2) * interval_minutes * 60 * 1000)
+                bars_raw = await hl_client.get_candles(coin, interval, start_time=start_ms, end_time=now_ms)
                 bars_raw = bars_raw[-safe_limit:] if bars_raw else []
                 for b in bars_raw:
                     bars.append({

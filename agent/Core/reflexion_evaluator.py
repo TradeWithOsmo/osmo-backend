@@ -33,7 +33,6 @@ EvalResult = Tuple[ActionStatus, str, Optional[str]]
 # ---------------------------------------------------------------------------
 
 _PRICE_TOOLS = {"get_price", "get_ticker_stats"}
-_CANDLE_TOOLS = {"get_candles"}
 _LEVEL_TOOLS = {"get_high_low_levels"}
 _TA_TOOLS = {
     "get_technical_analysis",
@@ -242,11 +241,6 @@ def _suggest_fix(
     ):
         return f"Transient network error – retry {tool_name} with the same arguments."
 
-    # HTTP 404 on candles
-    if "404" in lower and tool_name in _CANDLE_TOOLS:
-        tf_fallback = {"1D": "4H", "4H": "1H", "1H": "15m"}.get(timeframe.upper(), "1H")
-        return f"Try timeframe='{tf_fallback}' or verify the symbol format."
-
     # Fiat/RWA TA not supported
     if "fiat-rwa" in lower or "unsupported" in lower:
         return (
@@ -293,21 +287,6 @@ def _eval_price(args: Dict[str, Any], result: Dict[str, Any]) -> EvalResult:
     if pct is not None:
         note += f", 24h={pct:+.2f}%"
     return ActionStatus.GOOD, note, None
-
-
-def _eval_candles(args: Dict[str, Any], result: Any) -> EvalResult:
-    rows = _flatten_list(result)
-    limit = int(args.get("limit") or 100)
-    if len(rows) == 0:
-        fix = "Verify symbol format and timeframe, or reduce limit."
-        return ActionStatus.POOR, "Empty candles response", fix
-    if len(rows) < max(3, limit // 10):
-        return (
-            ActionStatus.POOR,
-            f"Too few candles: {len(rows)} (expected ~{limit})",
-            "Try a more liquid timeframe (1H, 4H, 1D) or reduce limit.",
-        )
-    return ActionStatus.GOOD, f"Candles OK: {len(rows)} bars", None
 
 
 def _eval_levels(args: Dict[str, Any], result: Dict[str, Any]) -> EvalResult:
@@ -605,9 +584,6 @@ class ReflexionEvaluator:
 
         if tool_name in _PRICE_TOOLS:
             return _eval_price(args, result)
-
-        if tool_name in _CANDLE_TOOLS:
-            return _eval_candles(args, result)
 
         if tool_name in _LEVEL_TOOLS:
             return _eval_levels(args, result)
