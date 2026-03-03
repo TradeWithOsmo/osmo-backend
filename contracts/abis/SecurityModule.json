@@ -12,19 +12,6 @@
   },
   {
     "type": "function",
-    "name": "DATA_UPDATER_ROLE",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "DEFAULT_ADMIN_ROLE",
     "inputs": [],
     "outputs": [
@@ -38,61 +25,68 @@
   },
   {
     "type": "function",
-    "name": "getMarketData",
-    "inputs": [
-      {
-        "name": "symbol",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
+    "name": "GUARDIAN_ROLE",
+    "inputs": [],
     "outputs": [
       {
-        "name": "price",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "fundingRateBps",
-        "type": "int256",
-        "internalType": "int256"
-      },
-      {
-        "name": "basisBps",
-        "type": "int256",
-        "internalType": "int256"
-      },
-      {
-        "name": "updatedAt",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "exists",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "getPriceIfFresh",
+    "name": "actionCooldown",
     "inputs": [
       {
-        "name": "symbol",
-        "type": "string",
-        "internalType": "string"
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
       {
-        "name": "price",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "checkCircuitBreaker",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "checkRateLimit",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
       },
       {
-        "name": "isFresh",
+        "name": "action",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "circuitBreakerTripped",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -162,52 +156,44 @@
   },
   {
     "type": "function",
-    "name": "marketData",
+    "name": "lastActionTime",
     "inputs": [
       {
         "name": "",
-        "type": "string",
-        "internalType": "string"
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
       {
-        "name": "price",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "fundingRateBps",
-        "type": "int256",
-        "internalType": "int256"
-      },
-      {
-        "name": "basisBps",
-        "type": "int256",
-        "internalType": "int256"
-      },
-      {
-        "name": "updatedAt",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "exists",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "maxDataAge",
+    "name": "pause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "paused",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -232,6 +218,13 @@
   },
   {
     "type": "function",
+    "name": "resetCircuitBreaker",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "revokeRole",
     "inputs": [
       {
@@ -250,10 +243,15 @@
   },
   {
     "type": "function",
-    "name": "setMaxDataAge",
+    "name": "setActionCooldown",
     "inputs": [
       {
-        "name": "newMaxDataAge",
+        "name": "action",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "cooldownSeconds",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -282,27 +280,12 @@
   },
   {
     "type": "function",
-    "name": "updateMarketData",
+    "name": "tripCircuitBreaker",
     "inputs": [
       {
-        "name": "symbol",
+        "name": "reason",
         "type": "string",
         "internalType": "string"
-      },
-      {
-        "name": "price",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "fundingRateBps",
-        "type": "int256",
-        "internalType": "int256"
-      },
-      {
-        "name": "basisBps",
-        "type": "int256",
-        "internalType": "int256"
       }
     ],
     "outputs": [],
@@ -310,78 +293,52 @@
   },
   {
     "type": "function",
-    "name": "updateMarketDataBatch",
-    "inputs": [
-      {
-        "name": "symbols",
-        "type": "string[]",
-        "internalType": "string[]"
-      },
-      {
-        "name": "prices",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "fundingRatesBps",
-        "type": "int256[]",
-        "internalType": "int256[]"
-      },
-      {
-        "name": "basesBps",
-        "type": "int256[]",
-        "internalType": "int256[]"
-      }
-    ],
+    "name": "unpause",
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "event",
-    "name": "MarketDataUpdated",
+    "name": "CircuitBreakerReset",
     "inputs": [
       {
-        "name": "symbol",
-        "type": "string",
+        "name": "resetBy",
+        "type": "address",
         "indexed": true,
-        "internalType": "string"
-      },
-      {
-        "name": "price",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "fundingRateBps",
-        "type": "int256",
-        "indexed": false,
-        "internalType": "int256"
-      },
-      {
-        "name": "basisBps",
-        "type": "int256",
-        "indexed": false,
-        "internalType": "int256"
-      },
-      {
-        "name": "updatedAt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "MaxDataAgeUpdated",
+    "name": "CircuitBreakerTriggered",
     "inputs": [
       {
-        "name": "newMaxDataAge",
-        "type": "uint256",
+        "name": "triggeredBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "reason",
+        "type": "string",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Paused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -462,6 +419,19 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "Unpaused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AccessControlBadConfirmation",
     "inputs": []
@@ -481,5 +451,25 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "CircuitBreakerTripped",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpectedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RateLimitExceeded",
+    "inputs": []
   }
 ]

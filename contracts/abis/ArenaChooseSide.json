@@ -1,0 +1,168 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "_security",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_arenaPoints",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "LOCK_DURATION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "arenaPoints",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "chooseSide",
+    "inputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "enum ArenaChooseSide.Side"
+      },
+      {
+        "name": "wager",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getUserPick",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "enum ArenaChooseSide.Side"
+      },
+      {
+        "name": "wager",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pickedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lockUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "picks",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "enum ArenaChooseSide.Side"
+      },
+      {
+        "name": "wager",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pickedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lockUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "security",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ArenaSecurity"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "SideChosen",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ArenaChooseSide.Side"
+      },
+      {
+        "name": "wager",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  }
+]

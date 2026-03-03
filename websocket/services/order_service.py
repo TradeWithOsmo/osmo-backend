@@ -647,38 +647,63 @@ class OrderService:
         }
 
     def _detect_exchange(self, symbol: str) -> str:
-        """Auto-detect exchange from symbol"""
-        # Check if force execution mode is set via environment variable
+        """Auto-detect exchange from symbol format.
+
+        Symbol conventions (from SymbolRegistry):
+          - AEVO:        BASE-AEVO       (e.g. AAVE-AEVO)
+          - AVANTIS:     BASE-AVANTIS    (e.g. AAVE-AVANTIS)
+          - ASTER:       BASEUSDT        (e.g. AAVEUSDT, no hyphen)
+          - DYDX:        BASE-DYDX       (e.g. AAVE-DYDX)
+          - LIGHTER:     BASE-LIGHTER    (e.g. BTC-LIGHTER)
+          - ORDERLY:     BASE-ORDERLY    (e.g. AAVE-ORDERLY)
+          - PARADEX:     BASE-PARADEX    (e.g. AAVE-PARADEX)
+          - VEST:        BASE-PERP / BASE-USD-PERP  (e.g. AAVE-PERP, AAPL-USD-PERP)
+          - HYPERLIQUID: bare crypto     (e.g. AAVE, BTC, ETH)
+          - OSTIUM:      bare RWA/stock  (e.g. AAPL, AMZN)
+
+        All CCIP adapters (non-hyperliquid, non-ostium) route to "onchain".
+        """
         force_mode = os.getenv("FORCE_EXECUTION_MODE", "auto").lower().strip()
         if force_mode == "simulation":
             return "simulation"
         if force_mode == "onchain":
             return "onchain"
 
-        # Auto-detect mode (default)
-        # Crypto symbols → Hyperliquid
-        # TODO: Better detection logic or mapping table
-        crypto_symbols = [
-            "BTC",
-            "ETH",
-            "SOL",
-            "LINK",
-            "AVAX",
-            "MATIC",
-            "ARB",
-            "DOGE",
-            "ATOM",
-        ]
+        sym = symbol.upper()
 
-        # Check if symbol starts with crypto ticker
-        for coin in crypto_symbols:
-            if symbol.startswith(coin):
-                # If explicit onchain requested via symbol convention (e.g. BTC-USD-ONCHAIN)
-                if "ONCHAIN" in symbol.upper():
-                    return "onchain"
-                return "hyperliquid"
+        # CCIP adapter exchanges — detected by suffix
+        ONCHAIN_SUFFIXES = (
+            "-AEVO",
+            "-AVANTIS",
+            "-ASTER",
+            "-DYDX",
+            "-LIGHTER",
+            "-ORDERLY",
+            "-PARADEX",
+            "-PERP",       # VEST: AAVE-PERP, AAPL-USD-PERP
+        )
+        for suffix in ONCHAIN_SUFFIXES:
+            if sym.endswith(suffix):
+                return "onchain"
 
-        # Everything else → Ostium (RWA)
+        # ASTER: no hyphen, ends with USDT (e.g. AAVEUSDT, BTCUSDT)
+        if sym.endswith("USDT") and "-" not in sym:
+            return "onchain"
+
+        # HYPERLIQUID: bare crypto symbols (no hyphen, no USDT suffix)
+        HYPERLIQUID_BASES = {
+            "BTC", "ETH", "SOL", "LINK", "AVAX", "MATIC", "ARB", "DOGE",
+            "ATOM", "AAVE", "UNI", "CRV", "MKR", "COMP", "SNX", "YFI",
+            "SUSHI", "1INCH", "GRT", "LRC", "ZRX", "BAL", "REN", "KNC",
+            "OP", "APE", "LDO", "RPL", "STG", "MAGIC", "GMX", "INJ",
+            "SUI", "APT", "SEI", "TIA", "BLUR", "PEPE", "WLD", "CFX",
+            "FXS", "DYDX", "ACE", "ADA", "ALGO", "DOT", "FIL", "NEAR",
+            "ICP", "XRP", "LTC", "BCH", "ETC", "XLM", "VET", "THETA",
+        }
+        if sym in HYPERLIQUID_BASES:
+            return "hyperliquid"
+
+        # Bare symbol not in known crypto set → Ostium (RWA / stocks)
         return "ostium"
 
     async def _validate_order(

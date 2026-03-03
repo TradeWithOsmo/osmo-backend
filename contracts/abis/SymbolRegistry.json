@@ -35,6 +35,29 @@
   },
   {
     "type": "function",
+    "name": "addSymbolMappingsBatch",
+    "inputs": [
+      {
+        "name": "tradingSymbols",
+        "type": "string[]",
+        "internalType": "string[]"
+      },
+      {
+        "name": "chainlinkSymbols",
+        "type": "string[]",
+        "internalType": "string[]"
+      },
+      {
+        "name": "exchanges",
+        "type": "string[]",
+        "internalType": "string[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getChainlinkSymbol",
     "inputs": [
       {
@@ -86,7 +109,121 @@
   },
   {
     "type": "function",
+    "name": "isAevoSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAsterSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAvantisSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isDydxSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isHyperliquidSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isLighterSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isOrderlySymbol",
     "inputs": [
       {
         "name": "tradingSymbol",
@@ -124,7 +261,45 @@
   },
   {
     "type": "function",
+    "name": "isParadexSymbol",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isSupported",
+    "inputs": [
+      {
+        "name": "tradingSymbol",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isVestSymbol",
     "inputs": [
       {
         "name": "tradingSymbol",
