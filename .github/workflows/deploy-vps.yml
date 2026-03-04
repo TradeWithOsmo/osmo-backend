@@ -67,6 +67,11 @@ jobs:
           git remote set-url origin "https://github.com/${REPO_SLUG}.git"
 
           git -c "http.extraHeader=${AUTH_HEADER}" fetch --prune origin "$TARGET_REF"
+
+          # FIX: remove untracked files that may cause conflicts when switching branches
+          git reset --hard
+          git clean -fd
+
           git checkout -B "$TARGET_REF" "FETCH_HEAD"
 
           cd websocket
