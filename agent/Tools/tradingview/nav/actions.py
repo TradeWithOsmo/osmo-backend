@@ -115,6 +115,9 @@ async def get_photo_chart(symbol: str, target: str = "canvas") -> Dict[str, Any]
     """
     return await _send_command(symbol, "get_screenshot", {"target": target, "format": "png"})
 
+# Backward compatibility
+get_screenshot = get_photo_chart 
+
 # === ADVANCED INTERACTION ===
 
 async def hover_candle(symbol: str, from_right: int, price_level: Optional[float] = None) -> Dict[str, Any]:
