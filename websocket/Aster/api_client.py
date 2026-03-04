@@ -1,19 +1,8 @@
 """
 Aster Exchange API client
-Based on: https://github.com/asterdex/aster-broker-pro-sdk
-API is Binance-compatible (fapi = futures API):
-  https://www.asterdex.com/bapi/*  →  REST/account
-  https://www.asterdex.com/fapi/*  →  Futures REST (public)
-  wss://fstream.asterdex.com/compress/stream  →  WS
-
-Public endpoints (no auth):
-  GET /fapi/v1/exchangeInfo   → all perpetual pairs + metadata
-  GET /fapi/v1/ticker/price   → latest mark prices
-  GET /fapi/v1/ticker/24hr    → 24h OHLCV + price change
-  GET /fapi/v1/depth          → orderbook
-  GET /fapi/v1/klines         → candlesticks
 """
 import httpx
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -22,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 ASTER_FAPI_BASE = "https://www.asterdex.com/fapi/v1"
 ASTER_BAPI_BASE = "https://www.asterdex.com/bapi"
+
+_SEMAPHORE_LIMIT = 10
 
 
 class CircuitBreaker:
@@ -56,64 +47,76 @@ class CircuitBreaker:
 
 
 class AsterAPIClient:
-    """
-    HTTP client for Aster Exchange (Binance fapi-compatible).
-    Chain: BNB Chain
-    Symbols: BTCUSDT, ETHUSDT, ... (Binance perpetual format)
-    """
-
     def __init__(self, fapi_base: str = ASTER_FAPI_BASE):
         self.fapi_base = fapi_base.rstrip("/")
-        self.client = httpx.AsyncClient(timeout=10.0, verify=False)
+        limits = httpx.Limits(
+            max_connections=30,
+            max_keepalive_connections=20,
+            keepalive_expiry=30,
+        )
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=3.0),
+            limits=limits,
+            verify=False,
+        )
+        self._sem = asyncio.Semaphore(_SEMAPHORE_LIMIT)
         self.circuit_breaker = CircuitBreaker()
         self.last_successful_fetch: Optional[datetime] = None
 
-    async def get_exchange_info(self) -> Optional[Dict[str, Any]]:
-        """
-        GET /fapi/v1/exchangeInfo
-        Returns all trading pairs with margin parameters.
-        Binance-compatible format: {"symbols": [{"symbol": "BTCUSDT", "baseAsset": "BTC", ...}]}
-        """
-        try:
-            resp = await self.client.get(f"{self.fapi_base}/exchangeInfo")
+    async def _get(self, path: str, params: dict = None) -> Any:
+        async with self._sem:
+            resp = await self.client.get(f"{self.fapi_base}{path}", params=params or {})
             resp.raise_for_status()
             return resp.json()
+
+    async def get_exchange_info(self) -> Optional[Dict[str, Any]]:
+        try:
+            data = await self._get("/exchangeInfo")
+            if not data:
+                return None
+            all_symbols = data.get("symbols", [])
+            active = [
+                s for s in all_symbols
+                if s.get("status", "").upper() in {"TRADING", "SETTLING"}
+            ]
+            logger.info(f"[Aster] exchangeInfo: {len(all_symbols)} total, {len(active)} active")
+            data["symbols"] = active
+            return data
         except Exception as e:
             logger.debug(f"[Aster] /exchangeInfo failed: {e}")
             return None
 
     async def get_ticker_prices(self) -> Optional[List[Dict]]:
-        """GET /fapi/v1/ticker/price — latest mark price per symbol."""
         try:
-            resp = await self.client.get(f"{self.fapi_base}/ticker/price")
-            resp.raise_for_status()
-            data = resp.json()
+            data = await self._get("/ticker/price")
             return data if isinstance(data, list) else [data]
         except Exception as e:
             logger.debug(f"[Aster] /ticker/price failed: {e}")
             return None
 
     async def get_24h_tickers(self) -> Optional[List[Dict]]:
-        """GET /fapi/v1/ticker/24hr — OHLCV + price change."""
         try:
-            resp = await self.client.get(f"{self.fapi_base}/ticker/24hr")
-            resp.raise_for_status()
-            data = resp.json()
+            data = await self._get("/ticker/24hr")
             return data if isinstance(data, list) else [data]
         except Exception as e:
             logger.debug(f"[Aster] /ticker/24hr failed: {e}")
             return None
 
     async def get_latest_prices(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Main polling method. Fetches exchangeInfo + 24hr tickers.
-        Normalizes to unified {symbol, from, to, price, ...} format.
-        """
         if not self.circuit_breaker.can_attempt():
             return None
 
-        # Try to get all symbols from exchangeInfo
-        exchange_info = await self.get_exchange_info()
+        exchange_info, tickers = await asyncio.gather(
+            self.get_exchange_info(),
+            self.get_24h_tickers(),
+            return_exceptions=True,
+        )
+
+        if isinstance(exchange_info, Exception):
+            exchange_info = None
+        if isinstance(tickers, Exception):
+            tickers = None
+
         symbols_meta: Dict[str, Dict] = {}
         if exchange_info:
             for s in exchange_info.get("symbols", []):
@@ -121,10 +124,7 @@ class AsterAPIClient:
                 if sym:
                     symbols_meta[sym] = s
 
-        # Get live prices from 24hr ticker
-        tickers = await self.get_24h_tickers()
         if tickers is None:
-            # Fallback to simple price endpoint
             tickers = await self.get_ticker_prices()
         if tickers is None:
             self.circuit_breaker.record_failure()
@@ -135,14 +135,10 @@ class AsterAPIClient:
             sym = ticker.get("symbol", "")
             if not sym:
                 continue
-
             meta = symbols_meta.get(sym, {})
-            # Binance format: BTCUSDT → base=BTC, quote=USDC/USDT
             base = meta.get("baseAsset") or sym.replace("USDT", "").replace("USDC", "").replace("BUSD", "")
             quote = meta.get("quoteAsset", "USDC")
             base = base.upper()
-
-            # Max leverage from requiredMarginPercent (e.g. 5% → 20x)
             req_margin = float(meta.get("requiredMarginPercent") or 10)
             max_lev = int(100 / req_margin) if req_margin > 0 else 20
 
@@ -169,36 +165,27 @@ class AsterAPIClient:
 
     async def get_klines(self, symbol: str, interval: str = "1m", limit: int = 100,
                          start_time: Optional[int] = None, end_time: Optional[int] = None) -> Optional[List]:
-        """GET /fapi/v1/klines — Binance-compatible OHLCV."""
         try:
             params = {"symbol": symbol, "interval": interval, "limit": limit}
             if start_time:
                 params["startTime"] = start_time
             if end_time:
                 params["endTime"] = end_time
-            resp = await self.client.get(f"{self.fapi_base}/klines", params=params)
-            resp.raise_for_status()
-            return resp.json()
+            return await self._get("/klines", params)
         except Exception as e:
             logger.debug(f"[Aster] /klines {symbol} failed: {e}")
             return None
 
     async def get_depth(self, symbol: str, limit: int = 20) -> Optional[Dict]:
-        """GET /fapi/v1/depth — Binance-compatible orderbook."""
         try:
-            resp = await self.client.get(f"{self.fapi_base}/depth", params={"symbol": symbol, "limit": limit})
-            resp.raise_for_status()
-            return resp.json()
+            return await self._get("/depth", {"symbol": symbol, "limit": limit})
         except Exception as e:
             logger.debug(f"[Aster] /depth {symbol} failed: {e}")
             return None
 
     async def get_recent_trades(self, symbol: str, limit: int = 20) -> Optional[List]:
-        """GET /fapi/v1/trades — Binance-compatible recent trades."""
         try:
-            resp = await self.client.get(f"{self.fapi_base}/trades", params={"symbol": symbol, "limit": limit})
-            resp.raise_for_status()
-            return resp.json()
+            return await self._get("/trades", {"symbol": symbol, "limit": limit})
         except Exception as e:
             logger.debug(f"[Aster] /trades {symbol} failed: {e}")
             return None

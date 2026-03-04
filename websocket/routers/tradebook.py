@@ -2,33 +2,6 @@
 routers/tradebook.py
 ====================
 Unified WebSocket + REST endpoints for orderbook and recent trades.
-
-WS endpoints:
-  /ws/orderbook/{symbol}?exchange=vest
-  /ws/trades/{symbol}?exchange=vest
-
-REST endpoints (for debugging / REST polling clients):
-  GET /api/tradebook/{symbol}/orderbook?exchange=vest
-  GET /api/tradebook/{symbol}/trades?exchange=vest
-
-Each exchange has its own tradebook.py module (isolated, easy to maintain):
-  Hyperliquid/tradebook.py
-  Vest/tradebook.py
-  Aster/tradebook.py
-  Avantis/tradebook.py   ← no orderbook (AMM), trades from subgraph
-  Ostium/tradebook.py    ← no orderbook or trades (oracle-based)
-  Orderly/tradebook.py
-  Paradex/tradebook.py
-  Aevo/tradebook.py
-  dYdX/tradebook.py
-
-Message format for WS orderbook:
-  {"type": "orderbook", "exchange": "vest", "symbol": "BTC-USD",
-   "data": {"bids": [{"px":"65000","sz":"0.5"},...], "asks": [...]}}
-
-Message format for WS trades:
-  {"type": "trades", "exchange": "vest", "symbol": "BTC-USD",
-   "data": [{"px":"65000","sz":"0.01","side":"B","time":1709000000000},...]}
 """
 
 import asyncio
@@ -43,11 +16,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Exchanges that do not expose public recent-trades endpoints.
 _TRADES_UNAVAILABLE_EXCHANGES = {"ostium"}
 _ORDERBOOK_UNAVAILABLE_EXCHANGES = {"ostium", "avantis"}
 
-# ── Exchange → module map ──────────────────────────────────────────────────────
 _TRADEBOOK_MODULES = {
     "hyperliquid": "Hyperliquid.tradebook",
     "vest":        "Vest.tradebook",
@@ -64,7 +35,6 @@ _module_cache: dict = {}
 
 
 def _get_tradebook(exchange: str):
-    """Lazy-import tradebook module for the given exchange."""
     exchange = exchange.lower()
     if exchange not in _TRADEBOOK_MODULES:
         return None
@@ -81,10 +51,7 @@ def _get_tradebook(exchange: str):
 # ── REST endpoints ─────────────────────────────────────────────────────────────
 
 @router.get("/availability")
-async def get_exchange_availability(
-    exchange: str = Query("hyperliquid", description="Exchange name"),
-):
-    """Returns whether orderbook and trades are available for the given exchange."""
+async def get_exchange_availability(exchange: str = Query("hyperliquid")):
     ex = exchange.lower()
     return {
         "exchange": ex,
@@ -96,10 +63,9 @@ async def get_exchange_availability(
 @router.get("/{symbol}/orderbook")
 async def rest_orderbook(
     symbol: str,
-    exchange: str = Query("hyperliquid", description="Exchange name"),
-    depth: int = Query(20, description="Max levels per side"),
+    exchange: str = Query("hyperliquid"),
+    depth: int = Query(20),
 ):
-    """REST: Fetch current orderbook snapshot."""
     mod = _get_tradebook(exchange)
     if not mod:
         return {"error": f"Unknown exchange: {exchange}", "bids": [], "asks": []}
@@ -109,17 +75,16 @@ async def rest_orderbook(
             return {"exchange": exchange, "symbol": symbol, "available": False, "bids": [], "asks": []}
         return {"exchange": exchange, "symbol": symbol, "available": True, **book}
     except Exception as e:
-        logger.error(f"[Tradebook] REST orderbook error for {exchange}/{symbol}: {e}")
+        logger.error(f"[Tradebook] REST orderbook error {exchange}/{symbol}: {e}")
         return {"error": str(e), "bids": [], "asks": []}
 
 
 @router.get("/{symbol}/trades")
 async def rest_trades(
     symbol: str,
-    exchange: str = Query("hyperliquid", description="Exchange name"),
-    limit: int = Query(30, description="Number of recent trades"),
+    exchange: str = Query("hyperliquid"),
+    limit: int = Query(30),
 ):
-    """REST: Fetch recent trades."""
     mod = _get_tradebook(exchange)
     if not mod:
         return {"error": f"Unknown exchange: {exchange}", "trades": []}
@@ -127,7 +92,7 @@ async def rest_trades(
         trades = await mod.get_recent_trades(symbol.upper(), limit=limit)
         return {"exchange": exchange, "symbol": symbol, "trades": trades or []}
     except Exception as e:
-        logger.error(f"[Tradebook] REST trades error for {exchange}/{symbol}: {e}")
+        logger.error(f"[Tradebook] REST trades error {exchange}/{symbol}: {e}")
         return {"error": str(e), "trades": []}
 
 
@@ -138,85 +103,62 @@ async def ws_orderbook(
     websocket: WebSocket,
     symbol: str,
     exchange: str = Query("hyperliquid"),
-    interval: float = Query(1.5, description="Poll interval in seconds"),
+    interval: float = Query(1.5),
 ):
-    """
-    WebSocket: streams orderbook updates for any exchange.
-    Polls the exchange-specific tradebook module at `interval` seconds.
-    Sends: {"type": "orderbook", "exchange": "...", "symbol": "...", "data": {...}}
-    If exchange has no orderbook (Ostium/Avantis), sends {"type": "orderbook_unavailable"}.
-    """
     await websocket.accept()
     exchange = exchange.lower()
     symbol = symbol.upper()
     mod = _get_tradebook(exchange)
 
     if not mod:
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "message": f"Unknown exchange: {exchange}",
-        }))
+        await websocket.send_text(json.dumps({"type": "error", "message": f"Unknown exchange: {exchange}"}))
         await websocket.close()
         return
 
     logger.info(f"[Tradebook WS] Orderbook connected: {exchange}/{symbol}")
 
-    first_payload_sent = False
-
-    # Immediate first payload to avoid client-side timeout skeletons on slow upstream responses.
     try:
         if exchange in _ORDERBOOK_UNAVAILABLE_EXCHANGES:
             await websocket.send_text(json.dumps({
-                "type": "orderbook_unavailable",
-                "exchange": exchange,
-                "symbol": symbol,
+                "type": "orderbook_unavailable", "exchange": exchange, "symbol": symbol,
             }))
         else:
             await websocket.send_text(json.dumps({
-                "type": "orderbook",
-                "exchange": exchange,
-                "symbol": symbol,
+                "type": "orderbook", "exchange": exchange, "symbol": symbol,
                 "data": {"bids": [], "asks": []},
             }))
-        first_payload_sent = True
     except Exception:
         await websocket.close()
         return
 
     async def _poll():
-        nonlocal first_payload_sent
+        await asyncio.sleep(0.1)  # jitter
+        consecutive_failures = 0
         while True:
             try:
+                if exchange in _ORDERBOOK_UNAVAILABLE_EXCHANGES:
+                    await asyncio.sleep(interval)
+                    continue
+
                 book = await mod.get_orderbook(symbol)
-                if book is None:
-                    payload = json.dumps({
-                        "type": "orderbook_unavailable",
-                        "exchange": exchange,
-                        "symbol": symbol,
-                    })
-                else:
-                    payload = json.dumps({
-                        "type": "orderbook",
-                        "exchange": exchange,
-                        "symbol": symbol,
-                        "data": book,
-                    })
+                consecutive_failures = 0
+
+                payload = json.dumps(
+                    {"type": "orderbook_unavailable", "exchange": exchange, "symbol": symbol}
+                    if book is None else
+                    {"type": "orderbook", "exchange": exchange, "symbol": symbol, "data": book}
+                )
                 await websocket.send_text(payload)
-                first_payload_sent = True
+
+            except WebSocketDisconnect:
+                break
             except Exception as e:
+                consecutive_failures += 1
                 logger.debug(f"[Tradebook WS] Orderbook poll error {exchange}/{symbol}: {e}")
-                # Keep socket alive on transient upstream failures.
-                if not first_payload_sent:
-                    try:
-                        await websocket.send_text(json.dumps({
-                            "type": "orderbook",
-                            "exchange": exchange,
-                            "symbol": symbol,
-                            "data": {"bids": [], "asks": []},
-                        }))
-                        first_payload_sent = True
-                    except Exception:
-                        break
+                backoff = min(interval * (2 ** consecutive_failures), 30.0)
+                await asyncio.sleep(backoff)
+                continue
+
             await asyncio.sleep(interval)
 
     poll_task = asyncio.create_task(_poll())
@@ -237,55 +179,43 @@ async def ws_trades(
     websocket: WebSocket,
     symbol: str,
     exchange: str = Query("hyperliquid"),
-    interval: float = Query(2.0, description="Poll interval in seconds"),
+    interval: float = Query(2.0),
 ):
-    """
-    WebSocket: streams recent trades for any exchange.
-    Polls the exchange-specific tradebook module at `interval` seconds.
-    Sends: {"type": "trades", "exchange": "...", "symbol": "...", "data": [...]}
-    """
     await websocket.accept()
     exchange = exchange.lower()
     symbol = symbol.upper()
     mod = _get_tradebook(exchange)
 
     if not mod:
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "message": f"Unknown exchange: {exchange}",
-        }))
+        await websocket.send_text(json.dumps({"type": "error", "message": f"Unknown exchange: {exchange}"}))
         await websocket.close()
         return
 
     logger.info(f"[Tradebook WS] Trades connected: {exchange}/{symbol}")
 
     seen_ids: set = set()
-    first_payload_sent = False
     last_emit_ts = 0.0
 
-    # Immediate first payload so client gets deterministic WS response quickly.
     try:
-        initial_payload = {
-            "type": "trades",
-            "exchange": exchange,
-            "symbol": symbol,
-            "data": [],
-        }
+        payload = {"type": "trades", "exchange": exchange, "symbol": symbol, "data": []}
         if exchange in _TRADES_UNAVAILABLE_EXCHANGES:
-            initial_payload["available"] = False
-        await websocket.send_text(json.dumps(initial_payload))
-        first_payload_sent = True
+            payload["available"] = False
+        await websocket.send_text(json.dumps(payload))
         last_emit_ts = time.time()
     except Exception:
         await websocket.close()
         return
 
     async def _poll():
-        nonlocal seen_ids, first_payload_sent, last_emit_ts
+        nonlocal seen_ids, last_emit_ts
+
+        await asyncio.sleep(0.1)  # jitter
+        consecutive_failures = 0
         while True:
             try:
                 trades = await mod.get_recent_trades(symbol, limit=30)
-                # Only send NEW trades (de-duplicate by id or px+time).
+                consecutive_failures = 0
+
                 new_trades = []
                 if trades:
                     for t in trades:
@@ -294,47 +224,31 @@ async def ws_trades(
                             seen_ids.add(tid)
                             new_trades.append(t)
 
-                # Keep seen_ids from growing unbounded
-                if len(seen_ids) > 500:
-                    seen_ids = set(list(seen_ids)[-200:])
+                if len(seen_ids) > 300:
+                    seen_ids = set(list(seen_ids)[-150:])
 
                 now = time.time()
-                should_emit_empty = (
-                    not first_payload_sent
-                    or (now - last_emit_ts) >= 10.0
-                )
-
-                # Always emit at least one payload soon after connect.
-                # This prevents frontend from waiting forever on quiet/unavailable feeds.
-                if new_trades or should_emit_empty:
-                    payload = {
+                if new_trades or (now - last_emit_ts) >= 10.0:
+                    out = {
                         "type": "trades",
                         "exchange": exchange,
                         "symbol": symbol,
-                        "data": new_trades if new_trades else [],
+                        "data": new_trades,
                     }
                     if exchange in _TRADES_UNAVAILABLE_EXCHANGES:
-                        payload["available"] = False
-                    await websocket.send_text(json.dumps(payload))
-                    first_payload_sent = True
+                        out["available"] = False
+                    await websocket.send_text(json.dumps(out))
                     last_emit_ts = now
+
+            except WebSocketDisconnect:
+                break
             except Exception as e:
+                consecutive_failures += 1
                 logger.debug(f"[Tradebook WS] Trades poll error {exchange}/{symbol}: {e}")
-                # Keep socket alive on transient upstream failures.
-                if not first_payload_sent:
-                    try:
-                        payload = {
-                            "type": "trades",
-                            "exchange": exchange,
-                            "symbol": symbol,
-                            "data": [],
-                            "available": exchange not in _TRADES_UNAVAILABLE_EXCHANGES,
-                        }
-                        await websocket.send_text(json.dumps(payload))
-                        first_payload_sent = True
-                        last_emit_ts = time.time()
-                    except Exception:
-                        break
+                backoff = min(interval * (2 ** consecutive_failures), 30.0)
+                await asyncio.sleep(backoff)
+                continue
+
             await asyncio.sleep(interval)
 
     poll_task = asyncio.create_task(_poll())
