@@ -108,7 +108,9 @@ class IndexerService:
         return await asyncio.to_thread(lambda: self.w3.eth.block_number)
 
     async def _get_logs(self, event, from_block, to_block):
-        return await asyncio.to_thread(lambda: event.get_logs(from_block=from_block, to_block=to_block))
+        return await asyncio.to_thread(
+            lambda: event.get_logs(fromBlock=from_block, toBlock=to_block)
+        )
 
     async def start(self):
         """Start the indexing loop"""

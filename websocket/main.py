@@ -630,9 +630,9 @@ async def lifespan(app: FastAPI):
             
         logger.info(f"âœ… Ostium poller started (interval: {settings.OSTIUM_POLL_INTERVAL}s)")
         
-        # Start Price Pusher (Sync to on-chain OrderRouter) - DISABLED (Using JIT Push in OnchainConnector)
-        # asyncio.create_task(price_pusher.start(latest_prices, connected_clients))
-        # logger.info("âœ… Price Pusher started")
+        # Start Price Pusher (Sync to on-chain OrderRouter + CustomMarketDataFeed)
+        asyncio.create_task(price_pusher.start(latest_prices, connected_clients))
+        logger.info("✅ Price Pusher started")
     except Exception as e:
         logger.error(f"âŒ Failed to start Ostium poller: {e}")
 
