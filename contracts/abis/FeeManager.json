@@ -12,21 +12,22 @@
   },
   {
     "type": "function",
-    "name": "batchUpdateFees",
+    "name": "calculateAIFee",
     "inputs": [
       {
-        "name": "actions",
-        "type": "uint8[]",
-        "internalType": "enum ActionType[]"
-      },
-      {
-        "name": "fees",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
+        "name": "openrouterCostUsd",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -87,75 +88,13 @@
   },
   {
     "type": "function",
-    "name": "feeTable",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum ActionType"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAiFeeBps",
+    "name": "getMarkupBps",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "uint16",
         "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getFee",
-    "inputs": [
-      {
-        "name": "actionType",
-        "type": "uint8",
-        "internalType": "enum ActionType"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getFeeForAmount",
-    "inputs": [
-      {
-        "name": "actionType",
-        "type": "uint8",
-        "internalType": "enum ActionType"
-      },
-      {
-        "name": "amountUsd",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -234,30 +173,12 @@
   },
   {
     "type": "function",
-    "name": "setAiFeeBps",
+    "name": "setMarkupBps",
     "inputs": [
       {
-        "name": "_aiFeeBps",
+        "name": "_markupBps",
         "type": "uint16",
         "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setFee",
-    "inputs": [
-      {
-        "name": "actionType",
-        "type": "uint8",
-        "internalType": "enum ActionType"
-      },
-      {
-        "name": "feeUsd",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -317,32 +238,13 @@
   },
   {
     "type": "event",
-    "name": "AiFeeBpsUpdated",
+    "name": "MarkupBpsUpdated",
     "inputs": [
       {
-        "name": "aiFeeBps",
+        "name": "markupBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "FeeUpdated",
-    "inputs": [
-      {
-        "name": "actionType",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "enum ActionType"
-      },
-      {
-        "name": "feeUsd",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
