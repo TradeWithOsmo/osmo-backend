@@ -277,38 +277,63 @@ class OnchainConnector(BaseConnector):
             session_address = session_account.address
             
             logger.info(f"[OnchainConnector] Nonce check for {session_address}...")
-            # Estimate Gas
-            # Note: We need a way to get nonce for the session key address
-            nonce = await asyncio.to_thread(self.w3_connector.w3.eth.get_transaction_count, session_address)
-            
+            nonce = await asyncio.to_thread(self.w3_connector.w3.eth.get_transaction_count, session_address, 'pending')
+
             logger.info(f"[OnchainConnector] Building transaction for {session_address}...")
-            # Construct standard tx
-            # Removed manual gasPrice to let web3.py handle EIP-1559 or Legacy automatically
             def build_tx():
                 return order_router.functions.placeOrder(params).build_transaction({
                     'from': session_address,
                     'nonce': nonce,
-                    'gas': 2000000 # Keep a safe buffer
+                    'gas': 2000000,
+                    'chainId': settings.CHAIN_ID
                 })
-            
+
             tx_data = await asyncio.to_thread(build_tx)
-            
+
             # 5. Sign Transaction
             logger.info(f"[OnchainConnector] Signing transaction...")
             signed_tx = await asyncio.to_thread(Account.sign_transaction, tx_data, session_key)
-            
+
             # 6. Send Transaction
             logger.info(f"[OnchainConnector] Sending raw transaction...")
             tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, signed_tx.raw_transaction)
             tx_hash_hex = tx_hash.hex()
-            
-            logger.info(f"[OnchainConnector] Order placed! Hash: {tx_hash_hex}")
-            
+
+            logger.info(f"[OnchainConnector] Tx sent: {tx_hash_hex}. Waiting for receipt...")
+
+            # 7. Wait for receipt and extract on-chain orderId
+            receipt = await asyncio.to_thread(
+                self.w3_connector.w3.eth.wait_for_transaction_receipt, tx_hash, 30
+            )
+
+            if receipt['status'] == 0:
+                raise RuntimeError(f"Transaction reverted: {tx_hash_hex}")
+
+            # Extract orderId from OrderExecuted event (market orders) or OstiumOrderPlaced (limit/stop)
+            on_chain_order_id = None
+            try:
+                executed_logs = order_router.events.OrderExecuted().process_receipt(receipt)
+                if executed_logs:
+                    on_chain_order_id = executed_logs[0]['args']['orderId'].hex()
+            except Exception:
+                pass
+
+            if not on_chain_order_id:
+                try:
+                    placed_logs = order_router.events.OstiumOrderPlaced().process_receipt(receipt)
+                    if placed_logs:
+                        on_chain_order_id = placed_logs[0]['args']['orderId'].hex()
+                except Exception:
+                    pass
+
+            order_status = "filled" if on_chain_order_id and order_type_enum == 0 else "pending"
+            logger.info(f"[OnchainConnector] Order confirmed! orderId: {on_chain_order_id}, status: {order_status}")
+
             return {
                 "exchange": "onchain",
-                "exchange_order_id": tx_hash_hex, # Use tx hash as ID for now
-                "status": "pending",
-                "raw_response": {"tx_hash": tx_hash_hex}
+                "exchange_order_id": on_chain_order_id or tx_hash_hex,
+                "status": order_status,
+                "raw_response": {"tx_hash": tx_hash_hex, "order_id": on_chain_order_id}
             }
             
         except Exception as e:
@@ -474,8 +499,9 @@ class OnchainConnector(BaseConnector):
 
     async def get_user_orders(self, user_address: str, status: str = None) -> List[Dict[str, Any]]:
         """
-        Fetch orders directly from OrderRouter contract events and state.
-        This acts as a stateless indexer.
+        Fetch orders from OrderRouter events:
+        - OrderExecuted (indexed by user) → filled/market orders
+        - OstiumOrderPlaced (indexed by user) → pending limit/stop orders
         """
         try:
             if not self.w3_connector.w3.is_connected():
@@ -483,69 +509,142 @@ class OnchainConnector(BaseConnector):
 
             user_checksum = Web3.to_checksum_address(user_address)
             order_router = self.w3_connector.get_contract("OrderRouter")
-            
-            # 1. Fetch Request Events (Hyperliquid & Ostium)
-            # Limit search range to last 50,000 blocks to avoid hanging on public RPCs
+
             try:
                 latest_block = self.w3_connector.w3.eth.block_number
                 start_block = max(0, latest_block - 10000)
-            except:
+            except Exception:
                 start_block = 0
 
-            hl_filter = order_router.events.HyperliquidOrderRequested.create_filter(
-                from_block=start_block,
-                argument_filters={'user': user_checksum}
-            )
-            hl_events = hl_filter.get_all_entries()
-            
-            all_orders = []
-            
-            # Mappings based on OsmoTypes.sol
-            type_map = {0: "market", 1: "limit", 2: "stop_limit"} 
+            type_map = {0: "market", 1: "limit", 2: "stop_limit"}
             side_map = {0: "buy", 1: "sell"}
             status_map = {0: "unknown", 1: "open", 2: "open", 3: "filled", 4: "cancelled"}
 
-            for event in hl_events:
+            all_orders = []
+            seen_ids = set()
+
+            # --- Filled orders: OrderExecuted(orderId, user, executionPrice, pnl) ---
+            try:
+                filled_events = order_router.events.OrderExecuted.get_logs(
+                    fromBlock=start_block,
+                    toBlock='latest',
+                    argument_filters={'user': user_checksum}
+                )
+            except Exception as e:
+                logger.warning(f"OrderExecuted filter failed: {e}")
+                filled_events = []
+
+            for event in filled_events:
                 args = event['args']
                 order_id = args['orderId']
-                
-                # Fetch current status from contract state: orders(bytes32) -> uint8
+                order_id_hex = order_id.hex() if isinstance(order_id, bytes) else order_id
+                if order_id_hex in seen_ids:
+                    continue
+                seen_ids.add(order_id_hex)
+
+                if status and status.lower() == 'pending':
+                    continue  # filled orders excluded from pending filter
+
+                tx_hash = event['transactionHash'].hex()
+                execution_price = args['executionPrice'] / 1e6
+
+                # Decode original order params from calldata
+                symbol, side_str, order_type_str, amount_usd, size, leverage = '', 'buy', 'market', 0.0, 0.0, 1
+                try:
+                    tx = await asyncio.to_thread(self.w3_connector.w3.eth.get_transaction, event['transactionHash'])
+                    _, decoded = order_router.decode_function_input(tx['input'])
+                    p = decoded['params']
+                    symbol = p['symbol']
+                    side_str = side_map.get(p['side'], 'buy')
+                    order_type_str = type_map.get(p['orderType'], 'market')
+                    amount_usd = p['amountUsd'] / 1_000_000.0
+                    leverage = p['leverage']
+                    size = (amount_usd / execution_price) if execution_price > 0 else 0.0
+                except Exception as e:
+                    logger.debug(f"Calldata decode failed for order {order_id_hex}: {e}")
+
+                all_orders.append({
+                    "id": order_id_hex,
+                    "exchange_order_id": tx_hash,
+                    "user_address": user_address,
+                    "symbol": symbol,
+                    "side": side_str,
+                    "type": order_type_str,
+                    "status": "filled",
+                    "price": execution_price,
+                    "size": size,
+                    "amount_usd": amount_usd,
+                    "leverage": leverage,
+                    "timestamp": 0,
+                    "exchange": "onchain"
+                })
+
+            # --- Pending/cancelled orders: OstiumOrderPlaced(orderId, ostiumOrderId, user, symbol) ---
+            try:
+                pending_events = order_router.events.OstiumOrderPlaced.get_logs(
+                    fromBlock=start_block,
+                    toBlock='latest',
+                    argument_filters={'user': user_checksum}
+                )
+            except Exception as e:
+                logger.warning(f"OstiumOrderPlaced filter failed: {e}")
+                pending_events = []
+
+            for event in pending_events:
+                args = event['args']
+                order_id = args['orderId']
+                order_id_hex = order_id.hex() if isinstance(order_id, bytes) else order_id
+                if order_id_hex in seen_ids:
+                    continue  # already captured as filled
+
                 try:
                     on_chain_status_code = order_router.functions.orders(order_id).call()
                     current_status = status_map.get(on_chain_status_code, "unknown")
                 except Exception:
                     current_status = "unknown"
-                
+
                 if status:
-                    if status.lower() == 'pending' and current_status not in ['open', 'pending']:
+                    if status.lower() == 'pending' and current_status not in ('open', 'pending', 'unknown'):
                         continue
-                    elif status.lower() == 'history' and current_status not in ['filled', 'cancelled']:
-                        continue
-                    elif status.lower() not in ['pending', 'history'] and current_status != status:
+                    elif status.lower() == 'history' and current_status not in ('filled', 'cancelled'):
                         continue
 
-                amount_usd = args['amountUsd'] / 1_000_000.0 # USDC 6 decimals
-                price = args['price'] / 1e18 # 18 decimals
-                # Estimated size in units (e.g. ETH) if price > 0
-                size = (amount_usd / price) if price > 0 else 0
-                
+                seen_ids.add(order_id_hex)
                 tx_hash = event['transactionHash'].hex()
-                
+                symbol = args['symbol']
+
+                # Fetch stored params from contract (available while PENDING)
+                amount_usd, side_str, order_type_str, leverage, price, size = 0.0, 'buy', 'limit', 1, 0.0, 0.0
+                try:
+                    p = order_router.functions.orderParams(order_id).call()
+                    # tuple: (user, symbol, side, orderType, amountUsd, leverage, reduceOnly, postOnly, triggerCondition, price, stopPrice, timeInForce)
+                    side_str = side_map.get(p[2], 'buy')
+                    order_type_str = type_map.get(p[3], 'limit')
+                    amount_usd = p[4] / 1_000_000.0
+                    leverage = p[5]
+                    price = p[9] / 1e6 if p[9] else 0.0
+                    size = (amount_usd / price) if price > 0 else 0.0
+                except Exception as e:
+                    logger.debug(f"orderParams fetch failed for {order_id_hex}: {e}")
+
                 all_orders.append({
-                    "id": order_id.hex(),
-                    "exchange_order_id": tx_hash, # Use tx_hash as exchange_order_id for deduplication
+                    "id": order_id_hex,
+                    "exchange_order_id": tx_hash,
                     "user_address": user_address,
-                    "symbol": args['symbol'],
-                    "side": side_map.get(args['side'], "buy"),
-                    "type": type_map.get(args['orderType'], "market"),
+                    "symbol": symbol,
+                    "side": side_str,
+                    "type": order_type_str,
                     "status": current_status,
                     "price": price,
                     "size": size,
                     "amount_usd": amount_usd,
-                    "leverage": args['leverage'],
-                    "timestamp": 0, 
+                    "leverage": leverage,
+                    "timestamp": 0,
                     "exchange": "onchain"
                 })
+
+            if status and status.lower() == 'history':
+                all_orders = [o for o in all_orders if o['status'] in ('filled', 'cancelled')]
 
             return all_orders
 
@@ -594,11 +693,10 @@ class OnchainConnector(BaseConnector):
 
             def fetch_logs(contract_event, user_checksum, start_block):
                 try:
-                    # Try with primary RPC
                     return contract_event.get_logs(
-                        argument_filters={'user': user_checksum},
-                        from_block=start_block,
-                        to_block='latest'
+                        fromBlock=start_block,
+                        toBlock='latest',
+                        argument_filters={'user': user_checksum}
                     )
                 except Exception as e:
                     logger.warning(f"Primary RPC get_logs failed for {contract_event.event_name}, trying backup: {e}")
@@ -606,15 +704,15 @@ class OnchainConnector(BaseConnector):
                         if not self._backup_w3:
                             backup_url = getattr(settings, "ARBITRUM_BACKUP_RPC_URL", "https://base-sepolia-rpc.publicnode.com")
                             self._backup_w3 = Web3(Web3.HTTPProvider(backup_url, request_kwargs={'timeout': 15}))
-                        
+
                         vault_addr = Web3.to_checksum_address(settings.TRADING_VAULT_ADDRESS)
                         vault_backup = self._backup_w3.eth.contract(address=vault_addr, abi=vault_contract.abi)
                         event_backup = getattr(vault_backup.events, contract_event.event_name)
-                        
+
                         return event_backup.get_logs(
-                            argument_filters={'user': user_checksum},
-                            from_block=start_block,
-                            to_block='latest'
+                            fromBlock=start_block,
+                            toBlock='latest',
+                            argument_filters={'user': user_checksum}
                         )
                     except Exception as backup_e:
                         logger.error(f"Backup RPC also failed for {contract_event.event_name}: {backup_e}")
