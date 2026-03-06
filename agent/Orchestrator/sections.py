@@ -67,6 +67,8 @@ RESEARCH_TOOLS = {
     "get_active_indicators",
     # Web (conditionally enabled by web gate)
     "search_news", "search_sentiment", "search_web_hybrid",
+    # Market discovery
+    "research_market", "compare_markets", "scan_market_overview", "list_symbols",
 }
 
 STRATEGY_TOOLS = {

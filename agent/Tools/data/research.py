@@ -418,3 +418,114 @@ async def scan_market_overview(
             results["markets"]["ostium"] = {"error": str(e)}
 
     return results
+
+
+# All supported exchanges on the platform
+ALL_EXCHANGES = ["hyperliquid", "ostium", "avantis", "aster", "vest", "orderly", "paradex", "dydx", "aevo"]
+
+# Exchange descriptions for agent context
+EXCHANGE_INFO = {
+    "hyperliquid": "Crypto perpetuals DEX — BTC, ETH, SOL, ARB, and 200+ altcoin tokens.",
+    "ostium":      "Real-World Asset (RWA) DEX — forex pairs (EURUSD, GBPUSD, USDJPY...), metals (XAU, XAG), stock indices (SPX, NDX, DAX) and individual stocks (AAPL, TSLA, NVDA...).",
+    "avantis":     "Crypto + RWA perpetuals on Base. Overlaps with Hyperliquid (BTC, ETH, SOL) and some forex/commodity pairs.",
+    "aster":       "Crypto perpetuals (USDT-quoted). Covers BTC, ETH, SOL and mid/small-cap tokens.",
+    "vest":        "Crypto perpetuals — BTC, ETH, SOL and a selection of altcoins.",
+    "orderly":     "Crypto spot and perps — primarily BTC, ETH, SOL and USDC pairs.",
+    "paradex":     "Crypto perpetuals on StarkNet — BTC, ETH, SOL and select altcoins.",
+    "dydx":        "Crypto perpetuals (dYdX chain) — BTC, ETH, SOL and 50+ tokens.",
+    "aevo":        "Crypto options + perpetuals — BTC, ETH, SOL and mid-cap tokens.",
+}
+
+
+async def list_symbols(
+    exchange: str = "all",
+    category: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    List all tradeable symbols available on a specific exchange (or all exchanges).
+
+    Use this tool when the user asks:
+      - "what can I trade on hyperliquid?"
+      - "list eth markets" / "show me ETH on all exchanges"
+      - "which exchange has EURUSD?"
+      - "what RWA pairs does ostium have?"
+
+    EXCHANGES (9 total):
+      crypto perpetuals : hyperliquid, avantis, aster, vest, orderly, paradex, dydx, aevo
+      RWA / forex/metals: ostium
+      (avantis also covers some RWA)
+
+    Args:
+        exchange: Exchange name — "hyperliquid", "ostium", "avantis", "aster", "vest",
+                  "orderly", "paradex", "dydx", "aevo" — or "all" for every exchange.
+        category: Optional filter substring on subCategory field, e.g. "Forex", "Metals",
+                  "Crypto", "Stocks", "Index". Leave empty to return all.
+
+    Returns dict with:
+        exchange(s) queried, total symbol count, symbols list (symbol, source, category,
+        subCategory, price), and exchange_info descriptions.
+    """
+    try:
+        from agent.Config.tools_config import DATA_SOURCES
+    except Exception:
+        from backend.agent.Config.tools_config import DATA_SOURCES
+
+    # Derive markets base URL from connectors URL (same host, /api/markets path)
+    connectors_url = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
+    markets_base = connectors_url.replace("/api/connectors", "")
+
+    client = await get_http_client(timeout_sec=15.0)
+
+    exchange_key = exchange.strip().lower()
+    if exchange_key not in ALL_EXCHANGES and exchange_key != "all":
+        return {
+            "error": f"Unknown exchange '{exchange}'. Valid options: {', '.join(ALL_EXCHANGES)} or 'all'.",
+            "available_exchanges": ALL_EXCHANGES,
+        }
+
+    params: Dict[str, Any] = {}
+    if exchange_key != "all":
+        params["exchange"] = exchange_key
+
+    try:
+        resp = await client.get(f"{markets_base}/api/markets/", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return {"error": f"Failed to fetch markets: {e}"}
+
+    markets_list = data if isinstance(data, list) else data.get("markets", data.get("data", []))
+
+    # Filter by category if requested
+    if category:
+        cat_lower = category.lower()
+        markets_list = [
+            m for m in markets_list
+            if cat_lower in str(m.get("subCategory", "")).lower()
+            or cat_lower in str(m.get("category", "")).lower()
+        ]
+
+    symbols = [
+        {
+            "symbol": m.get("symbol"),
+            "exchange": m.get("source"),
+            "category": m.get("category"),
+            "subCategory": m.get("subCategory"),
+            "price": m.get("price"),
+        }
+        for m in markets_list
+        if m.get("symbol")
+    ]
+
+    # Build exchange info context
+    if exchange_key == "all":
+        info = EXCHANGE_INFO
+    else:
+        info = {exchange_key: EXCHANGE_INFO.get(exchange_key, "")}
+
+    return {
+        "exchange_queried": exchange_key,
+        "total": len(symbols),
+        "symbols": symbols,
+        "exchange_info": info,
+    }
