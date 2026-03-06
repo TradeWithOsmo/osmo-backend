@@ -137,6 +137,159 @@ From `.env` / `websocket/.env` (depends on run mode):
 Trading fee (0.08% per order) accumulates in AIVault (`0x5aBb786D8fa77D8Cc7c689d78E871dbD57039ad4`).
 To cover LZ cross-chain fees, periodically top up the HyperliquidLayerZeroAdapter (`0x009Df011949879ac88392B41B403765b22365BE3`) with ETH.
 
+## AI Agent Architecture
+
+The Osmo agent uses a **multi-agent orchestra** pattern. A Maestro (conductor) reads the user's message, classifies intent, and decides which specialized agents (sections) perform.
+
+### Orchestra Overview
+
+```mermaid
+graph TB
+    User([User Message]) --> Maestro
+
+    subgraph Maestro["Maestro (Conductor)"]
+        Intent[Intent Classification]
+        Synth[Synthesis]
+    end
+
+    Maestro --> |"intent=quick"| Quick[Direct LLM Response]
+
+    Maestro --> Monitor["Monitoring<br/>(Sound Engineer)"]
+    Monitor --> Memory["Memory<br/>(Librarian)"]
+    Memory --> Canvas[Canvas Read]
+    Canvas --> Research["Research<br/>(Violin)"]
+    Research --> Strategy["Strategy<br/>(Composer)"]
+    Strategy --> Risk["Risk<br/>(Percussion)"]
+    Risk --> |approved| Simulation["Simulation<br/>(Rehearsal Director)"]
+    Risk --> |"BLOCKED"| SkipExec["Skip Execution"]
+    Simulation --> Execution["Execution<br/>(Brass)"]
+    Execution --> Critic["Critic<br/>(Music Critic)"]
+    SkipExec --> Critic
+    Critic --> MemStore["Memory Store"]
+    MemStore --> Synth
+    Synth --> Response([Final Response])
+```
+
+### Intent → Section Activation
+
+```mermaid
+graph LR
+    subgraph Intents
+        Q[quick]
+        R[research]
+        A[analysis]
+        E[execution]
+        M[monitor]
+    end
+
+    subgraph Sections
+        S1[Research]
+        S2[Strategy]
+        S3[Risk]
+        S4[Simulation]
+        S5[Execution]
+        S6[Critic]
+    end
+
+    Q -.- |"no sections"| None[Direct Response]
+    R --> S1
+    A --> S1
+    A --> S2
+    A --> S6
+    E --> S1
+    E --> S2
+    E --> S3
+    E --> S4
+    E --> S5
+    E --> S6
+    M --> S1
+```
+
+### Section Roles
+
+| Section | Role | Metaphor | Responsibility |
+| --------- | ------ | ---------- | ---------------- |
+| **Maestro** | Conductor | Orchestra Conductor | Intent classification, routing, synthesis |
+| **Research** | Data Gatherer | Violin | Price, TA, levels, news, sentiment |
+| **Strategy** | Planner | Composer | Bias, entry, TP, SL, R:R, validation/invalidation |
+| **Risk** | Guardian | Percussion | Risk assessment, can **BLOCK** execution |
+| **Simulation** | Tester | Rehearsal Director | Scenario testing, win probability |
+| **Execution** | Executor | Brass | Trade placement, position management |
+| **Monitoring** | Health Check | Sound Engineer | System health pre-flight |
+| **Memory** | Historian | Librarian | Past context retrieval & storage |
+| **Critic** | Evaluator | Music Critic | Post-performance grading (A-F) |
+
+### Data Flow Between Sections
+
+```mermaid
+flowchart LR
+    subgraph SharedState["OrchestraState (shared)"]
+        RF[ResearchFindings]
+        SP[StrategyPlan]
+        RA[RiskAssessment]
+        SR[SimulationResult]
+        CE[CriticEvaluation]
+    end
+
+    Research -- writes --> RF
+    RF -- reads --> Strategy
+    Strategy -- writes --> SP
+    SP -- reads --> Risk
+    Risk -- writes --> RA
+    SP -- reads --> Simulation
+    RA -- reads --> Simulation
+    Simulation -- writes --> SR
+    RF & SP & RA & SR -- reads --> Execution
+    RF & SP & RA -- reads --> Critic
+    Critic -- writes --> CE
+```
+
+### Agent Directory Structure
+
+```text
+agent/
+├── Core/                          # Agent engine
+│   ├── reflexion_agent.py         # Main agent (single + orchestra mode)
+│   ├── reflexion_memory.py        # Session state & symbol context
+│   ├── reflexion_evaluator.py     # Tool result quality assessment
+│   ├── tool_registry.py           # Tool discovery & JSON schema
+│   ├── tool_argument_adapter.py   # Argument parsing/coercion
+│   └── agent_brain.py             # Compatibility wrapper
+├── Orchestrator/                  # Multi-agent orchestra
+│   ├── maestro.py                 # MaestroOrchestrator (conductor)
+│   ├── sections.py                # 8 section classes + tool sets
+│   ├── orchestra_state.py         # Shared state container
+│   ├── orchestra_prompts.py       # Specialized system prompts
+│   ├── reasoning_orchestrator.py  # Lightweight plan preview
+│   ├── execution_adapter.py       # Bridge to order services
+│   └── trace_store.py             # Session diagnostics
+├── Tools/                         # Tool implementations
+│   ├── data/                      # Market data, research, memory
+│   ├── tradingview/               # Chart actions, drawing, nav
+│   ├── trade_execution.py         # Order placement
+│   └── http_client.py             # Shared HTTP client
+├── Config/                        # Model & tool configuration
+└── src/                           # Legacy agent code
+```
+
+### Orchestra Mode
+
+Orchestra mode is opt-in via `tool_states`:
+
+```json
+{ "orchestra_mode": true }
+```
+
+When disabled, the agent runs as a single ReflexionAgent with its own reflexion loop (act → evaluate → retry). When enabled, the Maestro takes over and routes to specialized sections.
+
+Key design points:
+
+- **Tool isolation**: each section only sees its own tools (e.g., Research can't place orders, Execution can't draw on charts)
+- **Web gate**: Maestro controls web search access — only open for `research` intent
+- **Risk veto**: Risk section can set `approved=false` to block execution
+- **Canvas-first**: Maestro always reads the chart before any section plays
+- **Backward compatible**: default is single-agent mode; orchestra is opt-in
+
 ## Directory Map
 
 - `websocket/main.py`: main entrypoint
@@ -145,7 +298,9 @@ To cover LZ cross-chain fees, periodically top up the HyperliquidLayerZeroAdapte
 - `websocket/*/api_client.py`: exchange integration clients
 - `connectors/web3_arbitrum/onchain_connector.py`: on-chain order placement (web3.py v6)
 - `contracts/addresses.json`: deployed contract addresses (source of truth: `osmo-contracts/.env`)
-- `agent/src/`: agent backend
+- `agent/Core/`: agent engine (ReflexionAgent, tool registry, evaluator)
+- `agent/Orchestrator/`: multi-agent orchestra (Maestro, sections, state)
+- `agent/Tools/`: tool implementations (data, tradingview, execution)
 
 ## Notes
 
