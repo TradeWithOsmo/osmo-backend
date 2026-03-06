@@ -203,7 +203,7 @@ class ReflexionState:
         5. global_reflections captures self-critique that feeds back into LLM context.
     """
 
-    # Tool capabilities (loaded once per session) --------------------------------
+    # Tool capabilities (loaded lazily on error, not forced) ---------------------
     capabilities: ToolCapabilities = field(default_factory=ToolCapabilities)
 
     # Current workflow state -----------------------------------------------------
@@ -214,6 +214,12 @@ class ReflexionState:
 
     # Per-symbol accumulated knowledge -------------------------------------------
     symbols: Dict[str, SymbolContext] = field(default_factory=dict)
+
+    # Canvas state — the conductor's eyes on what's already on the chart --------
+    canvas_read: bool = False  # True after first get_active_indicators call
+    canvas_indicators: List[str] = field(default_factory=list)  # names on chart
+    canvas_symbol: str = ""  # symbol the canvas was last read for
+    canvas_timeframe: str = ""  # timeframe of last canvas read
 
     # Action history (complete execution log) ------------------------------------
     action_history: List[ActionRecord] = field(default_factory=list)
@@ -488,7 +494,53 @@ class ReflexionState:
             "symbols_completed": self.completed_symbols,
             "symbols": symbols_summary,
             "capabilities_explored": self.capabilities.explored,
+            "canvas": {
+                "read": self.canvas_read,
+                "symbol": self.canvas_symbol,
+                "timeframe": self.canvas_timeframe,
+                "indicators": self.canvas_indicators,
+            },
         }
+
+    # -------------------------------------------------------------------------
+    # Canvas state management (the conductor's eyes)
+    # -------------------------------------------------------------------------
+
+    def update_canvas(
+        self, symbol: str, timeframe: str, indicators: List[str]
+    ) -> None:
+        """Record what the conductor sees on the chart right now."""
+        self.canvas_read = True
+        self.canvas_symbol = symbol.upper().strip()
+        self.canvas_timeframe = timeframe.strip()
+        self.canvas_indicators = list(indicators)
+
+    def canvas_has_indicator(self, name: str) -> bool:
+        """Check if an indicator is already on the canvas (case-insensitive)."""
+        if not self.canvas_read:
+            return False
+        lower = name.lower()
+        return any(lower == ind.lower() for ind in self.canvas_indicators)
+
+    def canvas_matches_symbol(self, symbol: str) -> bool:
+        """Check if the canvas is showing the requested symbol."""
+        if not self.canvas_read:
+            return False
+        norm = symbol.upper().strip().replace("/", "-").replace("_", "-")
+        canvas_norm = self.canvas_symbol.replace("/", "-").replace("_", "-")
+        if norm == canvas_norm:
+            return True
+        # Handle BTC == BTC-USD
+        for a, b in [(norm, canvas_norm), (canvas_norm, norm)]:
+            if a.endswith("-USD") and a[:-4] == b:
+                return True
+            if a.endswith("-USDT") and a[:-5] == b:
+                return True
+        return False
+
+    # -------------------------------------------------------------------------
+    # Context block
+    # -------------------------------------------------------------------------
 
     def build_context_block(self) -> str:
         """
@@ -497,10 +549,19 @@ class ReflexionState:
         """
         lines: List[str] = []
 
+        # Canvas state — what the conductor sees right now
+        if self.canvas_read:
+            canvas_line = f"[Canvas] {self.canvas_symbol} @ {self.canvas_timeframe}"
+            if self.canvas_indicators:
+                canvas_line += f" — active: {', '.join(self.canvas_indicators[:8])}"
+            else:
+                canvas_line += " — clean (no indicators)"
+            lines.append(canvas_line)
+
         if self.capabilities.explored:
             lines.append(
-                f"[Tools] Explored: {len(self.capabilities.all_tool_names)} tools available. "
-                f"Draw tools: {len(self.capabilities.draw_tools)}. "
+                f"[Tools] {len(self.capabilities.all_tool_names)} available. "
+                f"Draw: {len(self.capabilities.draw_tools)}. "
                 f"Indicators: {len(self.capabilities.indicator_aliases)} aliases."
             )
 

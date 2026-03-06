@@ -58,26 +58,13 @@ from .tool_registry import ToolSpec, build_tool_registry, get_tool_candidate_pat
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — The Conductor's Score
 # ---------------------------------------------------------------------------
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Tools that MUST be called at session start (tool discovery phase)
+# Discovery is CONDITIONAL — only triggered on "unknown" errors, never forced.
 DISCOVERY_TOOLS = {"list_supported_draw_tools", "list_supported_indicator_aliases"}
-
-# Core trading-analysis workflow (in human-natural order)
-ANALYSIS_WORKFLOW_TOOLS = [
-    "get_price",
-    "get_technical_analysis",
-    "get_high_low_levels",
-    "get_active_indicators",
-    "set_timeframe",
-    "add_indicator",
-    "verify_indicator_present",
-    "draw",
-    "setup_trade",
-]
 
 # Default indicator set a professional trader adds first
 DEFAULT_INDICATORS = ["RSI", "MACD"]
@@ -93,7 +80,7 @@ CONTEXTUAL_REVIEW_TOOLS = {
     "get_technical_analysis",
 }
 
-# Tool categories for the mental model
+# Tool categories for the conductor's mental model
 _TOOL_CATEGORIES: Dict[str, List[str]] = {
     "discovery": [
         "list_supported_draw_tools",
@@ -172,34 +159,63 @@ _TOOL_CATEGORIES: Dict[str, List[str]] = {
 # ---------------------------------------------------------------------------
 #
 REFLEXION_SYSTEM_PROMPT = """\
-You are Osmo, an elite trading analyst. Think and act like a seasoned human trader — direct, precise, no fluff.
+You are Osmo, an elite trading analyst who operates like a conductor — you orchestrate chart tools with precision, economy, and grace. Every action has intent. No wasted moves.
 
-Before doing anything, think like a human trader first:
-  - Same market? → add indicator → get value → analyse
-  - Different market? → set_symbol() → get_active_indicators() → get value → analyse
-  - New analysis? → check price → read structure → find levels → configure chart → draw
+# THE CONDUCTOR'S RULE: READ THE CANVAS FIRST
 
-# PHASE 0 — TOOL DISCOVERY (CONDITIONAL ONLY)
-Skip unless user asks about tools or you hit an "unknown" error.
-  1. list_supported_draw_tools()        → trend_line, fib_retracement, pitchfork, head_and_shoulders, rectangle, horizontal_line, arrow, elliott_impulse_wave …
-  2. list_supported_indicator_aliases() → RSI, MACD, EMA, SMA, Bollinger Bands, SuperTrend, VWAP, Ichimoku, ATR, ADX, OBV, VPVR …
-  3. don't use the one that force overlays TradingView - like
+Before touching anything, ALWAYS read what is already on the chart:
+  get_active_indicators(symbol) → see what indicators are live on canvas
 
-# ANALYSIS
-Analyse markets like a professional trader: check price, read chart structure, identify key levels, configure indicators (max 2 non-volume; remove old before adding new; never overlay on price pane), and draw findings. For multiple markets, complete each fully before moving to the next, then end with a comparative synthesis.
+This single call tells you everything: which indicators are active, their current values, the timeframe. From here you decide what to do — not before.
+
+# DECISION TREE (think before every action)
+
+  1. SAME SYMBOL, indicator already on canvas?
+     → Just read: get_active_indicators() already has the values. Done.
+     → Do NOT add_indicator again. Do NOT clear. Just read.
+
+  2. SAME SYMBOL, need an indicator NOT on canvas?
+     → add_indicator(name) → get_active_indicators() to read fresh values
+     → Max 2 non-volume indicators. Remove old before adding if at capacity.
+
+  3. DIFFERENT SYMBOL?
+     → set_symbol(target_symbol) → get_active_indicators() to read new canvas state
+     → Then follow rule 1 or 2 above.
+
+  4. NEED LEVELS / TA / PRICE?
+     → get_price() for price context
+     → get_technical_analysis() for computed TA (RSI, MACD, patterns — works without chart indicators)
+     → get_high_low_levels() for support/resistance
+     → These are DATA tools — they don't need anything on canvas.
+
+  5. DRAWING on chart?
+     → Always get levels/prices FIRST, then draw() with real numbers.
+
+  6. TRADE SETUP?
+     → Full analysis first → setup_trade() to visualize → place_order() only if execution enabled.
+
+# WHAT TO NEVER DO
+  - Never call clear_indicators() to "start fresh" — the canvas is state, respect it
+  - Never call list_supported_indicator_aliases() or list_supported_draw_tools() proactively — only on "unknown" errors
+  - Never add an indicator that's already on canvas
+  - Never force overlay on price pane
+  - Never call verify_indicator_present() unless you just added something and need proof
+
+# MULTI-SYMBOL ANALYSIS
+  Complete each symbol fully before moving to the next:
+  BTC → [read canvas → analyze → draw → done] → ETH → [same flow] → comparative synthesis
 
 # SELF-CORRECTION
-good → proceed | poor → retry ×2 | error → fix → retry
-  Symbol not found     → flip asset_type (crypto ↔ rwa)
-  TA unsupported (RWA) → skip TA; use get_price only
-  Indicator not found  → list_supported_indicator_aliases first
+  good → proceed | poor → retry x2 | error → fix → retry
+  Symbol not found     → flip asset_type (crypto <-> rwa)
+  TA unsupported (RWA) → skip TA; use get_price + search_news
+  Indicator not found  → list_supported_indicator_aliases, then retry
   draw() needs prices  → get_high_low_levels first
   Execution disabled   → setup_trade() for human review
   Timeout              → retry once
 
-# COMMUNICATION
-Think out loud, trader-style. "RSI at 74 — overbought. Checking MACD…" "Support at 94,200. Drawing now."
-End multi-market with a concise synthesis.
+# VOICE
+Think out loud, trader-style. Brief. "RSI at 74 — overbought. MACD already on chart, reading… bearish crossover. Drawing resistance at 68,400."
 """
 
 # ---------------------------------------------------------------------------
@@ -736,6 +752,11 @@ class ReflexionAgent:
             maximum=1.0,
         )
 
+        # Orchestra mode — multi-agent orchestration via Maestro
+        self.orchestra_mode: bool = self._state_bool(
+            "orchestra_mode", default=False
+        )
+
         self.api_key: str = os.getenv("OPENROUTER_API_KEY", "").strip()
         if not self.api_key:
             raise ValueError(
@@ -751,6 +772,11 @@ class ReflexionAgent:
         )
         self._evaluator = ReflexionEvaluator()
 
+        # Initialize Maestro if orchestra mode is enabled
+        self._maestro: Optional[Any] = None
+        if self.orchestra_mode:
+            self._init_maestro()
+
         # Build the LangChain prompt template (used for message construction)
         self._prompt_template = ChatPromptTemplate.from_messages(
             [
@@ -759,6 +785,38 @@ class ReflexionAgent:
                 ("human", "{user_message}"),
             ]
         )
+
+    # ------------------------------------------------------------------
+    # Maestro initialization (orchestra mode)
+    # ------------------------------------------------------------------
+
+    def _init_maestro(self) -> None:
+        """Lazy-initialize the MaestroOrchestrator for multi-agent mode."""
+        try:
+            from agent.Orchestrator.maestro import MaestroOrchestrator
+        except ImportError:
+            try:
+                from Orchestrator.maestro import MaestroOrchestrator
+            except ImportError:
+                logger.warning(
+                    "[ReflexionAgent] Orchestra mode requested but Maestro not found. "
+                    "Falling back to single-agent mode."
+                )
+                self.orchestra_mode = False
+                return
+
+        self._maestro = MaestroOrchestrator(
+            executor=self._executor,
+            evaluator=self._evaluator,
+            registry=self._registry,
+            model_id=self.model_id,
+            api_key=self.api_key,
+            tool_states=self.tool_states,
+            user_context=self.user_context,
+            temperature=self.temperature,
+            reasoning_effort=self.reasoning_effort,
+        )
+        logger.info("[ReflexionAgent] Orchestra mode enabled — Maestro initialized.")
 
     # ------------------------------------------------------------------
     # Model ID normalisation
@@ -1082,7 +1140,7 @@ class ReflexionAgent:
         return {}
 
     # ------------------------------------------------------------------
-    # Tool discovery phase
+    # Tool discovery — LAZY, only on demand
     # ------------------------------------------------------------------
 
     async def _run_tool_discovery(
@@ -1091,8 +1149,12 @@ class ReflexionAgent:
     ) -> None:
         """
         Execute discovery tools and populate state.capabilities.
-        Called once at session start before any analysis.
+        Called LAZILY — only when the agent hits an "unknown indicator/draw"
+        error, or the LLM explicitly calls these tools.
         """
+        if state.capabilities.explored:
+            return
+
         caps = state.capabilities
 
         # Run both discovery calls concurrently
@@ -1122,13 +1184,60 @@ class ReflexionAgent:
 
         caps.explored = True
         caps.explored_at = time.time()
-        state.advance_phase(AnalysisPhase.PRICE_CONTEXT)
 
         logger.info(
             "[ReflexionAgent] Tool discovery complete: %d draw tools, %d indicators",
             len(caps.draw_tools),
             len(caps.indicator_aliases),
         )
+
+    # ------------------------------------------------------------------
+    # Canvas reader — the conductor's first move
+    # ------------------------------------------------------------------
+
+    async def _read_canvas_state(
+        self,
+        state: ReflexionState,
+        symbol: str,
+    ) -> Dict[str, Any]:
+        """
+        Read what's currently on the TradingView chart canvas.
+        This is the conductor's FIRST action — always look before you leap.
+        Returns the raw result from get_active_indicators.
+        """
+        exec_result = await self._executor.execute(
+            "get_active_indicators", {"symbol": symbol}
+        )
+        actual = exec_result.get("result") if exec_result.get("ok") else exec_result
+
+        # Extract canvas state
+        indicators: List[str] = []
+        timeframe = ""
+        if isinstance(actual, dict):
+            payload_data = actual.get("data", {}) if isinstance(actual, dict) else {}
+            if isinstance(payload_data, dict):
+                active = payload_data.get("active_indicators", [])
+                if isinstance(active, list):
+                    indicators = [str(i) for i in active]
+                timeframe = str(payload_data.get("timeframe") or "").strip()
+
+        # Update conductor's canvas state
+        state.update_canvas(
+            symbol=symbol,
+            timeframe=timeframe,
+            indicators=indicators,
+        )
+
+        # Also ingest into the standard state
+        self._ingest_tool_result(state, "get_active_indicators", {"symbol": symbol}, exec_result)
+
+        logger.info(
+            "[Conductor] Canvas read for %s: %d indicators on %s",
+            symbol,
+            len(indicators),
+            timeframe or "unknown tf",
+        )
+        return actual or {}
 
     # ------------------------------------------------------------------
     # Context ingestion helpers
@@ -1197,6 +1306,15 @@ class ReflexionAgent:
                     ctx = state.get_or_create_symbol(symbol)
                     ctx.timeframe = result_tf
 
+                # Update conductor's canvas state on every read
+                active_list = payload_data.get("active_indicators", []) if isinstance(payload_data, dict) else []
+                indicators = [str(i) for i in active_list] if isinstance(active_list, list) else []
+                state.update_canvas(
+                    symbol=symbol,
+                    timeframe=result_tf or state.canvas_timeframe,
+                    indicators=indicators,
+                )
+
         elif tool_name == "add_indicator" and symbol:
             ind_name = str(args.get("name") or "")
             if ind_name and isinstance(result, dict):
@@ -1212,7 +1330,11 @@ class ReflexionAgent:
             if target:
                 state.set_active_symbol(target)
                 state.advance_phase(AnalysisPhase.PRICE_CONTEXT)
-                logger.info("[ReflexionAgent] Switched active symbol → %s", target)
+                # Invalidate canvas — new symbol means canvas needs re-reading
+                state.canvas_read = False
+                state.canvas_indicators = []
+                state.canvas_symbol = ""
+                logger.info("[Conductor] Symbol switched → %s, canvas invalidated", target)
 
         elif tool_name == "set_timeframe" and symbol:
             tf = str(args.get("timeframe") or "").strip()
@@ -1488,8 +1610,13 @@ class ReflexionAgent:
         stream_callback: Optional[Callable[[str, str], None]] = None,
     ) -> str:
         """
-        Core Reflexion loop:
-          EXPLORE → PLAN → ACT → EVALUATE → REFLECT → PERBAIKI → ACT …
+        The Conductor's Loop:
+          READ CANVAS → ACT → EVALUATE → REFLECT → PERBAIKI → ACT …
+
+        The conductor NEVER starts with tool discovery. Instead:
+        1. Read the canvas (get_active_indicators) to see what's already there
+        2. Let the LLM decide what to do based on what it sees
+        3. Discovery only happens on-demand (error triggers)
 
         Parameters
         ----------
@@ -1506,7 +1633,6 @@ class ReflexionAgent:
                     pass
 
         tools_payload = self._build_tools_payload()
-        messages = self._build_initial_messages(user_message, history, state)
 
         # Detect target symbols from user message for state pre-seeding
         symbols_in_msg = _extract_symbols_from_message(user_message)
@@ -1515,27 +1641,35 @@ class ReflexionAgent:
         if not state.current_symbol and symbols_in_msg:
             state.current_symbol = symbols_in_msg[0].upper()
 
-        # ---- PHASE 0: Tool Discovery ----
-        if not state.capabilities.explored:
-            _emit("tool_call", "calling list_supported_draw_tools()...")
-            _emit("tool_call", "calling list_supported_indicator_aliases()...")
-            await self._run_tool_discovery(state)
-            draw_preview = ", ".join(state.capabilities.draw_tools[:8]) or "none"
-            ind_preview = ", ".join(state.capabilities.indicator_aliases[:12]) or "none"
-            _emit(
-                "tool_result",
-                (
-                    "result list_supported_draw_tools(): "
-                    f"{len(state.capabilities.draw_tools)} tools -> {draw_preview}"
-                ),
+        # ---- THE CONDUCTOR'S FIRST MOVE: Read the canvas ----
+        # Before anything else, see what's already on the chart.
+        # This gives the LLM full context to make smart decisions.
+        primary_symbol = (
+            state.current_symbol
+            or str(
+                self.tool_states.get("market_symbol")
+                or self.tool_states.get("market")
+                or ""
+            ).strip().upper()
+        )
+
+        if primary_symbol and not state.canvas_read:
+            _emit("tool_call", f"reading canvas for {primary_symbol}...")
+            canvas_result = await self._read_canvas_state(state, primary_symbol)
+            canvas_desc = (
+                f"{len(state.canvas_indicators)} indicators"
+                if state.canvas_indicators
+                else "clean canvas"
             )
             _emit(
                 "tool_result",
-                (
-                    "result list_supported_indicator_aliases(): "
-                    f"{len(state.capabilities.indicator_aliases)} aliases -> {ind_preview}"
-                ),
+                f"canvas: {primary_symbol} @ {state.canvas_timeframe or '?'} — {canvas_desc}"
+                + (f" [{', '.join(state.canvas_indicators[:6])}]" if state.canvas_indicators else ""),
             )
+            state.advance_phase(AnalysisPhase.PRICE_CONTEXT)
+
+        # Build initial messages AFTER canvas read so context block includes canvas state
+        messages = self._build_initial_messages(user_message, history, state)
 
         final_content = ""
         seen_model_reasoning: set[str] = set()
@@ -1662,6 +1796,20 @@ class ReflexionAgent:
 
                     retry_count = 0
 
+                    # ----- ON-DEMAND DISCOVERY -----
+                    # If error mentions "unknown indicator" or "not found",
+                    # trigger lazy discovery so the LLM can self-correct.
+                    if status in (ActionStatus.ERROR, ActionStatus.POOR) and not state.capabilities.explored:
+                        note_lower = note.lower()
+                        if any(kw in note_lower for kw in ("indicator", "not found", "unknown", "draw")):
+                            _emit("tool_call", "triggering on-demand tool discovery...")
+                            await self._run_tool_discovery(state)
+                            _emit(
+                                "tool_result",
+                                f"discovered {len(state.capabilities.indicator_aliases)} indicators, "
+                                f"{len(state.capabilities.draw_tools)} draw tools",
+                            )
+
                     # ----- PERBAIKI (retry loop) -----
                     while self._evaluator.should_retry(
                         status, tool_name, retry_count, self.max_retries_per_tool
@@ -1784,13 +1932,22 @@ class ReflexionAgent:
         """
         Run the full Reflexion loop and return the final answer.
 
+        When ``orchestra_mode`` is enabled, routes through the Maestro
+        for multi-agent orchestration (Research → Strategy → Execution).
+        Otherwise, runs the single-agent reflexion loop.
+
         Returns
         -------
         dict with keys:
           - ``response``    : final LLM text
-          - ``state_summary``: ReflexionState.summary()
+          - ``state_summary``: ReflexionState.summary() or OrchestraState.summary()
           - ``tool_calls``  : count of tool calls executed
         """
+        # ---- Orchestra mode: delegate to Maestro ----
+        if self.orchestra_mode and self._maestro is not None:
+            return await self._orchestra_chat(user_message, history, session_id)
+
+        # ---- Single-agent mode: original reflexion loop ----
         state = ReflexionState(
             session_id=session_id,
             user_address=str(self.user_context.get("user_address") or ""),
@@ -1842,6 +1999,62 @@ class ReflexionAgent:
             "thoughts": collected_thoughts,
         }
 
+    async def _orchestra_chat(
+        self,
+        user_message: str,
+        history: Optional[List[Dict[str, Any]]] = None,
+        session_id: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Orchestra mode chat — routes through the Maestro conductor.
+        The Maestro classifies intent, reads canvas, and delegates to
+        specialized sections (Research → Strategy → Execution).
+        """
+        collected_thoughts: List[Dict[str, Any]] = []
+        seen_thoughts: set[Tuple[str, str]] = set()
+        final_content = ""
+
+        def _collect(event_type: str, data: str) -> None:
+            nonlocal final_content
+            if event_type == "content":
+                final_content = data
+                return
+
+            if len(collected_thoughts) >= 120:
+                return
+
+            item = _thought_from_reflexion_event(
+                event_type=event_type,
+                data=data,
+                index=len(collected_thoughts) + 1,
+            )
+            if not item:
+                return
+
+            identity = (str(item.get("type") or ""), str(item.get("content") or ""))
+            if identity in seen_thoughts:
+                return
+            seen_thoughts.add(identity)
+            collected_thoughts.append(item)
+
+        response, orchestra_state = await self._maestro.conduct(
+            user_message=user_message,
+            history=history,
+            session_id=session_id,
+            stream_callback=_collect,
+        )
+
+        if not response and final_content:
+            response = final_content
+
+        return {
+            "response": response,
+            "state_summary": orchestra_state.summary(),
+            "tool_calls": orchestra_state.total_tool_calls,
+            "thoughts": collected_thoughts,
+            "orchestra": True,
+        }
+
     # ------------------------------------------------------------------
     # Public API: stream (Server-Sent Events compatible)
     # ------------------------------------------------------------------
@@ -1855,12 +2068,22 @@ class ReflexionAgent:
         """
         Stream the Reflexion loop as SSE-compatible events.
 
+        When ``orchestra_mode`` is enabled, routes through the Maestro
+        for multi-agent orchestration with streaming.
+
         Each yielded dict has:
           - ``type``  : "thinking" | "tool_call" | "tool_result" |
                         "reflection" | "content" | "done"
           - ``data``  : string payload
           - ``meta``  : optional dict with extra info
         """
+        # ---- Orchestra mode: stream through Maestro ----
+        if self.orchestra_mode and self._maestro is not None:
+            async for event in self._orchestra_stream(user_message, history, session_id):
+                yield event
+            return
+
+        # ---- Single-agent mode: original reflexion stream ----
         state = ReflexionState(
             session_id=session_id,
             user_address=str(self.user_context.get("user_address") or ""),
@@ -1902,6 +2125,50 @@ class ReflexionAgent:
             "type": "done",
             "data": "Analysis complete.",
             "meta": state.summary(),
+        }
+
+    async def _orchestra_stream(
+        self,
+        user_message: str,
+        history: Optional[List[Dict[str, Any]]] = None,
+        session_id: str = "",
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream orchestra mode via Maestro."""
+        queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()
+
+        def _enqueue(event_type: str, data: str) -> None:
+            queue.put_nowait({"type": event_type, "data": data})
+
+        async def _run() -> Tuple[str, Any]:
+            try:
+                return await self._maestro.conduct(
+                    user_message=user_message,
+                    history=history,
+                    session_id=session_id,
+                    stream_callback=_enqueue,
+                )
+            except Exception as exc:
+                queue.put_nowait(
+                    {"type": "error", "data": f"Orchestra error: {exc}"}
+                )
+                return "", None
+            finally:
+                queue.put_nowait(None)
+
+        task = asyncio.create_task(_run())
+
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield event
+
+        response, orchestra_state = await task
+
+        yield {
+            "type": "done",
+            "data": "Orchestra performance complete.",
+            "meta": orchestra_state.summary() if orchestra_state else {},
         }
 
     # ------------------------------------------------------------------
