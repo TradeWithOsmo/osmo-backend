@@ -438,39 +438,41 @@ EXCHANGE_INFO = {
 
 
 async def list_symbols(
+    search: str = "",
     exchange: str = "all",
     category: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    List all tradeable symbols available on a specific exchange (or all exchanges).
+    Search tradeable symbols and show which exchanges support them.
 
+    Results are grouped by symbol so you can see all exchanges that offer the same asset.
     Use this tool when the user asks:
+      - "which exchanges have ETH?" / "show me ETH markets"
+      - "where can I trade EURUSD?"
       - "what can I trade on hyperliquid?"
-      - "list eth markets" / "show me ETH on all exchanges"
-      - "which exchange has EURUSD?"
-      - "what RWA pairs does ostium have?"
+      - "list forex pairs" / "what RWA pairs are available?"
+      - "is SOL on dydx?"
 
     EXCHANGES (9 total):
       crypto perpetuals : hyperliquid, avantis, aster, vest, orderly, paradex, dydx, aevo
-      RWA / forex/metals: ostium
-      (avantis also covers some RWA)
+      RWA / forex/metals: ostium  (avantis also covers some RWA)
 
     Args:
-        exchange: Exchange name — "hyperliquid", "ostium", "avantis", "aster", "vest",
-                  "orderly", "paradex", "dydx", "aevo" — or "all" for every exchange.
-        category: Optional filter substring on subCategory field, e.g. "Forex", "Metals",
-                  "Crypto", "Stocks", "Index". Leave empty to return all.
+        search: Symbol keyword to search, e.g. "ETH", "BTC", "EUR", "XAU".
+                Leave empty to list all symbols on the given exchange.
+        exchange: Filter to a specific exchange — "hyperliquid", "ostium", "avantis",
+                  "aster", "vest", "orderly", "paradex", "dydx", "aevo" — or "all".
+                  When search is provided, "all" is the most useful value.
+        category: Optional category filter — "Forex", "Metals", "Crypto", "Stocks", "Index".
 
-    Returns dict with:
-        exchange(s) queried, total symbol count, symbols list (symbol, source, category,
-        subCategory, price), and exchange_info descriptions.
+    Returns grouped results: each unique symbol with the list of exchanges that offer it,
+    plus price per exchange. Much more compact than a flat per-row listing.
     """
     try:
         from agent.Config.tools_config import DATA_SOURCES
     except Exception:
         from backend.agent.Config.tools_config import DATA_SOURCES
 
-    # Derive markets base URL from connectors URL (same host, /api/markets path)
     connectors_url = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
     markets_base = connectors_url.replace("/api/connectors", "")
 
@@ -479,7 +481,7 @@ async def list_symbols(
     exchange_key = exchange.strip().lower()
     if exchange_key not in ALL_EXCHANGES and exchange_key != "all":
         return {
-            "error": f"Unknown exchange '{exchange}'. Valid options: {', '.join(ALL_EXCHANGES)} or 'all'.",
+            "error": f"Unknown exchange '{exchange}'. Valid: {', '.join(ALL_EXCHANGES)} or 'all'.",
             "available_exchanges": ALL_EXCHANGES,
         }
 
@@ -496,36 +498,97 @@ async def list_symbols(
 
     markets_list = data if isinstance(data, list) else data.get("markets", data.get("data", []))
 
-    # Filter by category if requested
+    # Filter by search — exact match on base asset ("from") or symbol prefix (e.g. "ETH" → "ETH-USD")
+    if search:
+        kw = search.strip().upper()
+        markets_list = [
+            m for m in markets_list
+            if str(m.get("from", "")).upper() == kw
+            or str(m.get("symbol", "")).upper() == kw
+            or str(m.get("symbol", "")).upper().startswith(kw + "-")
+        ]
+
+    # Filter by category (API uses snake_case "sub_category")
     if category:
         cat_lower = category.lower()
         markets_list = [
             m for m in markets_list
-            if cat_lower in str(m.get("subCategory", "")).lower()
-            or cat_lower in str(m.get("category", "")).lower()
+            if cat_lower in str(m.get("sub_category", "") or "").lower()
+            or cat_lower in str(m.get("category", "") or "").lower()
         ]
 
-    symbols = [
-        {
-            "symbol": m.get("symbol"),
-            "exchange": m.get("source"),
-            "category": m.get("category"),
-            "subCategory": m.get("subCategory"),
+    # Group by base asset — show which exchanges have it and at what price
+    grouped: Dict[str, Dict] = {}
+    for m in markets_list:
+        base = m.get("from") or str(m.get("symbol", "")).split("-")[0]
+        sym = m.get("symbol")
+        src = m.get("source")
+        if not base or not src:
+            continue
+        key = base.upper()
+        if key not in grouped:
+            grouped[key] = {
+                "symbol": key,
+                "category": m.get("category"),
+                "subCategory": m.get("sub_category"),
+                "exchanges": [],
+            }
+        grouped[key]["exchanges"].append({
+            "exchange": src,
+            "pair": sym,
             "price": m.get("price"),
-        }
-        for m in markets_list
-        if m.get("symbol")
-    ]
+            "max_leverage": m.get("max_leverage"),
+        })
 
-    # Build exchange info context
-    if exchange_key == "all":
-        info = EXCHANGE_INFO
-    else:
-        info = {exchange_key: EXCHANGE_INFO.get(exchange_key, "")}
+    # Compute basis (price spread) for symbols listed on 2+ exchanges
+    for entry in grouped.values():
+        prices = [
+            (e["exchange"], float(e["price"]))
+            for e in entry["exchanges"]
+            if e["price"] is not None
+        ]
+        if len(prices) >= 2:
+            prices_sorted = sorted(prices, key=lambda x: x[1])
+            low_ex, low_px = prices_sorted[0]
+            high_ex, high_px = prices_sorted[-1]
+            spread = high_px - low_px
+            spread_pct = (spread / low_px * 100) if low_px else 0
+            entry["basis"] = {
+                "lowest":     {"exchange": low_ex,  "price": low_px},
+                "highest":    {"exchange": high_ex, "price": high_px},
+                "spread":     round(spread, 6),
+                "spread_pct": round(spread_pct, 4),
+            }
+
+    results = sorted(grouped.values(), key=lambda x: x["symbol"])
+
+    # If listing a specific exchange without search — return full pairs directly (no grouping needed)
+    if not search and exchange_key != "all":
+        compact = sorted(
+            [
+                {
+                    "symbol": m.get("symbol"),
+                    "base": m.get("from"),
+                    "price": m.get("price"),
+                    "category": m.get("category"),
+                    "max_leverage": m.get("max_leverage"),
+                }
+                for m in markets_list
+                if m.get("symbol")
+            ],
+            key=lambda x: x["symbol"],
+        )
+        return {
+            "exchange": exchange_key,
+            "exchange_info": EXCHANGE_INFO.get(exchange_key, ""),
+            "total": len(compact),
+            "symbols": compact,
+        }
 
     return {
-        "exchange_queried": exchange_key,
-        "total": len(symbols),
-        "symbols": symbols,
-        "exchange_info": info,
+        "search": search or None,
+        "exchange_filter": exchange_key,
+        "total_unique_symbols": len(results),
+        "results": results,
+        "exchange_info": EXCHANGE_INFO if exchange_key == "all" else {exchange_key: EXCHANGE_INFO.get(exchange_key, "")},
     }
