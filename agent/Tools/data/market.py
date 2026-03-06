@@ -84,13 +84,26 @@ def _select_market(
     candidates = _normalize_symbol_candidates(symbol)
     if not candidates:
         return None
+    kw = (symbol or "").strip().upper()
     for c in candidates:
         for row in markets:
-            row_symbol = (
-                str(row.get("symbol", "")).upper().replace("/", "-").replace("_", "-")
-            )
-            if row_symbol == c:
+            # Match on symbol, tradingSymbol, or from (base asset)
+            row_symbol = str(row.get("symbol", "")).upper().replace("/", "-").replace("_", "-")
+            trading_sym = str(row.get("tradingSymbol", "")).upper()
+            base_asset = str(row.get("from", "")).upper()
+            if row_symbol == c or trading_sym == c:
                 return row
+            # Also allow exact base-asset match (e.g. "BTC" matches from="BTC")
+            if base_asset == kw and row_symbol == c.replace("USD", row.get("to", "USD").upper()):
+                return row
+    # Last resort: match purely on base asset (from field) — pick first canonical or first result
+    for row in markets:
+        if str(row.get("from", "")).upper() == kw:
+            if row.get("canonical"):
+                return row
+    for row in markets:
+        if str(row.get("from", "")).upper() == kw:
+            return row
     return None
 
 
@@ -141,46 +154,69 @@ async def get_price(
         volume_24h, high_24h, low_24h, raw
       OR {"error": "..."} if not found.
     """
-    # Allow caller to pass exchange name directly
+    # Derive markets base URL (same host as connectors, /api/markets path)
+    markets_base = CONNECTORS_API.replace("/api/connectors", "")
+
+    client = await get_http_client(timeout_sec=10.0)
+
+    # If a specific non-standard exchange is requested, use /api/markets/ directly
+    _STANDARD = {"hyperliquid", "ostium", "rwa", "crypto"}
+    if exchange and exchange.strip().lower() not in _STANDARD:
+        ex = exchange.strip().lower()
+        try:
+            resp = await client.get(f"{markets_base}/api/markets/", params={"exchange": ex})
+            resp.raise_for_status()
+            data = resp.json()
+            markets = data if isinstance(data, list) else data.get("markets", [])
+            row = _select_market(markets, symbol)
+            if row:
+                return {
+                    "symbol": row.get("symbol", symbol),
+                    "exchange": ex,
+                    "asset_type": row.get("category", "crypto").lower(),
+                    "price": row.get("price"),
+                    "change_24h": row.get("change_24h"),
+                    "change_percent_24h": row.get("change_percent_24h"),
+                    "volume_24h": row.get("volume_24h"),
+                    "high_24h": row.get("high_24h"),
+                    "low_24h": row.get("low_24h"),
+                    "raw": row,
+                }
+            return {"error": f"Symbol '{symbol}' not found on {ex}."}
+        except Exception as e:
+            return {"error": f"Failed to fetch price from {ex}: {str(e)}"}
+
+    # Standard routing: hyperliquid (crypto) or ostium (rwa)
     if exchange:
         ex = exchange.strip().lower()
-        if ex in {"ostium", "rwa"}:
-            asset_type = "rwa"
-        else:
-            asset_type = "crypto"
+        asset_type = "rwa" if ex in {"ostium", "rwa"} else "crypto"
     preferred_asset_type = _normalize_asset_type(asset_type)
     if preferred_asset_type == "crypto" and _looks_like_fiat_cross(symbol):
-        # Auto-correct common model misses, e.g. USD/CHF requested as crypto.
+        # Auto-correct: forex symbol requested as crypto → route to ostium
         preferred_asset_type = "rwa"
 
-    # If symbol is missing in preferred source, auto-fallback to the other source.
+    # Try preferred source first, then fallback to the other
     route_order = [
         preferred_asset_type,
         "rwa" if preferred_asset_type == "crypto" else "crypto",
     ]
     tried: List[str] = []
-    client = await get_http_client(timeout_sec=10.0)
     try:
         for current_asset_type in route_order:
             if current_asset_type in tried:
                 continue
             tried.append(current_asset_type)
             endpoint = (
-                "/hyperliquid/prices"
-                if current_asset_type == "crypto"
-                else "/ostium/prices"
+                "/hyperliquid/prices" if current_asset_type == "crypto" else "/ostium/prices"
             )
-            url = f"{CONNECTORS_API}{endpoint}"
-            resp = await client.get(url)
+            resp = await client.get(f"{CONNECTORS_API}{endpoint}")
             resp.raise_for_status()
             payload = resp.json()
             if not isinstance(payload, list):
                 continue
-
             row = _select_market(payload, symbol)
             if not row:
                 continue
-
             exchange_name = "hyperliquid" if current_asset_type == "crypto" else "ostium"
             return {
                 "symbol": row.get("symbol", symbol),
@@ -194,10 +230,7 @@ async def get_price(
                 "low_24h": row.get("low_24h"),
                 "raw": row,
             }
-
-        return {
-            "error": f"Symbol '{symbol}' not found in {', '.join(tried)} markets.",
-        }
+        return {"error": f"Symbol '{symbol}' not found in {', '.join(tried)} markets."}
     except Exception as e:
         return {"error": f"Failed to fetch price: {str(e)}"}
 
@@ -233,7 +266,7 @@ async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str,
     Get the current perpetual funding rate for a crypto symbol.
 
     IMPORTANT: Funding rates only exist for crypto perpetuals, NOT for RWA assets
-    (forex, metals, indices, stocks). Calling this with an RWA symbol will error.
+    (forex, metals, indices, stocks). Do NOT call this for forex, metals, or stocks.
 
     Funding rate = periodic payment between longs and shorts in perpetual futures.
     Positive rate → longs pay shorts (long-crowded / bearish pressure).
@@ -245,12 +278,19 @@ async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str,
 
     Returns dict with funding rate data, or {"error": "..."} on failure.
     """
-    asset_type = _normalize_asset_type(asset_type)
-    route_symbol = _symbol_for_connector_route(symbol, asset_type=asset_type)
+    normalized = _normalize_asset_type(asset_type)
+    # Guard: RWA/forex assets do not have funding rates
+    if normalized == "rwa" or _looks_like_fiat_cross(symbol):
+        return {
+            "not_applicable": True,
+            "symbol": symbol,
+            "reason": "Funding rates only exist for crypto perpetuals. RWA assets (forex, metals, stocks) use interest rate differentials instead.",
+        }
+    route_symbol = _symbol_for_connector_route(symbol, asset_type=normalized)
     url = f"{CONNECTORS_API}/funding/{route_symbol}"
     client = await get_http_client(timeout_sec=10.0)
     try:
-        resp = await client.get(url, params={"asset_type": asset_type})
+        resp = await client.get(url, params={"asset_type": normalized})
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
