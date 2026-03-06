@@ -114,14 +114,40 @@ def _symbol_for_connector_route(symbol: str, asset_type: str) -> str:
     return raw
 
 
-async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
+async def get_price(
+    symbol: str,
+    asset_type: str = "crypto",
+    exchange: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Get current price for a symbol.
 
+    Always pass the correct asset_type or exchange so routing is unambiguous.
+    The response includes an "exchange" field confirming which source served the data.
+    If the symbol is not found on the preferred source, the system auto-falls back
+    to the other and the returned "exchange" field will reflect the actual source used.
+
+    CLARIFICATION: If the user's request is ambiguous (e.g. a symbol name that could
+    be crypto or RWA), ask which market they mean before calling this tool.
+
     Args:
-        symbol: e.g. "BTC", "EURUSD"
-        asset_type: "crypto" (Hyperliquid) or "rwa" (Ostium)
+        symbol:     Ticker symbol, e.g. "BTC", "EURUSD", "XAU", "TSLA"
+        asset_type: "crypto" / "hyperliquid"  for crypto perpetuals
+                    "rwa" / "ostium"           for forex, metals, indices, stocks
+        exchange:   Explicit override — overrides asset_type when provided.
+
+    Returns dict with keys:
+        symbol, exchange, asset_type, price, change_24h, change_percent_24h,
+        volume_24h, high_24h, low_24h, raw
+      OR {"error": "..."} if not found.
     """
+    # Allow caller to pass exchange name directly
+    if exchange:
+        ex = exchange.strip().lower()
+        if ex in {"ostium", "rwa"}:
+            asset_type = "rwa"
+        else:
+            asset_type = "crypto"
     preferred_asset_type = _normalize_asset_type(asset_type)
     if preferred_asset_type == "crypto" and _looks_like_fiat_cross(symbol):
         # Auto-correct common model misses, e.g. USD/CHF requested as crypto.
@@ -155,8 +181,10 @@ async def get_price(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
             if not row:
                 continue
 
+            exchange_name = "hyperliquid" if current_asset_type == "crypto" else "ostium"
             return {
                 "symbol": row.get("symbol", symbol),
+                "exchange": exchange_name,
                 "asset_type": current_asset_type,
                 "price": row.get("price"),
                 "change_24h": row.get("change_24h"),
@@ -199,27 +227,23 @@ async def get_candles(
         return {"error": f"Failed to fetch candles: {str(e)}"}
 
 
-async def get_orderbook(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
-    """
-    Get L2 Orderbook (Crypto/Hyperliquid only).
-    """
-    asset_type = _normalize_asset_type(asset_type)
-    if asset_type != "crypto":
-        return {"error": "Orderbook is available for crypto markets only."}
-    route_symbol = _symbol_for_connector_route(symbol, asset_type=asset_type)
-    url = f"{CONNECTORS_API}/orderbook/{route_symbol}"
-    client = await get_http_client(timeout_sec=10.0)
-    try:
-        resp = await client.get(url, params={"asset_type": asset_type})
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        return {"error": f"Failed to fetch orderbook: {str(e)}"}
-
 
 async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     """
-    Get Funding Rate (Crypto/Hyperliquid only).
+    Get the current perpetual funding rate for a crypto symbol.
+
+    IMPORTANT: Funding rates only exist for crypto perpetuals, NOT for RWA assets
+    (forex, metals, indices, stocks). Calling this with an RWA symbol will error.
+
+    Funding rate = periodic payment between longs and shorts in perpetual futures.
+    Positive rate → longs pay shorts (long-crowded / bearish pressure).
+    Negative rate → shorts pay longs (short-crowded / bullish pressure).
+
+    Args:
+        symbol:     Crypto ticker, e.g. "BTC", "ETH", "SOL"
+        asset_type: "crypto" or "hyperliquid" — RWA symbols not supported.
+
+    Returns dict with funding rate data, or {"error": "..."} on failure.
     """
     asset_type = _normalize_asset_type(asset_type)
     route_symbol = _symbol_for_connector_route(symbol, asset_type=asset_type)
@@ -235,7 +259,16 @@ async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str,
 
 async def get_ticker_stats(symbol: str, asset_type: str = "crypto") -> Dict[str, Any]:
     """
-    Get 24h Stats (Volume, Change).
+    Get 24-hour trading statistics for a symbol (volume, price change).
+
+    Same exchange routing as get_price — specify asset_type correctly for
+    crypto vs RWA assets. Returns a condensed view of the 24h stats.
+
+    Args:
+        symbol:     Ticker, e.g. "BTC", "ETH", "EURUSD", "XAU"
+        asset_type: "crypto" / "hyperliquid" for crypto; "rwa" / "ostium" for RWA.
+
+    Returns dict: {volume_24h, change_24h, price} or {"error": "..."}.
     """
     # Ostium returns this in get_price response (volume_24h).
     # Hyperliquid price response also has data.
@@ -316,11 +349,34 @@ async def get_high_low_levels(
     asset_type: str = "crypto",
 ) -> Dict[str, Any]:
     """
-    Compute rolling high/low levels (simple support/resistance) from OHLC candles.
+    Compute rolling high/low support & resistance levels from OHLC candle data.
 
-    Example:
-    - lookback=5  -> high_5 / low_5 from last 5 candles
-    - lookback=20 -> high_20 / low_20 from last 20 candles
+    NOTE: Candle data availability varies by market. Crypto symbols generally have
+    full history; some RWA symbols (forex, metals) may have limited candle data —
+    if candle data is unavailable, the function returns an error. In that case,
+    use get_price for spot price only.
+
+    Supported timeframes: "1m", "5m", "15m", "30m", "1H", "2H", "4H", "1D", "1W"
+
+    Returns:
+        support    — lowest low over the lookback window (key support level)
+        resistance — highest high over the lookback window (key resistance level)
+        midpoint   — midpoint between support and resistance
+        latest_close, latest_high, latest_low — most recent candle values
+        support_time / resistance_time — timestamps where S/R levels formed
+        levels     — dict with named keys, e.g. {"high_7": ..., "low_7": ...}
+
+    Examples:
+        lookback=5  → short-term S/R from last 5 candles
+        lookback=20 → medium-term S/R
+        lookback=50 → longer-term S/R
+
+    Args:
+        symbol:    Ticker, e.g. "BTC", "ETH", "EURUSD", "XAU"
+        timeframe: Candle interval — "1H", "4H", "1D", etc.
+        lookback:  Number of candles to include in calculation (default 7).
+        limit:     Override for how many candles to fetch (defaults to lookback).
+        asset_type: "crypto"/"hyperliquid" for crypto; "rwa"/"ostium" for RWA.
     """
     try:
         requested_lookback = int(lookback)
