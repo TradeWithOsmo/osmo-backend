@@ -52,6 +52,7 @@ from .research import (
     research_market,
     compare_markets,
     scan_market_overview,
+    list_symbols,
 )
 
 __all__ = [
@@ -70,5 +71,5 @@ __all__ = [
     # Memory
     'add_memory', 'search_memory', 'get_recent_history',
     # Research
-    'research_market', 'compare_markets', 'scan_market_overview',
+    'research_market', 'compare_markets', 'scan_market_overview', 'list_symbols',
 ]

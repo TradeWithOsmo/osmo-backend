@@ -18,7 +18,7 @@ from .data.market import (
     get_ticker_stats,
 )
 from .data.memory import add_memory, get_recent_history, search_memory
-from .data.research import compare_markets, research_market, scan_market_overview
+from .data.research import compare_markets, research_market, scan_market_overview, list_symbols
 from .data.trade import (
     adjust_all_positions_tpsl,
     adjust_position_tpsl,
@@ -126,4 +126,5 @@ __all__ = [
     "research_market",
     "compare_markets",
     "scan_market_overview",
+    "list_symbols",
 ]
