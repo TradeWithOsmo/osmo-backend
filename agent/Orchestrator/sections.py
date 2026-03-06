@@ -61,14 +61,12 @@ OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 RESEARCH_TOOLS = {
     # Data
     "get_price", "get_technical_analysis", "get_high_low_levels",
-    "get_ticker_stats", "get_funding_rate", "get_orderbook",
+    "get_ticker_stats", "get_funding_rate",
     "get_indicators", "get_chainlink_price", "get_technical_summary",
     # Canvas read
     "get_active_indicators",
     # Web (conditionally enabled by web gate)
     "search_news", "search_sentiment", "search_web_hybrid",
-    # On-chain
-    "get_whale_activity",
 }
 
 STRATEGY_TOOLS = {
@@ -93,12 +91,11 @@ EXECUTION_TOOLS = {
 }
 
 MEMORY_TOOLS = {
-    "search_memory", "get_recent_history", "search_knowledge_base",
-    "add_memory",
+    "search_memory", "get_recent_history", "add_memory",
 }
 
 RISK_TOOLS = {
-    "get_price", "get_positions", "get_funding_rate", "get_orderbook",
+    "get_price", "get_positions", "get_funding_rate",
     "get_ticker_stats",
 }
 

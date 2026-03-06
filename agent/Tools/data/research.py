@@ -20,7 +20,6 @@ try:
         get_price,
         get_funding_rate,
         get_high_low_levels,
-        get_orderbook,
     )
     from agent.Tools.data.analysis import get_technical_analysis
 except Exception:
@@ -28,7 +27,6 @@ except Exception:
         get_price,
         get_funding_rate,
         get_high_low_levels,
-        get_orderbook,
     )
     from backend.agent.Tools.data.analysis import get_technical_analysis
 
@@ -112,8 +110,7 @@ async def _fetch_market_snapshot(
     ]
     if asset_type == "crypto":
         task_pairs.append(("funding", get_funding_rate(symbol, asset_type=asset_type)))
-        if include_depth:
-            task_pairs.append(("depth", get_orderbook(symbol, asset_type=asset_type)))
+        pass
 
     labels = [name for name, _ in task_pairs]
     raw_results = await asyncio.gather(
