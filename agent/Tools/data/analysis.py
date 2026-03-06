@@ -52,7 +52,10 @@ async def get_technical_analysis(
             url, params={"timeframe": timeframe, "asset_type": asset_type}
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        # Drop null/noisy fields not useful to the agent
+        data.pop("chart_screenshot", None)
+        return data
     except Exception as e:
         return {"error": f"Analysis failed: {str(e)}"}
 

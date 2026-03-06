@@ -170,17 +170,19 @@ async def get_price(
             markets = data if isinstance(data, list) else data.get("markets", [])
             row = _select_market(markets, symbol)
             if row:
+                price = row.get("price")
+                if price is None:
+                    return {"error": f"Live price not available for '{symbol}' on {ex}. Try get_price without specifying exchange to use primary sources (hyperliquid/ostium)."}
                 return {
                     "symbol": row.get("symbol", symbol),
                     "exchange": ex,
                     "asset_type": row.get("category", "crypto").lower(),
-                    "price": row.get("price"),
+                    "price": price,
                     "change_24h": row.get("change_24h"),
                     "change_percent_24h": row.get("change_percent_24h"),
                     "volume_24h": row.get("volume_24h"),
                     "high_24h": row.get("high_24h"),
                     "low_24h": row.get("low_24h"),
-                    "raw": row,
                 }
             return {"error": f"Symbol '{symbol}' not found on {ex}."}
         except Exception as e:
@@ -228,7 +230,6 @@ async def get_price(
                 "volume_24h": row.get("volume_24h"),
                 "high_24h": row.get("high_24h"),
                 "low_24h": row.get("low_24h"),
-                "raw": row,
             }
         return {"error": f"Symbol '{symbol}' not found in {', '.join(tried)} markets."}
     except Exception as e:
@@ -292,7 +293,16 @@ async def get_funding_rate(symbol: str, asset_type: str = "crypto") -> Dict[str,
     try:
         resp = await client.get(url, params={"asset_type": normalized})
         resp.raise_for_status()
-        return resp.json()
+        raw = resp.json()
+        # Flatten the envelope {source, data_type, timestamp, data: {...}, symbol}
+        data = raw.get("data", raw) if isinstance(raw, dict) else {}
+        return {
+            "symbol": raw.get("symbol", symbol),
+            "funding_rate": data.get("funding_rate"),
+            "premium": data.get("premium"),
+            "next_funding_time": data.get("next_funding_time"),
+            "source": raw.get("source", "hyperliquid"),
+        }
     except Exception as e:
         return {"error": f"Failed to fetch funding rate: {str(e)}"}
 
@@ -460,40 +470,19 @@ async def get_high_low_levels(
     support = min(float(item["low"]) for item in recent)
     midpoint = float((resistance + support) / 2.0)
     latest = rows[-1]
-    high_col = f"high_{effective_lookback}"
-    low_col = f"low_{effective_lookback}"
     degraded = effective_lookback < requested_lookback
 
-    # Find timestamps of the candles where resistance/support formed
-    resistance_candle = max(recent, key=lambda r: float(r.get("high", 0)))
-    support_candle = min(recent, key=lambda r: float(r.get("low", float("inf"))))
-
-    return {
-        "status": "ok",
+    out: Dict[str, Any] = {
         "symbol": symbol,
         "timeframe": timeframe,
-        "asset_type": _normalize_asset_type(asset_type),
-        "lookback_requested": requested_lookback,
-        "lookback_used": effective_lookback,
-        "degraded": degraded,
-        "candle_count": int(available),
+        "lookback": effective_lookback,
         "support": support,
-        "support_time": support_candle.get("time"),
         "resistance": resistance,
-        "resistance_time": resistance_candle.get("time"),
         "midpoint": midpoint,
+        "latest_close": float(latest.get("close", 0.0)),
         "latest_high": float(latest.get("high", 0.0)),
         "latest_low": float(latest.get("low", 0.0)),
-        "latest_close": float(latest.get("close", 0.0)),
-        "latest_time": latest.get("time"),
-        "levels": {
-            high_col: resistance,
-            low_col: support,
-        },
-        "warning": (
-            f"Requested lookback={requested_lookback} but only {available} candles available; "
-            f"computed using lookback={effective_lookback}."
-            if degraded
-            else None
-        ),
     }
+    if degraded:
+        out["warning"] = f"Only {available} candles available; computed using lookback={effective_lookback} (requested {requested_lookback})."
+    return out

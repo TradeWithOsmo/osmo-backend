@@ -580,7 +580,6 @@ async def list_symbols(
         )
         return {
             "exchange": exchange_key,
-            "exchange_info": EXCHANGE_INFO.get(exchange_key, ""),
             "total": len(compact),
             "symbols": compact,
         }
@@ -590,5 +589,4 @@ async def list_symbols(
         "exchange_filter": exchange_key,
         "total_unique_symbols": len(results),
         "results": results,
-        "exchange_info": EXCHANGE_INFO if exchange_key == "all" else {exchange_key: EXCHANGE_INFO.get(exchange_key, "")},
     }
