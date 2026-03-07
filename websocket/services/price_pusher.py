@@ -178,7 +178,8 @@ class PricePusher:
                     'chainId': settings.CHAIN_ID,
                 })
                 signed = w3.eth.account.sign_transaction(txn, settings.TREASURY_PRIVATE_KEY)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                raw_tx = getattr(signed, 'raw_transaction', None) or getattr(signed, 'rawTransaction', None)
+                tx_hash = w3.eth.send_raw_transaction(raw_tx)
                 logger.info(f"📡 [OrderRouter] Pushed {len(bs)} prices. Tx: {tx_hash.hex()}")
                 if i + batch_size < len(symbols):
                     await asyncio.sleep(1)
@@ -208,7 +209,8 @@ class PricePusher:
                     'chainId': settings.CHAIN_ID,
                 })
                 signed = w3.eth.account.sign_transaction(txn, settings.TREASURY_PRIVATE_KEY)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                raw_tx = getattr(signed, 'raw_transaction', None) or getattr(signed, 'rawTransaction', None)
+                tx_hash = w3.eth.send_raw_transaction(raw_tx)
                 logger.info(f"📊 [CustomFeed] Pushed {len(bs)} symbols (price+funding+basis). Tx: {tx_hash.hex()}")
                 if i + batch_size < len(symbols):
                     await asyncio.sleep(1)

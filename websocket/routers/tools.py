@@ -39,9 +39,8 @@ from agent.Tools.tradingview.drawing.actions import (
     clear_drawings
 )
 from agent.Tools.data.market import (
-    get_price, 
-    get_candles, 
-    get_orderbook, 
+    get_price,
+    get_candles,
     get_funding_rate,
     get_high_low_levels
 )
@@ -63,9 +62,6 @@ from agent.Tools.data.memory import (
     add_memory,
     search_memory,
     get_recent_history
-)
-from agent.Tools.data.knowledge import (
-    search_knowledge_base
 )
 
 router = APIRouter(
@@ -275,10 +271,6 @@ class MemorySearchRequest(BaseModel):
     query: str
     limit: int = 5
 
-class KnowledgeSearchRequest(BaseModel):
-    query: str
-    category: Optional[str] = None
-    top_k: int = 3
 
 
 async def _collect_market_technical_bundle(
@@ -538,9 +530,6 @@ async def execute_web_search(request: WebSearchRequest):
 async def execute_sentiment(symbol: str = Body(..., embed=True), mode: str = Body("quality", embed=True)):
     return await search_sentiment(symbol, mode)
 
-@router.post("/knowledge/search")
-async def execute_knowledge_search(request: KnowledgeSearchRequest):
-    return await search_knowledge_base(request.query, request.category, request.top_k)
 
 # 8. Memory
 @router.post("/memory/add")

@@ -305,7 +305,7 @@ async def start_cache_poller():
     async def poll():
         while True:
             await asyncio.gather(update_hl_cache(), update_ost_cache())
-            await asyncio.sleep(0.5)  # Refresh every 0.5s for <1s freshness
+            await asyncio.sleep(10)  # Refresh every 10s — avoid Hyperliquid 429
 
     asyncio.create_task(poll())
 

@@ -525,9 +525,9 @@ async def bootstrap_hyperliquid_history():
                         latest_prices[symbol]["high_24h"] = high
                         latest_prices[symbol]["low_24h"] = low
                     
-                    # Small delay to be polite to the API
-                    if i % 10 == 0:
-                        await asyncio.sleep(1)
+                    # Delay to avoid Hyperliquid 429 rate limit
+                    if i % 5 == 0:
+                        await asyncio.sleep(2)
                         
                 except Exception as e:
                     # logger.warning(f"Failed to bootstrap {coin}: {e}")

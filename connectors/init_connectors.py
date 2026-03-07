@@ -64,7 +64,6 @@ class ConnectorRegistry:
         await self._register_hyperliquid()
         await self._register_ostium()
         await self._register_chainlink()
-        await self._register_dune()
         await self._register_tradingview()
         await self._register_web_search()
         await self._register_mem0()
@@ -122,32 +121,12 @@ class ConnectorRegistry:
         except Exception as e:
             logger.error(f"✗ Chainlink registration failed: {e}")
     
-    async def _register_dune(self) -> None:
-        """Register Dune Analytics connector"""
-        try:
-            config = {
-                "api_key": os.getenv("DUNE_API_KEY"),
-                "whale_query_id": os.getenv("DUNE_QUERY_WHALE_TRADES")
-            }
-            
-            if not config["api_key"]:
-                logger.warning("⚠ DUNE_API_KEY not configured, connector offline")
-            
-            from connectors.dune import DuneConnector
-            connector = DuneConnector(config)
-            self.manager.register_connector("dune", connector)
-            
-            logger.info("✓ Dune Analytics connector registered")
-        except Exception as e:
-            logger.error(f"✗ Dune registration failed: {e}")
-    
     async def _register_tradingview(self) -> None:
         """Register TradingView connector"""
         try:
             config = {
                 "redis_client": self.redis_client,
-                # TradingView indicator cache is intentionally disabled.
-                "cache_ttl": 0,
+                "cache_ttl": 300,
             }
             
             from connectors.tradingview import TradingViewConnector
