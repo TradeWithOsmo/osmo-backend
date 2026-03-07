@@ -214,6 +214,9 @@ This single call tells you everything: which indicators are active, their curren
   Execution disabled   → setup_trade() for human review
   Timeout              → retry once
 
+# FINAL MESSAGE
+When you have finished using tools and are ready to speak to the user, you MUST wrap your final user-facing message inside <output>...</output> tags. Everything outside of these tags is considered your private reasoning and will be hidden from the main chat.
+
 # VOICE
 Think out loud, trader-style. Brief. "RSI at 74 — overbought. MACD already on chart, reading… bearish crossover. Drawing resistance at 68,400."
 """
@@ -758,10 +761,8 @@ class ReflexionAgent:
         )
 
         self.api_key: str = os.getenv("OPENROUTER_API_KEY", "").strip()
-        if not self.api_key:
-            raise ValueError(
-                "Missing required environment variable: OPENROUTER_API_KEY"
-            )
+        if not self.api_key and not os.getenv("ALIBABA_API_KEY", "").strip():
+            print("Warning: Neither OPENROUTER_API_KEY nor ALIBABA_API_KEY is set in ReflexionAgent")
 
         self._registry: Dict[str, ToolSpec] = build_tool_registry()
         self.contextual_eval_tools = self._resolve_contextual_eval_tools()
@@ -886,6 +887,11 @@ class ReflexionAgent:
     # ------------------------------------------------------------------
 
     def _headers(self) -> Dict[str, str]:
+        if self.model_id.startswith("alibaba/"):
+            return {
+                "Authorization": f"Bearer {os.getenv('ALIBABA_API_KEY', '').strip()}",
+                "Content-Type": "application/json",
+            }
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -1077,13 +1083,21 @@ class ReflexionAgent:
             "messages": messages,
             "temperature": self.temperature,
         }
+        
+        # OpenRouter expects model format provider/model, Alibaba just the model name
+        if self.model_id.startswith("alibaba/"):
+            body["model"] = self.model_id.split("/", 1)[1]
+            chat_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+        else:
+            chat_url = OPENROUTER_CHAT_URL
+
         body.update(_reasoning_request_fields(self.reasoning_effort))
         if tools_payload:
             body["tools"] = tools_payload
             body["tool_choice"] = "auto"
 
         resp = await client.post(
-            OPENROUTER_CHAT_URL,
+            chat_url,
             headers=self._headers(),
             json=body,
             timeout=90.0,
@@ -1108,22 +1122,37 @@ class ReflexionAgent:
 
     @staticmethod
     def _extract_text_content(completion: Dict[str, Any]) -> str:
-        """Extract plain text from an OpenRouter completion response."""
+        """Extract plain text from an OpenRouter/Alibaba completion response."""
         choices = completion.get("choices") or []
         if not choices:
-            return ""
+            # Fallback for some non-standard responses
+            return str(completion.get("content") or "")
+            
         message = choices[0].get("message") or {}
-        content = message.get("content") or ""
+        
+        # Try finding content in different locations
+        content = message.get("content")
+        if not content and "text" in message:
+            content = message.get("text")
+            
+        if not content:
+            return ""
+            
         if isinstance(content, str):
             return content
+            
         if isinstance(content, list):
             parts: List[str] = []
             for item in content:
                 if isinstance(item, str):
                     parts.append(item)
-                elif isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(str(item.get("text") or ""))
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text") or ""))
+                    elif "text" in item:
+                        parts.append(str(item.get("text") or ""))
             return "".join(parts)
+            
         return str(content)
 
     @staticmethod
@@ -1654,18 +1683,7 @@ class ReflexionAgent:
         )
 
         if primary_symbol and not state.canvas_read:
-            _emit("tool_call", f"reading canvas for {primary_symbol}...")
             canvas_result = await self._read_canvas_state(state, primary_symbol)
-            canvas_desc = (
-                f"{len(state.canvas_indicators)} indicators"
-                if state.canvas_indicators
-                else "clean canvas"
-            )
-            _emit(
-                "tool_result",
-                f"canvas: {primary_symbol} @ {state.canvas_timeframe or '?'} — {canvas_desc}"
-                + (f" [{', '.join(state.canvas_indicators[:6])}]" if state.canvas_indicators else ""),
-            )
             state.advance_phase(AnalysisPhase.PRICE_CONTEXT)
 
         # Build initial messages AFTER canvas read so context block includes canvas state
@@ -1682,8 +1700,8 @@ class ReflexionAgent:
                 if iteration > 0:
                     injection = self._build_reflexion_injection(state)
                     if injection:
+                        # Silently add context injection to LLM messages — do NOT emit to UI
                         messages.append(injection)
-                        _emit("reflection", injection["content"])
 
                 # ---- Call LLM ----
                 try:
@@ -1721,8 +1739,28 @@ class ReflexionAgent:
                 text_content = self._extract_text_content(completion)
 
                 if text_content:
-                    _emit("content", text_content)
-                    final_content = text_content
+                    if tool_calls:
+                        _emit("thinking", text_content)
+                        final_content = text_content
+                    else:
+                        # Extract <output> tags if present
+                        import re
+                        match = re.search(r"<output>\s*(.*?)(?:</output>|$)", text_content, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            output_text = match.group(1).strip()
+                            reasoning_text = text_content[:match.start()].strip() + "\n" + text_content[match.end():].strip()
+                            reasoning_text = reasoning_text.strip()
+                            
+                            if reasoning_text:
+                                _emit("thinking", reasoning_text)
+                            if output_text:
+                                _emit("content", output_text)
+                                final_content = output_text
+                            else:
+                                final_content = text_content
+                        else:
+                            _emit("content", text_content)
+                            final_content = text_content
 
                 # ---- No tool calls → done ----
                 if not tool_calls:
@@ -1802,13 +1840,7 @@ class ReflexionAgent:
                     if status in (ActionStatus.ERROR, ActionStatus.POOR) and not state.capabilities.explored:
                         note_lower = note.lower()
                         if any(kw in note_lower for kw in ("indicator", "not found", "unknown", "draw")):
-                            _emit("tool_call", "triggering on-demand tool discovery...")
                             await self._run_tool_discovery(state)
-                            _emit(
-                                "tool_result",
-                                f"discovered {len(state.capabilities.indicator_aliases)} indicators, "
-                                f"{len(state.capabilities.draw_tools)} draw tools",
-                            )
 
                     # ----- PERBAIKI (retry loop) -----
                     while self._evaluator.should_retry(
@@ -1819,7 +1851,6 @@ class ReflexionAgent:
                             + (f"Fix: {fix_hint}" if fix_hint else "Adjusting params.")
                         )
                         state.add_reflection(reflection)
-                        _emit("reflection", f"reflexion: {reflection}")
 
                         # Build fixed args
                         fixed_args = self._evaluator.apply_fix_to_args(

@@ -570,18 +570,29 @@ class ReflexionState:
 
         for sym, ctx in self.symbols.items():
             parts = [f"[{sym}]"]
+            has_data = False
             if ctx.price is not None:
                 parts.append(f"Price={ctx.get_price_display()}")
+                has_data = True
             if ctx.rsi is not None:
                 parts.append(f"RSI={ctx.rsi:.1f}")
+                has_data = True
             if ctx.patterns:
                 parts.append(f"Patterns={','.join(ctx.patterns[:3])}")
-            parts.append(ctx.get_level_summary())
+                has_data = True
+            # Only include level summary if levels have been computed
+            if ctx.levels_done:
+                parts.append(ctx.get_level_summary())
+                has_data = True
             if ctx.active_indicators:
                 parts.append(f"Indicators=[{','.join(ctx.active_indicators[:5])}]")
+                has_data = True
             if ctx.drawings_made:
                 parts.append(f"Drawings=[{','.join(ctx.drawings_made[-3:])}]")
-            lines.append(" ".join(parts))
+                has_data = True
+            # Only include symbol in context if it has meaningful data
+            if has_data:
+                lines.append(" ".join(parts))
 
         if self.global_reflections:
             lines.append("[Reflections]")

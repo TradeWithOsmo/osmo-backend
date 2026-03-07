@@ -241,6 +241,23 @@ class OpenRouterService:
                             self._models_cache = models_list
                             self._last_fetch = current_time
 
+        has_alibaba = any(m.get("id", "").startswith("alibaba/") for m in models_list)
+        if not has_alibaba:
+            models_list.insert(0, {
+                "id": "alibaba/qwen-plus",
+                "name": "Qwen Plus",
+                "input_cost": 0, "output_cost": 0, "includes_markup": False,
+                "context_length": 131000, "description": "Alibaba Flagship",
+                "capabilities": {"tool_use": True, "reasoning": False, "rag": True}
+            })
+            models_list.insert(1, {
+                "id": "alibaba/qwq-plus",
+                "name": "QwQ Plus",
+                "input_cost": 0, "output_cost": 0, "includes_markup": False,
+                "context_length": 131000, "description": "Alibaba Reasoning",
+                "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
+            })
+
         if search:
             q = search.lower()
             return [

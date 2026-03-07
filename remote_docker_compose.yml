@@ -1,0 +1,164 @@
+version: "3.8"
+
+services:
+  # ── Icon repos init ──────────────────────────────────────────────────────────
+  # Clones GitHub icon repos into a named volume on first run (idempotent).
+  # Repos: nvstly/icons (stocks), Cryptofonts/cryptofont, 0xa3k5/web3icons
+  # To update repos: docker compose run --rm icon-repos-init git -C /repos/<name> pull
+  icon-repos-init:
+    image: alpine/git
+    container_name: osmo-icon-repos-init
+    volumes:
+      - icon_repos:/repos
+    command: >
+      sh -c "
+      echo '[icon-repos] Checking repos...' &&
+      if [ ! -d /repos/nvstly/.git ]; then
+        echo '[icon-repos] Cloning nvstly/icons (stocks/RWA)...' &&
+        git clone --depth 1 --filter=blob:none --sparse https://github.com/nvstly/icons.git /repos/nvstly &&
+        git -C /repos/nvstly sparse-checkout set ticker_icons;
+      fi &&
+      if [ ! -d /repos/cryptofont/.git ]; then
+        echo '[icon-repos] Cloning Cryptofonts/cryptofont (crypto SVGs)...' &&
+        git clone --depth 1 --filter=blob:none --sparse https://github.com/Cryptofonts/cryptofont.git /repos/cryptofont &&
+        git -C /repos/cryptofont sparse-checkout set SVG;
+      fi &&
+      if [ ! -d /repos/web3icons/.git ]; then
+        echo '[icon-repos] Cloning 0xa3k5/web3icons (colored crypto SVGs)...' &&
+        git clone --depth 1 --filter=blob:none --sparse https://github.com/0xa3k5/web3icons.git /repos/web3icons &&
+        git -C /repos/web3icons sparse-checkout set raw-svgs/tokens;
+      fi &&
+      echo '[icon-repos] All repos ready.'
+      "
+    restart: "no"
+    networks:
+      - osmo-network
+
+  backend:
+    build:
+      context: ./websocket
+      dockerfile: Dockerfile
+    container_name: osmo-backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./websocket:/app
+      - ./connectors:/app/connectors
+      - ./analysis:/app/analysis
+      - ./agent:/app/agent
+      - ./contracts:/app/contracts
+      - icon_repos:/app/icon-repos:ro
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DOCKER_MODE=true
+      - CONNECTORS_API_URL=http://backend:8000/api/connectors
+      - SAVE_TO_DB=${SAVE_TO_DB:-False}
+      - DATABASE_URL=postgresql://osmo_user:osmo_password@db:5432/osmo_db
+      - REDIS_URL=redis://osmo-redis:6379/0
+      - FORCE_EXECUTION_MODE=${FORCE_EXECUTION_MODE:-auto}
+      - AI_AGENT_API_URL=http://osmo-agent:8000
+      - QDRANT_HOST=osmo-qdrant
+      - QDRANT_PORT=6333
+      - SYMBOL_REGISTRY_PATH=/app/contracts/config/symbol_registry.json
+      - MEM0_API_URL=http://osmo-mem0:8000
+    depends_on:
+      - icon-repos-init
+      - db
+      - redis
+      - qdrant
+    restart: unless-stopped
+    networks:
+      - osmo-network
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: osmo-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: osmo-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+  db:
+    image: postgres:15-alpine
+    container_name: osmo-db
+    environment:
+      POSTGRES_USER: osmo_user
+      POSTGRES_PASSWORD: osmo_password
+      POSTGRES_DB: osmo_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "osmo_db", "-U", "osmo_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - osmo-network
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: osmo-uptime-kuma
+    ports:
+      - "3002:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    restart: unless-stopped
+    networks:
+      - osmo-network
+
+  uptime-kuma-bootstrap:
+    image: python:3.11-slim
+    container_name: osmo-uptime-kuma-bootstrap
+    working_dir: /bootstrap
+    volumes:
+      - ./websocket/uptime:/bootstrap
+    environment:
+      - UPTIME_KUMA_URL=http://uptime-kuma:3001
+      - UPTIME_KUMA_USERNAME=${UPTIME_KUMA_USERNAME:-admin}
+      - UPTIME_KUMA_PASSWORD=${UPTIME_KUMA_PASSWORD:-change-me-now}
+      - UPTIME_STATUS_PAGE_SLUG=${UPTIME_STATUS_PAGE_SLUG:-osmo-status}
+      - UPTIME_STATUS_PAGE_TITLE=${UPTIME_STATUS_PAGE_TITLE:-Osmo Status}
+      - UPTIME_STATUS_PAGE_DESCRIPTION=${UPTIME_STATUS_PAGE_DESCRIPTION:-Real-time status for Osmo backend services}
+    command: >
+      sh -c "pip install --no-cache-dir uptime-kuma-api==1.2.1 &&
+      python /bootstrap/bootstrap_kuma.py"
+    depends_on:
+      - uptime-kuma
+      - backend
+    restart: "no"
+    networks:
+      - osmo-network
+
+volumes:
+  postgres_data:
+  uptime_kuma_data:
+  qdrant_storage:
+  icon_repos:
+    # On a fresh VPS: volume is auto-created by icon-repos-init service.
+    # If pre-existing (migrated from host): set external: true to suppress warnings.
+    # external: true
+
+networks:
+  osmo-network:
+    name: osmo-network
+    driver: bridge

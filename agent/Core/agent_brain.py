@@ -402,10 +402,9 @@ class AgentBrain:
         self._tool_callable_cache: Dict[str, Callable[..., Any]] = {}
 
         self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        if not self.api_key:
-            raise ValueError(
-                "Missing required environment variable: OPENROUTER_API_KEY"
-            )
+        if not self.api_key and not os.getenv("ALIBABA_API_KEY", "").strip():
+            # We don't raise immediately here anymore but warn, because LLMFactory handles provider-specific checks later.
+            print("Warning: Neither OPENROUTER_API_KEY nor ALIBABA_API_KEY is set. This might cause issues.")
 
         if _RuntimeLLMFactory is not None:
             try:
@@ -1325,6 +1324,48 @@ class AgentBrain:
         except Exception as exc:
             raise RuntimeError(f"Reflexion runtime failed: {exc}") from exc
 
+    @staticmethod
+    def _extract_thought_title(text: str, max_len: int = 72) -> str:
+        """
+        Pull a short, human-readable title from the first sentence of an AI
+        reasoning block.  Falls back gracefully when the text is empty or short.
+        """
+        import re
+        raw = str(text or "").strip()
+        # Strip leading XML-ish tags the model sometimes emits
+        raw = re.sub(r'^<\/?(?:thinking|thought|analysis|scratchpad|internal)[^>]*>', '', raw, flags=re.IGNORECASE).strip()
+        # Strip markdown formatting at the start
+        raw = re.sub(r'^[\s*_#>-]+', '', raw).strip()
+
+        if not raw:
+            return "Thinking"
+
+        # Try: grab the very first non-empty line
+        first_line = next((l.strip() for l in raw.split("\n") if l.strip()), "")
+
+        # If the first line is suspiciously long, truncate at the first sentence break
+        for sep in ('. ', '! ', '? ', ': ', '\n'):
+            idx = first_line.find(sep)
+            if 0 < idx < max_len:
+                first_line = first_line[:idx].strip()
+                break
+
+        # Final hard truncation
+        if len(first_line) > max_len:
+            first_line = first_line[:max_len].rstrip() + "…"
+
+        # Strip markdown formatting (**, *, _, `, [link](url), ##)
+        first_line = re.sub(r'\*\*(.+?)\*\*', r'\1', first_line)   # **bold**
+        first_line = re.sub(r'\*(.+?)\*', r'\1', first_line)        # *italic*
+        first_line = re.sub(r'__(.+?)__', r'\1', first_line)        # __underline__
+        first_line = re.sub(r'_(.+?)_', r'\1', first_line)          # _italic_
+        first_line = re.sub(r'`(.+?)`', r'\1', first_line)          # `code`
+        first_line = re.sub(r'\[(.+?)\]\(.*?\)', r'\1', first_line) # [link](url)
+        first_line = re.sub(r'^#{1,6}\s+', '', first_line)          # ## heading
+        first_line = first_line.strip()
+
+        return first_line or "Thinking"
+
     async def stream(
         self,
         user_message: str,
@@ -1367,47 +1408,44 @@ class AgentBrain:
             if event_type == "thinking":
                 # Stream thinking/reasoning text as thoughts_delta
                 yield {"type": "thoughts_delta", "thought": event_data}
-                # Also collect for final thoughts list
-                collected_thoughts.append(
-                    {
-                        "type": "reasoning",
-                        "title": "Reasoning",
-                        "content": event_data,
-                        "status": "running",
-                    }
-                )
 
-            elif event_type == "tool_call":
-                # Stream tool calls as thoughts
-                yield {"type": "thoughts_delta", "thought": event_data}
-                collected_thoughts.append(
-                    {
-                        "type": "tool_call",
-                        "title": "Tool Call",
-                        "content": event_data,
-                        "status": "running",
-                    }
-                )
+                # Merge consecutive thinking events into the SAME step.
+                # Only start a new step when a tool call happened since the
+                # last thinking block (signalled by _tool_break flag).
+                last = collected_thoughts[-1] if collected_thoughts else None
+                if (
+                    last is not None
+                    and last.get("type") == "reasoning"
+                    and not last.get("_tool_break")
+                ):
+                    # Same chain of thought — append to existing step
+                    sep = "\n\n" if last["content"].strip() else ""
+                    last["content"] = last["content"] + sep + event_data
+                else:
+                    # Genuine new thought — after a tool call or first event
+                    dynamic_title = self._extract_thought_title(event_data)
+                    collected_thoughts.append(
+                        {
+                            "type": "reasoning",
+                            "title": dynamic_title,
+                            "content": event_data,
+                            "status": "running",
+                        }
+                    )
 
-            elif event_type == "tool_result":
-                # Stream tool results as thoughts
-                yield {"type": "thoughts_delta", "thought": event_data}
-                collected_thoughts.append(
-                    {
-                        "type": "tool_result",
-                        "title": "Tool Result",
-                        "content": event_data,
-                        "status": "done",
-                    }
-                )
+            elif event_type in ("tool_call", "tool_result"):
+                # Hidden from UI — but a tool_call marks a chain break so the
+                # next thinking event will open a fresh step
+                if event_type == "tool_call" and collected_thoughts:
+                    collected_thoughts[-1]["_tool_break"] = True
 
             elif event_type == "reflection":
                 # Stream reflection as thoughts
                 yield {"type": "thoughts_delta", "thought": event_data}
                 collected_thoughts.append(
                     {
-                        "type": "reflection",
-                        "title": "Reflection",
+                        "type": "reasoning",
+                        "title": "Strategy",
                         "content": event_data,
                         "status": "done",
                     }

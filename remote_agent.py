@@ -646,8 +646,10 @@ async def list_models(
 
     all_models = await openrouter_service.get_models()
 
-    # Alibaba models are now injected inside openrouter_service
-    return {"models": all_models}
+    # Inject dynamic specialized models
+    specialized = get_available_models()
+
+    return {"models": specialized + all_models}
 
 
 @router.post("/chat")
