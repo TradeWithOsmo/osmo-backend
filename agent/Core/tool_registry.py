@@ -191,19 +191,6 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
                 "additionalProperties": True,
             },
         },
-        "get_technical_analysis": {
-            "description": "Run technical analysis summary for a symbol.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string"},
-                    "timeframe": {"type": "string"},
-                    "asset_type": {"type": "string"},
-                },
-                "required": ["symbol"],
-                "additionalProperties": True,
-            },
-        },
         "research_market": {
             "description": "Aggregate market research for a symbol.",
         },
@@ -235,9 +222,6 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
                 "required": ["symbol"],
                 "additionalProperties": True,
             },
-        },
-        "search_knowledge_base": {
-            "description": "Semantic search on internal knowledge base.",
         },
         "add_memory": {
             "description": "Persist user memory snippet.",
@@ -313,7 +297,7 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
             },
         },
         "setup_trade": {
-            "description": "Draw trade setup on TradingView chart.",
+            "description": "Draw trade setup on TradingView chart AND execute the trade if auto execution is enabled.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -327,24 +311,42 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
                     "invalidation": {"type": "number"},
                     "gp": {"type": "number"},
                     "gl": {"type": "number"},
+                    "size_pct": {
+                        "type": "number",
+                        "description": "Fraction of free balance to use for order sizing (0.0 to 1.0). Defaults to 0.25 (25%)."
+                    },
+                    "amount_usd": {
+                        "type": "number",
+                        "description": "Exact USD amount for order sizing. Focus on using size_pct instead when possible."
+                    },
+                    "leverage": {
+                        "type": "integer",
+                        "description": "Leverage multiplier. Defaults to 1."
+                    },
                 },
                 "required": ["symbol", "side", "entry", "sl", "tp"],
                 "additionalProperties": True,
             },
         },
         "draw": {
-            "description": "Draw an object on TradingView chart. Supports: horizontal_line, support, resistance, trend_line, ray, rectangle, fib_retracement, etc. For horizontal lines (support/resistance), only price is needed: [{\"price\": 67000}]. For trend lines, provide time+price: [{\"time\": 1234567890, \"price\": 67000}]. Use 'id' to tag drawings for later updates.",
+            "description": "Draw an object on TradingView chart. Supports multiple tools: horizontal_line, trend_line, ray, fib_retracement, parallel_channel, rectangle, circle, and more. For horizontal lines (support/resistance), only price is needed. For EVERY other tool (trend lines, Fibonacci, channels), you MUST provide both 'time' and 'price' for each anchor point. Use get_high_low_levels to find the timestamps for S/R before drawing Fibonacci. Use 'id' to tag drawings for future updates.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string"},
-                    "tool": {"type": "string", "description": "Tool type: horizontal_line, support, resistance, trend_line, ray, rectangle, etc."},
-                    "points": {"type": "array", "description": "Points array. For horizontal_line: [{\"price\": 67000}]. For trend_line: [{\"time\": ts, \"price\": p}, ...]"},
-                    "style": {"type": "object"},
-                    "text": {"type": "string"},
-                    "id": {"type": "string", "description": "Custom ID for updates, e.g., 'support', 'resistance', 'trailing_sl'"},
-                    "line_width": {"type": "number", "description": "Legacy alias to style.linewidth."},
-                    "fill": {"description": "Legacy alias to style.filled/fillColor."},
+                    "tool": {
+                        "type": "string",
+                        "description": "Tool type: horizontal_line, trend_line, ray, fib_retracement, fib_trend_ext, parallel_channel, rectangle, circle, etc.",
+                    },
+                    "points": {
+                        "type": "array",
+                        "description": "Anchor points. Horizontal line: [{\"price\": 67000}]. Trend line/Fibonacci: [{\"time\": 1704067200, \"price\": 42000}, {\"time\": 1704153600, \"price\": 48000}].",
+                    },
+                    "style": {"type": "object", "description": "Optional style overrides (color, linewidth, etc)."},
+                    "text": {"type": "string", "description": "Optional label text."},
+                    "id": {"type": "string", "description": "Custom tag to track/update this drawing (e.g., 'fib_level', 'support')."},
+                    "line_width": {"type": "number", "description": "Legacy alias for style.linewidth."},
+                    "fill": {"description": "Legacy alias for style.filled/fillColor."},
                 },
                 "required": ["symbol", "tool", "points"],
                 "additionalProperties": True,
@@ -360,7 +362,13 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
             },
         },
         "place_order": {
-            "description": "Place a trading order (policy-gated).",
+            "description": (
+                "Place a trading order. Optimized for MARKET orders. "
+                "IMPORTANT: When placing an order, ALWAYS prefer 'size_pct' over 'amount_usd'. "
+                "size_pct automatically uses a fraction of the user's free balance (0.25=25%, 0.5=50%, 0.75=75%, 1.0=100%). "
+                "Only use 'amount_usd' if the user explicitly specifies a dollar amount. "
+                "Limit and Stop orders are disabled by default. Always explain the risk before execution."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -369,19 +377,28 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
                         "type": "string",
                         "description": "Order side: buy/long or sell/short.",
                     },
+                    "size_pct": {
+                        "type": "number",
+                        "description": (
+                            "PREFERRED. Fraction of user's free balance to use. "
+                            "0.25 = 25%, 0.5 = 50%, 0.75 = 75%, 1.0 = 100%. "
+                            "The system auto-fetches the user's available free_collateral_usd and computes amount_usd. "
+                            "Use this instead of amount_usd whenever user says 'use 50% of my balance' or similar."
+                        ),
+                    },
                     "amount_usd": {
                         "type": "number",
-                        "description": "Notional amount in USD.",
+                        "description": "Exact notional amount in USD. Use only if user specifies a specific dollar amount. Prefer size_pct instead.",
                     },
-                    "leverage": {"type": "integer", "description": "Leverage multiplier."},
+                    "leverage": {"type": "integer", "description": "Leverage multiplier (e.g., 10, 20)."},
                     "order_type": {
                         "type": "string",
-                        "description": "market, limit, stop_market, or stop_limit.",
+                        "description": "Defaults to 'market'. Limit/Stop modes are currently restricted.",
                     },
-                    "price": {"type": "number", "description": "Limit price for limit orders."},
+                    "price": {"type": "number", "description": "Limit price (ignored for market orders)."},
                     "stop_price": {
                         "type": "number",
-                        "description": "Trigger price for stop orders.",
+                        "description": "Trigger price (ignored for market orders)."
                     },
                     "tp": {"type": "number", "description": "Take-profit price."},
                     "sl": {"type": "number", "description": "Stop-loss price."},
@@ -414,7 +431,7 @@ def _explicit_tool_specs() -> Dict[str, ToolSpec]:
                     "time_in_force": {"type": "string"},
                     "trigger_condition": {"type": "string"},
                 },
-                "required": ["symbol", "side", "amount_usd"],
+                "required": ["symbol", "side"],
                 "additionalProperties": True,
             },
         },

@@ -26,17 +26,36 @@ class LedgerService:
         account = result.scalar_one_or_none()
         if not account:
             account = LedgerAccount(address=user_address.lower())
-            
+
             force_mode = os.getenv("FORCE_EXECUTION_MODE", "auto").lower().strip()
             if force_mode == "simulation":
-                account.balance = INITIAL_SIMULATION_BALANCE
-                account.available_balance = INITIAL_SIMULATION_BALANCE
+                # Seed initial balance from on-chain vault balance to mirror real balance.
+                initial_balance = await self._fetch_vault_balance(user_address)
+                if initial_balance <= 0:
+                    initial_balance = INITIAL_SIMULATION_BALANCE
+                account.balance = initial_balance
+                account.available_balance = initial_balance
                 account.locked_margin = 0
-                print(f"[Ledger] Created simulation account for {user_address} with initial balance {INITIAL_SIMULATION_BALANCE}")
-            
+                print(f"[Ledger] Created simulation account for {user_address} with initial balance {initial_balance}")
+
             session.add(account)
             await session.flush()
         return account
+
+    async def _fetch_vault_balance(self, user_address: str) -> float:
+        """Fetch user's on-chain TradingVault balance for simulation seed."""
+        try:
+            from connectors.init_connectors import connector_registry
+            onchain = connector_registry.get_connector("onchain")
+            if onchain and hasattr(onchain, "get_user_balances"):
+                import asyncio
+                balances = await asyncio.wait_for(
+                    onchain.get_user_balances(user_address), timeout=3.0
+                )
+                return float(balances.get("account_value", 0) or 0)
+        except Exception as e:
+            print(f"[Ledger] Could not fetch vault balance for {user_address}: {e}")
+        return 0.0
 
     async def _notify_user(
         self,
@@ -291,7 +310,7 @@ class LedgerService:
                     gp=float(gp) if gp is not None else None,
                     gl=float(gl) if gl is not None else None,
                     status="OPEN",
-                    position_id=position_id,
+                    position_id=position_id or order_id,
                 )
                 session.add(position)
 
@@ -326,6 +345,9 @@ class LedgerService:
                         notional_usd=size_token * entry_price,  # Calculated notional
                         status="FILLED",
                         created_at=datetime.utcnow(),
+                        filled_at=datetime.utcnow(),
+                        filled_size=size_token,
+                        avg_fill_price=entry_price,
                     )
                     session.add(order)
 

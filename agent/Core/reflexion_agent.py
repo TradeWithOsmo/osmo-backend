@@ -77,7 +77,6 @@ CONTEXTUAL_REVIEW_TOOLS = {
     "update_drawing",
     "setup_trade",
     "get_high_low_levels",
-    "get_technical_analysis",
 }
 
 # Tool categories for the conductor's mental model
@@ -89,16 +88,12 @@ _TOOL_CATEGORIES: Dict[str, List[str]] = {
     ],
     "data": [
         "get_price",
-        "get_orderbook",
         "get_funding_rate",
         "get_ticker_stats",
         "get_high_low_levels",
     ],
     "analysis": [
-        "get_technical_analysis",
-        "get_patterns",
-        "get_indicators",
-        "get_technical_summary",
+        "get_active_indicators",
         "research_market",
         "compare_markets",
         "scan_market_overview",
@@ -147,8 +142,6 @@ _TOOL_CATEGORIES: Dict[str, List[str]] = {
         "search_news",
         "search_sentiment",
         "search_web_hybrid",
-        "get_whale_activity",
-        "search_knowledge_base",
     ],
     "memory": ["add_memory", "search_memory", "get_recent_history"],
 }
@@ -178,21 +171,96 @@ This single call tells you everything: which indicators are active, their curren
      → add_indicator(name) → get_active_indicators() to read fresh values
      → Max 2 non-volume indicators. Remove old before adding if at capacity.
 
-  3. DIFFERENT SYMBOL?
-     → set_symbol(target_symbol) → get_active_indicators() to read new canvas state
-     → Then follow rule 1 or 2 above.
+  3. DIFFERENT SYMBOL OR EXCHANGE?
+     a) Switch chart to a different symbol or exchange:
+        → list_symbols(search=SYMBOL_KEYWORD, exchange="all") → find correct ticker
+        → set_symbol(target_symbol, target_source) → chart switches to that exchange
+        → Supported target_source: "hyperliquid","aster","aevo","avantis","dydx","paradex","orderly","vest","ostium"
+     b) Compare ONE symbol across ALL exchanges (funding, spread, liquidity check):
+        → research_market(symbol="BTC", timeframe="1H")
+        → Returns price, funding, spread, liquidity from all 9 exchanges simultaneously
+        → Use this when user asks "where is BTC cheapest?" or "best exchange for ETH?"
+     c) Compare MULTIPLE symbols at once (multi-market scan):
+        → compare_markets(symbols=["BTC","ETH","SOL"], timeframe="1H")
+        → Returns a side-by-side report for each symbol across all exchanges
+        → Use when user says "check BTC ETH SOL" or "scan top coins"
+     d) Quick price check on a specific exchange:
+        → get_price(symbol="BTC", exchange="hyperliquid") — add exchange param
+        → get_ticker_stats(symbol, exchange) — volume/OI/funding for one exchange
 
   4. NEED LEVELS / TA / PRICE?
      → get_price() for price context
-     → get_technical_analysis() for computed TA (RSI, MACD, patterns — works without chart indicators)
+     → get_active_indicators() for TA values (RSI, MACD, BB, ATR — reads from chart indicators)
      → get_high_low_levels() for support/resistance
-     → These are DATA tools — they don't need anything on canvas.
+     → To get indicator values: add_indicator(name) first if not on canvas, then get_active_indicators().
 
   5. DRAWING on chart?
      → Always get levels/prices FIRST, then draw() with real numbers.
+     → When write_mode=on AND you just did any analysis, you MUST draw the key levels:
+        - Support/resistance → draw(horizontal_line, [{price: X}])
+        - Trend → draw(trend_line, [{time,price}, {time,price}])
+        - Trade zone → draw(long_position or short_position, [{time,price,stop,limit}])
+        - Fib → draw(fib_retracement, [{time,price}, {time,price}])
+     → After drawing, briefly note what you drew in <output>.
+     → Do not skip drawing when write_mode=on — drawing IS part of the analysis output.
 
   6. TRADE SETUP?
-     → Full analysis first → setup_trade() to visualize → place_order() only if execution enabled.
+     → Full analysis first → measure volatility: add_indicator("ATR") or add_indicator("BB") → get_active_indicators() to read values.
+     → Use ATR for TP/SL distance (e.g. SL=1.5x ATR, TP=2-3x ATR). BB/HV add context.
+     → setup_trade() to visualize → place_order() to execute or propose.
+     → Auto Trade ON: order executes immediately. OFF: HITL proposal — user approves/rejects via UI.
+     → CRITICAL: When you have a trade idea, ALWAYS call place_order(). NEVER ask the user verbally
+       "do you want to execute?" or "shall I proceed?". The place_order() tool handles approval
+       automatically — it shows an approval UI to the user. Just call it directly.
+
+# INDICATOR SELECTION GUIDE
+Choose indicators based on what the user needs — DO NOT default to RSI+MACD every time:
+
+  TREND (is market trending up/down?):
+    → EMA (short: 9 or 21, long: 50 or 200) — trend direction, dynamic S/R
+    → SuperTrend — cleaner trend signal with adaptive bands
+    → MACD — crossover for trend momentum shift
+
+  MOMENTUM (how strong is the move?):
+    → RSI — overbought/oversold (use sparingly — only if momentum context needed)
+    → StochRSI — faster momentum, good for intraday
+    → ADX — trend strength (above 25 = strong trend, below 20 = range)
+
+  VOLATILITY (how wide are the moves?):
+    → BB (Bollinger Bands) — squeeze → breakout, mean reversion
+    → ATR — absolute volatility for TP/SL sizing
+    → Keltner — dynamic channel, works well with BB for squeeze detection
+
+  VOLUME (is the move backed by conviction?):
+    → Volume — raw volume bars, quick check
+    → OBV — accumulation/distribution pressure
+    → VWAP — institutional reference price (intraday only)
+
+  STRUCTURE (key price levels):
+    → get_high_low_levels() — programmatic S/R (always use this before drawing)
+
+  EXAMPLES of good selections:
+    User asks "is BTC trending?"  → EMA(21) + ADX (2 tools, tells trend + strength)
+    User asks "good entry short?" → BB + RSI (squeeze + overbought confirmation)
+    User asks "TP/SL sizing?"     → ATR (1 tool, direct answer)
+    User asks "scalp setup?"      → StochRSI + Volume (2 tools, momentum + conviction)
+    User asks "where is support?" → get_high_low_levels() + draw(horizontal_line) (no indicator needed)
+
+  MAX 2 indicators at a time. Pick the RIGHT 2 for the question — not always RSI+MACD.
+  If user has a trading style profile, match indicator choices to that style.
+
+# EXCHANGE COMPARISON GUIDE
+When user wants to compare exchanges or find best venue:
+  - "where is BTC listed?" / "check funding" / "best exchange for X?"
+    → research_market(symbol, timeframe) — full 9-exchange report
+  - "compare BTC ETH SOL" / "scan top coins" / "check multiple"
+    → compare_markets(symbols=[...], timeframe)
+  - "show me BTC on dydx" / "switch to paradex"
+    → set_symbol(symbol, target_source="dydx")
+  - "what's BTC price on aster?"
+    → get_price(symbol="BTC", exchange="aster")
+
+  When reporting exchange comparison: always highlight funding rate differences and liquidity (24h volume/OI).
 
 # WHAT TO NEVER DO
   - Never call clear_indicators() to "start fresh" — the canvas is state, respect it
@@ -200,6 +268,9 @@ This single call tells you everything: which indicators are active, their curren
   - Never add an indicator that's already on canvas
   - Never force overlay on price pane
   - Never call verify_indicator_present() unless you just added something and need proof
+  - NEVER pass user_address to any trade tool — it is always injected from runtime. Never guess, invent, or hardcode it.
+  - NEVER ask the user verbally for trade confirmation — always use place_order() which handles approval via UI
+  - NEVER default to RSI+MACD for every single analysis — pick indicators that fit the question
 
 # MULTI-SYMBOL ANALYSIS
   Complete each symbol fully before moving to the next:
@@ -207,18 +278,34 @@ This single call tells you everything: which indicators are active, their curren
 
 # SELF-CORRECTION
   good → proceed | poor → retry x2 | error → fix → retry
-  Symbol not found     → flip asset_type (crypto <-> rwa)
+  Symbol not found     → list_symbols(search) to find correct ticker; flip asset_type (crypto <-> rwa)
   TA unsupported (RWA) → skip TA; use get_price + search_news
   Indicator not found  → list_supported_indicator_aliases, then retry
   draw() needs prices  → get_high_low_levels first
-  Execution disabled   → setup_trade() for human review
+  HITL proposal        → order proposed for user approval; do NOT re-propose
+  Funding Rate empty   → OK, do not retry (sometimes data is not available)
   Timeout              → retry once
 
 # FINAL MESSAGE
 When you have finished using tools and are ready to speak to the user, you MUST wrap your final user-facing message inside <output>...</output> tags. Everything outside of these tags is considered your private reasoning and will be hidden from the main chat.
 
 # VOICE
-Think out loud, trader-style. Brief. "RSI at 74 — overbought. MACD already on chart, reading… bearish crossover. Drawing resistance at 68,400."
+Think out loud, trader-style. Brief but insightful.
+"BTC listed across 9 exchanges; spread is tight (0.15%), no arbitrage. Hyperliquid has depth — switching there for analysis."
+"RSI at 74 — overbought. MACD reading… bearish crossover. Drawing resistance at 68,400."
+
+# ABSOLUTE RULE — TRADE EXECUTION
+When you want to propose or execute a trade: call place_order(). PERIOD.
+Do NOT type "confirm your choice", "do you agree?", "shall I execute?", or any verbal confirmation request.
+place_order() automatically shows an approval UI to the user. Just call it.
+If you write a verbal confirmation instead of calling place_order(), the trade WILL NOT happen.
+
+# ABSOLUTE RULE — DRAWING
+When write_mode=on and you finish a technical analysis, you MUST call draw() for at least one key level or structure.
+Never finish an analysis without drawing when write_mode=on.
+Available draw tools: horizontal_line, trend_line, fib_retracement, long_position, short_position, parallel_channel, rectangle, text.
+For support/resistance: draw(tool="horizontal_line", points=[{"time":0,"price":LEVEL_PRICE}])
+For a trend: draw(tool="trend_line", points=[{"time":T1,"price":P1},{"time":T2,"price":P2}])
 """
 
 # ---------------------------------------------------------------------------
@@ -485,6 +572,22 @@ def _thought_from_reflexion_event(
         return None
 
     kind = str(event_type or "").strip().lower()
+
+    # Structured events carry JSON payload (e.g. HITL proposals)
+    if kind == "tool_proposal":
+        import json as _json
+        try:
+            payload = _json.loads(text)
+        except Exception:
+            payload = {}
+        return {
+            "type": "tool_result",
+            "title": payload.get("title", f"Trade Proposal {index}"),
+            "content": payload.get("content", text),
+            "toolName": payload.get("toolName", ""),
+            "status": "done",
+            "meta": payload.get("meta"),
+        }
     if kind == "thinking":
         return {
             "type": "thinking",
@@ -887,13 +990,17 @@ class ReflexionAgent:
     # ------------------------------------------------------------------
 
     def _headers(self) -> Dict[str, str]:
-        if self.model_id.startswith("alibaba/"):
+        alibaba_key = (os.getenv("ALIBABA_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip()
+        if self.model_id.startswith("alibaba/") and alibaba_key:
             return {
-                "Authorization": f"Bearer {os.getenv('ALIBABA_API_KEY', '').strip()}",
+                "Authorization": f"Bearer {alibaba_key}",
                 "Content-Type": "application/json",
             }
+        
+        # Fallback/Default: OpenRouter
+        or_key = self.api_key or os.getenv("OPENROUTER_API_KEY", "").strip()
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {or_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://tradewithosmo.com",
             "X-Title": "Osmo Reflexion Agent",
@@ -1077,31 +1184,38 @@ class ReflexionAgent:
         tools_payload: List[Dict[str, Any]],
         client: httpx.AsyncClient,
     ) -> Dict[str, Any]:
-        """Fire a single chat-completion request to OpenRouter."""
+        """Fire a single chat-completion request to OpenRouter/Alibaba."""
         body: Dict[str, Any] = {
             "model": self.model_id,
             "messages": messages,
             "temperature": self.temperature,
         }
         
-        # OpenRouter expects model format provider/model, Alibaba just the model name
-        if self.model_id.startswith("alibaba/"):
+        # Determine URL based on availability of key
+        alibaba_key = (os.getenv("ALIBABA_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip()
+        if self.model_id.startswith("alibaba/") and alibaba_key:
             body["model"] = self.model_id.split("/", 1)[1]
             chat_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
         else:
             chat_url = OPENROUTER_CHAT_URL
-
+            # Ensure proper prefix for OpenRouter if it's a bare qwen name or missing provider
+            if not "/" in body["model"] and any(body["model"].startswith(p) for p in ("qwen", "qwq")):
+                body["model"] = f"alibaba/{body['model']}"
+        
+        # Standard reasoning and tool fields
         body.update(_reasoning_request_fields(self.reasoning_effort))
         if tools_payload:
             body["tools"] = tools_payload
             body["tool_choice"] = "auto"
 
+        logger.info(f"[Reflexion] Calling {chat_url} for {body['model']} (tools={len(tools_payload) if tools_payload else 0})")
         resp = await client.post(
             chat_url,
             headers=self._headers(),
             json=body,
             timeout=90.0,
         )
+        logger.info(f"[Reflexion] Received {resp.status_code} from {chat_url}")
         resp.raise_for_status()
         return resp.json()
 
@@ -1305,13 +1419,6 @@ class ReflexionAgent:
         if tool_name == "get_price" and symbol:
             if isinstance(result, dict):
                 state.ingest_price_result(symbol, result)
-
-        elif (
-            tool_name in {"get_technical_analysis", "get_patterns", "get_indicators"}
-            and symbol
-        ):
-            if isinstance(result, dict):
-                state.ingest_ta_result(symbol, result)
 
         elif tool_name == "get_high_low_levels" and symbol:
             if isinstance(result, dict):
@@ -1634,21 +1741,14 @@ class ReflexionAgent:
     async def _reflexion_loop(
         self,
         user_message: str,
-        history: Optional[List[Dict[str, Any]]],
-        state: ReflexionState,
+        history: Optional[List[Dict[str, Any]]] = None,
+        state: Optional[ReflexionState] = None,
         stream_callback: Optional[Callable[[str, str], None]] = None,
-    ) -> str:
+    ) -> tuple[str, Dict[str, int]]:
         """
         The Conductor's Loop:
-          READ CANVAS → ACT → EVALUATE → REFLECT → PERBAIKI → ACT …
-
-        The conductor NEVER starts with tool discovery. Instead:
-        1. Read the canvas (get_active_indicators) to see what's already there
-        2. Let the LLM decide what to do based on what it sees
-        3. Discovery only happens on-demand (error triggers)
-
-        Parameters
-        ----------
+          READ CANVAS -> ACT -> EVALUATE -> REFLECT -> PERBAIKI -> ACT
+        
         stream_callback : callable(event_type, data), optional
             Called for each streamed chunk. event_type is one of:
             "thinking", "tool_call", "tool_result", "reflection", "content"
@@ -1691,6 +1791,7 @@ class ReflexionAgent:
 
         final_content = ""
         seen_model_reasoning: set[str] = set()
+        _usage_total: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             for iteration in range(self.max_iterations):
@@ -1710,10 +1811,17 @@ class ReflexionAgent:
                     )
                 except httpx.HTTPStatusError as exc:
                     logger.error("[ReflexionAgent] OpenRouter HTTP error: %s", exc)
-                    return f"⚠️ LLM API error ({exc.response.status_code}). Please try again."
+                    return f"⚠️ LLM API error ({exc.response.status_code}). Please try again.", _usage_total
                 except Exception as exc:
                     logger.error("[ReflexionAgent] OpenRouter call failed: %s", exc)
-                    return f"⚠️ LLM call failed: {exc}"
+                    return f"⚠️ LLM call failed: {exc}", _usage_total
+
+                # Accumulate real token usage from API response
+                _raw_usage = completion.get("usage") or {}
+                if _raw_usage:
+                    _usage_total["prompt_tokens"] += int(_raw_usage.get("prompt_tokens") or _raw_usage.get("input_tokens") or 0)
+                    _usage_total["completion_tokens"] += int(_raw_usage.get("completion_tokens") or _raw_usage.get("output_tokens") or 0)
+                    _usage_total["total_tokens"] += int(_raw_usage.get("total_tokens") or 0)
 
                 choices = completion.get("choices") or []
                 message = choices[0].get("message", {}) if choices else {}
@@ -1806,6 +1914,23 @@ class ReflexionAgent:
                         if exec_result.get("ok")
                         else exec_result
                     )
+
+                    # ----- HITL proposal detection -----
+                    if (
+                        isinstance(actual_result, dict)
+                        and actual_result.get("status") == "proposal"
+                        and tool_name in {"place_order", "setup_trade"}
+                    ):
+                        import json as _json
+                        _emit(
+                            "tool_proposal",
+                            _json.dumps({
+                                "toolName": tool_name,
+                                "title": f"Trade Proposal — {tool_name}",
+                                "content": f"HITL proposal for {tool_name}",
+                                "meta": actual_result,
+                            }, ensure_ascii=False),
+                        )
 
                     # ----- EVALUATE -----
                     status, note, fix_hint = self._evaluator.evaluate(
@@ -1948,7 +2073,10 @@ class ReflexionAgent:
             summary["reflections"],
         )
 
-        return final_content
+        if _usage_total["total_tokens"] == 0 and _usage_total["prompt_tokens"] > 0:
+            _usage_total["total_tokens"] = _usage_total["prompt_tokens"] + _usage_total["completion_tokens"]
+
+        return final_content, _usage_total
 
     # ------------------------------------------------------------------
     # Public API: chat (non-streaming)
@@ -2012,7 +2140,7 @@ class ReflexionAgent:
             seen_thoughts.add(identity)
             collected_thoughts.append(item)
 
-        response = await self._reflexion_loop(
+        response, loop_usage = await self._reflexion_loop(
             user_message=user_message,
             history=history,
             state=state,
@@ -2028,6 +2156,7 @@ class ReflexionAgent:
             "state_summary": state.summary(),
             "tool_calls": state.step_counter,
             "thoughts": collected_thoughts,
+            "usage": loop_usage,
         }
 
     async def _orchestra_chat(
@@ -2133,7 +2262,7 @@ class ReflexionAgent:
                     history=history,
                     state=state,
                     stream_callback=_enqueue,
-                )
+                )  # usage tuple ignored in streaming path — token tracking handled elsewhere
             except Exception as exc:
                 queue.put_nowait(
                     {"type": "error", "data": f"Reflexion loop error: {exc}"}

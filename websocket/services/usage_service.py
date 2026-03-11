@@ -38,7 +38,7 @@ class UsageService:
             out.append(value)
         return out
 
-    async def log_usage(self, user_address: str, model: str, input_tokens: int, output_tokens: int, cost: float, session_id: Optional[str] = None):
+    async def log_usage(self, user_address: str, model: str, input_tokens: int, output_tokens: int, cost: float, duration_ms: int = 0, session_id: Optional[str] = None):
         """Log an individual AI request and update daily snapshot"""
         user_key = self._normalize_user_address(user_address)
         if not user_key:
@@ -53,6 +53,7 @@ class UsageService:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost=cost,
+                    duration_ms=int(max(0, duration_ms or 0)),
                 )
                 session.add(log)
                 

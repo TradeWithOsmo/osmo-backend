@@ -111,6 +111,15 @@ class OpenRouterService:
                                 if ":" in name:
                                     name = name.split(":", 1)[1].strip()
 
+                                # --- ALIBABA/QWEN ZERO COST FIX ---
+                                if (m_id.startswith("alibaba/") or m_id.startswith("qwq/")) and input_cost <= 0:
+                                    if "plus" in m_id.lower():
+                                        input_cost, output_cost = 0.40, 1.20 # per 1M
+                                    elif "max" in m_id.lower():
+                                        input_cost, output_cost = 1.20, 3.60
+                                    else:
+                                        input_cost, output_cost = 0.10, 0.30
+
                                 context_length = m.get("context_length", 0)
 
                                 # --- AGENTIC FILTERING LOGIC ---
@@ -125,6 +134,8 @@ class OpenRouterService:
                                     "meta/llama-3",
                                     "mistralai/mistral-large",
                                     "qwen/qwen-2.5",
+                                    "alibaba/",
+                                    "qwq/",
                                     "x-ai/",
                                     "moonshot/",
                                     "perplexity/",
@@ -241,21 +252,51 @@ class OpenRouterService:
                             self._models_cache = models_list
                             self._last_fetch = current_time
 
-        has_alibaba = any(m.get("id", "").startswith("alibaba/") for m in models_list)
-        if not has_alibaba:
+        ids_in_list = {m.get("id") for m in models_list}
+        
+        # 1. Qwen Max (Flagship Ultra Intel)
+        if "alibaba/qwen-max" not in ids_in_list:
             models_list.insert(0, {
-                "id": "alibaba/qwen-plus",
-                "name": "Qwen Plus",
-                "input_cost": 0, "output_cost": 0, "includes_markup": False,
-                "context_length": 131000, "description": "Alibaba Flagship",
+                "id": "alibaba/qwen-max",
+                "name": "Qwen Max",
+                "provider": "alibaba",
+                "input_cost": 1.20, "output_cost": 3.60, "includes_markup": True,
+                "context_length": 32000, "description": "Alibaba Flagship Ultra",
                 "capabilities": {"tool_use": True, "reasoning": False, "rag": True}
             })
-            models_list.insert(1, {
+            
+        # 2. Qwen Plus (Strong Balanced)
+        if "alibaba/qwen-plus" not in ids_in_list:
+            idx = 1 if "alibaba/qwen-max" in {m.get("id") for m in models_list} else 0
+            models_list.insert(idx, {
+                "id": "alibaba/qwen-plus",
+                "name": "Qwen Plus",
+                "provider": "alibaba",  # Required for frontend categorization
+                "input_cost": 0.40, "output_cost": 1.20, "includes_markup": True,
+                "context_length": 131000, "description": "Alibaba Flagship Speed",
+                "capabilities": {"tool_use": True, "reasoning": False, "rag": True}
+            })
+            
+        # 3. QwQ Plus (Reasoning Leader)
+        if "alibaba/qwq-plus" not in ids_in_list:
+            models_list.insert(2 if len(models_list) > 2 else 0, {
                 "id": "alibaba/qwq-plus",
                 "name": "QwQ Plus",
-                "input_cost": 0, "output_cost": 0, "includes_markup": False,
-                "context_length": 131000, "description": "Alibaba Reasoning",
+                "provider": "alibaba",
+                "input_cost": 0.80, "output_cost": 3.00, "includes_markup": True,
+                "context_length": 131000, "description": "Alibaba Reasoning Flagship",
                 "capabilities": {"tool_use": True, "reasoning": True, "rag": True}
+            })
+
+        # 4. Qwen Turbo (Fast/Cheap)
+        if "alibaba/qwen-turbo" not in ids_in_list:
+            models_list.append({
+                "id": "alibaba/qwen-turbo",
+                "name": "Qwen Turbo",
+                "provider": "alibaba",
+                "input_cost": 0.10, "output_cost": 0.30, "includes_markup": True,
+                "context_length": 131000, "description": "Alibaba Fast & Lightweight",
+                "capabilities": {"tool_use": True, "reasoning": False, "rag": True}
             })
 
         if search:

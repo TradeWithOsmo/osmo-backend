@@ -552,19 +552,8 @@ async def lifespan(app: FastAPI):
         await init_db()
         logger.info("âœ… Database initialized")
         
-        # CLEAR TABLES FOR DEVELOPMENT (Per user request: store temporarily)
-        try:
-            async with AsyncSessionLocal() as session:
-                await session.execute(text("TRUNCATE TABLE candles RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE trades RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE trade_setups RESTART IDENTITY CASCADE"))
-                await session.execute(text("TRUNCATE TABLE ledger_accounts RESTART IDENTITY CASCADE"))
-                await session.commit()
-                logger.info("ðŸ§¹ Development: Markets and Trading tables cleared for new session")
-        except Exception as truncate_err:
-            logger.warning(f"âš ï¸  Failed to clear some tables: {truncate_err}")
+        # Tables are preserved across restarts so simulation balance and positions persist.
+        # To manually clear: psql -c "TRUNCATE TABLE orders, positions, ledger_accounts;"
             
     except Exception as e:
         logger.error(f"â Œ Database initialization failed: {e}")
@@ -654,12 +643,18 @@ async def lifespan(app: FastAPI):
         # Start Price Monitor Service (GP/GL monitoring)
         try:
             from services.ai_trigger_service import ai_trigger_service
+            from services.binance_candle_service import binance_candle_service
+            
+            # Start Binance Candle Service (BTC & ARB)
+            asyncio.create_task(binance_candle_service.start())
+            logger.info("✅ Binance Candle Service started")
+
             ai_callback = await ai_trigger_service.create_ai_trigger_callback()
             price_monitor_service.set_ai_trigger_callback(ai_callback)
             await price_monitor_service.start(latest_prices)
-            logger.info("âœ… Price Monitor Service started (GP/GL monitoring)")
+            logger.info("✅ Price Monitor Service started (GP/GL monitoring)")
         except Exception as e:
-            logger.error(f"âŒ Failed to start Price Monitor Service: {e}")
+            logger.error(f"❌ Failed to start Trading Services: {e}")
         
     except Exception as e:
         logger.error(f"âŒ Failed to start Indexer/Matching Services: {e}")
@@ -676,21 +671,8 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("ðŸ›‘ Shutting down Osmo Backend...")
     
-    # CLEAR TABLES ON EXIT (Per user request)
-    try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(text("TRUNCATE TABLE candles RESTART IDENTITY CASCADE"))
-            await session.execute(text("TRUNCATE TABLE trades RESTART IDENTITY CASCADE"))
-            try:
-                pass
-                # await session.execute(text("TRUNCATE TABLE orders RESTART IDENTITY CASCADE"))
-                # await session.execute(text("TRUNCATE TABLE positions RESTART IDENTITY CASCADE"))
-            except Exception:
-                pass
-            await session.commit()
-            logger.info("ðŸ§¹ Development: Tables cleared on shutdown")
-    except Exception as e:
-        logger.error(f"âš ï¸ Failed to clear tables on shutdown: {e}")
+    # Tables are preserved on shutdown so simulation balance and positions persist across restarts.
+    # To manually clear: psql -c "TRUNCATE TABLE orders, positions, ledger_accounts;"
     
     if not settings.WS_IN_MEMORY_ONLY:
         ostium_price_history.save_to_disk()
@@ -709,6 +691,12 @@ async def lifespan(app: FastAPI):
     
     if ostium_persister:
         await ostium_persister.stop()
+        
+    try:
+        from services.binance_candle_service import binance_candle_service
+        await binance_candle_service.stop()
+    except Exception:
+        pass
 
     if ostium_poller:
         await ostium_poller.stop()

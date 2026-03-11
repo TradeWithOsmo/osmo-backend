@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, BigInteger, Index, Boolean, Date, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, BigInteger, Index, Boolean, Date, Text, UniqueConstraint
 from sqlalchemy.sql import func
 from datetime import datetime
 from .connection import Base
@@ -20,6 +20,7 @@ class Candle(Base):
     # Composite index for querying candles by symbol and time
     __table_args__ = (
         Index('idx_symbol_timestamp', 'symbol', 'timestamp'),
+        UniqueConstraint('symbol', 'timestamp', 'interval', name='uq_symbol_timestamp_interval'),
     )
 
 class Trade(Base):
@@ -356,6 +357,7 @@ class AIUsageLog(Base):
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
     cost = Column(Float, default=0.0)
+    duration_ms = Column(Integer, default=0) # Processing time in milliseconds
     
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     

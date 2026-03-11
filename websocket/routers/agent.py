@@ -149,6 +149,7 @@ async def _persist_ai_output(
     input_tokens: int,
     output_tokens: int,
     total_cost: float,
+    duration_ms: int = 0,
 ) -> None:
     await persist_ai_output_util(
         chat_service=chat_service,
@@ -161,6 +162,7 @@ async def _persist_ai_output(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_cost=total_cost,
+        duration_ms=duration_ms,
     )
 
 
@@ -901,6 +903,7 @@ async def agent_chat_stream(
 
         session_id = f"s-{uuid.uuid4().hex[:8]}"
     model_id = _normalize_model_id_for_runtime(model_id)
+    logger.info(f"[AgentStream] Request for model={model_id} session={session_id}")
 
     model_info = await openrouter_service.get_model_info(model_id)
     if not model_info:
@@ -953,9 +956,32 @@ async def agent_chat_stream(
 
         stream_task = asyncio.current_task()
         _register_active_stream(auth_user_id, session_id, stream_task)
+        import time
+        start_time = time.time()
 
         try:
-            yield sse({"type": "meta", "session_id": session_id, "model": model_id})
+            # Resolve context window for this model
+            _ctx_window = 0
+            try:
+                _cfg = get_model_config(model_id) or {}
+                _ctx_window = int(_cfg.get("context_window") or _cfg.get("context_length") or 0)
+            except Exception:
+                pass
+            if not _ctx_window and isinstance(model_info, dict):
+                _ctx_window = int(model_info.get("context_window") or model_info.get("context_length") or 0)
+            # Hardcoded fallback for common models when cache not yet loaded
+            if not _ctx_window:
+                _mid = str(model_id).lower()
+                if "qwen-long" in _mid:
+                    _ctx_window = 1_000_000
+                elif any(x in _mid for x in ("qwen-plus", "qwen-turbo", "qwq", "qwen2.5", "claude", "gpt-4", "gemini")):
+                    _ctx_window = 131_072
+                elif "qwen-max" in _mid:
+                    _ctx_window = 32_768
+                elif "deepseek" in _mid:
+                    _ctx_window = 65_536
+
+            yield sse({"type": "meta", "session_id": session_id, "model": model_id, "context_window": _ctx_window})
 
             runtime_tool_states = await _inject_runtime_balance_context(
                 tool_states,
@@ -969,12 +995,14 @@ async def agent_chat_stream(
             runtime_tool_states["agent_engine_strict"] = True
             runtime_tool_states["knowledge_enabled"] = False
             runtime_tool_states["rag_mode"] = "disabled"
+            logger.info(f"[AgentStream] Initializing AgentBrain for session={session_id}")
             brain = AgentBrain(
                 model_id=model_id,
                 reasoning_effort=reasoning_effort,
                 tool_states=runtime_tool_states,
                 user_context={"user_address": user_address, "session_id": session_id},
             )
+            logger.info(f"[AgentStream] Starting stream consumption for session={session_id}")
             runtime_history = _trim_history_for_runtime(history)
             full_content_parts: List[str] = []
             thoughts: List[str] = []
@@ -1060,6 +1088,7 @@ async def agent_chat_stream(
             )
             _require_successful_billing(billing)
             total_cost = float(billing.get("total_cost_usd", 0.0))
+            duration_ms = int((time.time() - start_time) * 1000)
 
             await _persist_ai_output(
                 chat_service=chat_service,
@@ -1072,6 +1101,7 @@ async def agent_chat_stream(
                 input_tokens=in_tokens,
                 output_tokens=out_tokens,
                 total_cost=total_cost,
+                duration_ms=duration_ms,
             )
 
             runtime_trace_store.add(
@@ -1097,12 +1127,19 @@ async def agent_chat_stream(
                 },
             )
             yield sse({"type": "billing", "billing": billing})
+
+            # Compute context window usage %
+            _used_tokens = int((usage or {}).get("prompt_tokens") or (usage or {}).get("total_tokens") or 0)
+            _context_pct = round((_used_tokens / _ctx_window) * 100, 1) if _ctx_window > 0 and _used_tokens > 0 else 0
+
             yield sse(
                 {
                     "type": "done",
                     "content": full_content,
                     "usage": usage or {},
                     "thoughts": thoughts or [],
+                    "context_pct": _context_pct,
+                    "context_window": _ctx_window,
                 }
             )
 
@@ -1203,6 +1240,69 @@ async def delete_chat_session(session_id: str, user: dict = Depends(get_current_
             detail="Failed to delete session (unauthorized or not found)",
         )
     return {"status": "success"}
+
+
+# --- Context Compression Endpoint ---
+
+
+@router.post("/compress")
+async def compress_context(
+    history: List[Dict[str, str]] = Body(...),
+    model_id: Optional[str] = Body(None),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Summarize a conversation history to compress the context window.
+    Returns a concise summary that can seed a new session.
+    """
+    import httpx
+    import os
+
+    if not history:
+        return {"status": "success", "summary": ""}
+
+    # Build a flat transcript for the LLM to summarize
+    transcript_lines = []
+    for msg in history[-80:]:  # cap at last 80 messages
+        role = msg.get("role", "user").capitalize()
+        content = str(msg.get("content", ""))[:800]  # truncate long messages
+        transcript_lines.append(f"{role}: {content}")
+    transcript = "\n".join(transcript_lines)
+
+    compress_prompt = (
+        "You are a conversation summarizer. Summarize the following trading assistant conversation "
+        "into a dense but complete summary (max 400 words). Preserve: key symbols discussed, indicators "
+        "added, trades proposed/executed, user preferences, and any pending action items. "
+        "Write as a structured briefing that can be used to continue the session.\n\n"
+        f"CONVERSATION:\n{transcript}\n\nSUMMARY:"
+    )
+
+    # Use Alibaba/DashScope for compression (cheap, no OpenRouter dependency)
+    alibaba_key = os.getenv("ALIBABA_API_KEY", "").strip()
+    _model = model_id or "qwen-turbo"
+    summary = ""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {alibaba_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": _model,
+                    "messages": [{"role": "user", "content": compress_prompt}],
+                    "max_tokens": 600,
+                },
+            )
+            data = resp.json()
+            summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as exc:
+        logger.warning(f"[compress_context] LLM call failed: {exc}")
+        # Fallback: concatenate last few turns
+        summary = "\n".join(transcript_lines[-10:])
+
+    return {"status": "success", "summary": summary.strip()}
 
 
 # --- Workspace Endpoints ---

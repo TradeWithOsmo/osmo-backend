@@ -237,7 +237,11 @@ async def get_price(
 
 
 async def get_candles(
-    symbol: str, timeframe: str = "1H", limit: int = 100, asset_type: str = "crypto"
+    symbol: str, 
+    timeframe: str = "1H", 
+    limit: int = 100, 
+    asset_type: str = "crypto",
+    exchange: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get OHLCV candles from connectors API.
@@ -247,13 +251,17 @@ async def get_candles(
     url = f"{CONNECTORS_API}/candles/{route_symbol}"
     client = await get_http_client(timeout_sec=10.0)
     try:
+        params = {
+            "timeframe": timeframe,
+            "limit": int(limit),
+            "asset_type": asset_type,
+        }
+        if exchange:
+            params["exchange"] = exchange
+            
         resp = await client.get(
             url,
-            params={
-                "timeframe": timeframe,
-                "limit": int(limit),
-                "asset_type": asset_type,
-            },
+            params=params,
         )
         resp.raise_for_status()
         return resp.json()
@@ -397,6 +405,7 @@ async def get_high_low_levels(
     lookback: int = 7,
     limit: Optional[int] = None,
     asset_type: str = "crypto",
+    exchange: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Compute rolling high/low support & resistance levels from OHLC candle data.
@@ -440,6 +449,7 @@ async def get_high_low_levels(
         timeframe=timeframe,
         limit=required_limit,
         asset_type=asset_type,
+        exchange=exchange,
     )
     if isinstance(candles_payload, dict) and candles_payload.get("error"):
         return candles_payload
@@ -466,8 +476,23 @@ async def get_high_low_levels(
 
     effective_lookback = min(requested_lookback, available)
     recent = rows[-effective_lookback:]
-    resistance = max(float(item["high"]) for item in recent)
-    support = min(float(item["low"]) for item in recent)
+    
+    # Identify high/low and their timestamps
+    resistance = -float('inf')
+    resistance_time = 0
+    support = float('inf')
+    support_time = 0
+    
+    for item in recent:
+        h = float(item["high"])
+        if h >= resistance:
+            resistance = h
+            resistance_time = item["time"]
+        l = float(item["low"])
+        if l <= support:
+            support = l
+            support_time = item["time"]
+            
     midpoint = float((resistance + support) / 2.0)
     latest = rows[-1]
     degraded = effective_lookback < requested_lookback
@@ -477,7 +502,9 @@ async def get_high_low_levels(
         "timeframe": timeframe,
         "lookback": effective_lookback,
         "support": support,
+        "support_time": support_time,
         "resistance": resistance,
+        "resistance_time": resistance_time,
         "midpoint": midpoint,
         "latest_close": float(latest.get("close", 0.0)),
         "latest_high": float(latest.get("high", 0.0)),

@@ -1278,12 +1278,21 @@ class AgentBrain:
                 if isinstance(reflexion.get("state_summary"), dict)
                 else {}
             ) or {}
-            usage = {
-                "prompt_tokens": max(0, len(str(user_message or "")) // 4),
-                "completion_tokens": max(0, len(output) // 4),
-                "total_tokens": 0,
-            }
-            usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+            # Use real token counts from API response if available
+            _real_usage = reflexion.get("usage") or {}
+            if _real_usage.get("total_tokens", 0) > 0:
+                usage = {
+                    "prompt_tokens": int(_real_usage.get("prompt_tokens") or 0),
+                    "completion_tokens": int(_real_usage.get("completion_tokens") or 0),
+                    "total_tokens": int(_real_usage.get("total_tokens") or 0),
+                }
+            else:
+                usage = {
+                    "prompt_tokens": max(0, 6250 + (len(str(user_message or "")) // 4)),
+                    "completion_tokens": max(0, len(output) // 4),
+                    "total_tokens": 0,
+                }
+                usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
             thoughts: List[Dict[str, Any]] = []
             reflexion_thoughts = reflexion.get("thoughts")
@@ -1433,6 +1442,29 @@ class AgentBrain:
                         }
                     )
 
+            elif event_type == "tool_proposal":
+                # HITL trade proposal — must be visible to frontend
+                import json as _json
+                try:
+                    payload = _json.loads(event_data)
+                except Exception:
+                    payload = {}
+                proposal_thought = {
+                    "type": "tool_result",
+                    "title": payload.get("title", "Trade Proposal"),
+                    "content": payload.get("content", event_data),
+                    "toolName": payload.get("toolName", "place_order"),
+                    "status": "done",
+                    "meta": payload.get("meta"),
+                }
+                collected_thoughts.append(proposal_thought)
+                # Push updated thoughts to frontend immediately
+                sanitized = [
+                    {k: v for k, v in t.items() if k != "_tool_break"}
+                    for t in collected_thoughts
+                ]
+                yield {"type": "thoughts", "thoughts": sanitized}
+
             elif event_type in ("tool_call", "tool_result"):
                 # Hidden from UI — but a tool_call marks a chain break so the
                 # next thinking event will open a fresh step
@@ -1495,9 +1527,14 @@ class AgentBrain:
         # Build final content
         final_content = "".join(collected_content)
 
-        # Build usage info
+        # Build usage info — estimate from full context (system prompt + history + message + output)
+        # System prompt is ~25k chars (~6250 tokens) — use constant overhead
+        _SYSTEM_PROMPT_TOKEN_OVERHEAD = 6250
+        history_text = " ".join(
+            str(m.get("content", "")) for m in (history or []) if isinstance(m, dict)
+        )
         usage = {
-            "prompt_tokens": max(0, len(str(user_message or "")) // 4),
+            "prompt_tokens": max(0, _SYSTEM_PROMPT_TOKEN_OVERHEAD + (len(str(user_message or "")) + len(history_text)) // 4),
             "completion_tokens": max(0, len(final_content) // 4),
             "total_tokens": 0,
         }

@@ -72,11 +72,27 @@ class LLMFactory:
         route = _PROVIDER_ROUTES.get(provider, _PROVIDER_ROUTES["openrouter"])
 
         api_key = os.getenv(route["api_key_env"], "").strip()
+        if not api_key and provider == "alibaba":
+            api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+
         if not api_key:
-            raise ValueError(
-                f"Missing required environment variable: {route['api_key_env']} "
-                f"(needed for provider '{provider}', model '{actual_model}')"
-            )
+            if provider == "alibaba":
+                # Fallback to OpenRouter if Alibaba key is missing
+                provider = "openrouter"
+                route = _PROVIDER_ROUTES["openrouter"]
+                api_key = os.getenv(route["api_key_env"], "").strip()
+                if not api_key:
+                    raise ValueError(f"Missing required environment variable: OPENROUTER_API_KEY (needed for fallback)")
+                
+                # Ensure model ID is correctly prefixed for OpenRouter
+                if not any(actual_model.startswith(f"{p}/") for p in _PROVIDER_ROUTES):
+                    actual_model = f"alibaba/{actual_model}"
+                print(f"[LLMFactory] Falling back to OpenRouter for {actual_model} due to missing ALIBABA_API_KEY")
+            else:
+                raise ValueError(
+                    f"Missing required environment variable: {route['api_key_env']} "
+                    f"(needed for provider '{provider}', model '{actual_model}')"
+                )
 
         print(f"[LLMFactory] {actual_model} via {provider} ({route['base_url']})")
 

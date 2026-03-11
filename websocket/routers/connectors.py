@@ -795,6 +795,7 @@ async def get_candles(
         from Hyperliquid.http_client import http_client as hl_client
         from Aster.api_client import AsterAPIClient
         from Vest.api_client import VestAPIClient
+        from services.binance_candle_service import binance_candle_service
         import time
         from typing import List, Dict, Any
         
@@ -808,6 +809,11 @@ async def get_candles(
         if "-" not in clean_sym and source in {"hyperliquid", "aster", "vest", "avantis", "orderly", "paradex", "dydx", "aevo"}:
             # Default to USD quote for crypto if not specified
             clean_sym = f"{clean_sym}-USD"
+        # Normalize USDT/USDC quotes to USD for DB lookup consistency
+        for suffix in ("-USDT", "-USDC"):
+            if clean_sym.endswith(suffix):
+                clean_sym = clean_sym[:-len(suffix)] + "-USD"
+                break
 
         logger.info(f"[connectors] Candles request symbol={symbol} (clean={clean_sym}) source={source} timeframe={timeframe}")
 
@@ -820,6 +826,17 @@ async def get_candles(
         interval = interval_map.get(timeframe, "1h")
         
         bars = []
+        
+        # Priority: Check database for BTC and ARB if we need deep history
+        if clean_sym in {"BTC-USD", "ARB-USD"}:
+            try:
+                db_bars = await binance_candle_service.get_db_candles(clean_sym, timeframe, limit=safe_limit)
+                if db_bars:
+                    # Map to the format expected by the rest of the function or return immediately
+                    # frontend expects {t, o, h, l, c, v}
+                    return db_bars
+            except Exception as e:
+                logger.error(f"[connectors] DB candle fetch failed for {clean_sym}: {e}")
         
         if source == "aster":
             try:
@@ -890,7 +907,8 @@ async def get_candles(
 async def get_technical_analysis(
     symbol: str,
     timeframe: str = "1D",
-    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium)$"),
+    asset_type: str = Query("crypto", pattern="^(crypto|rwa|hyperliquid|ostium|avantis|aster|vest|orderly|paradex|dydx|aevo)$"),
+    exchange: Optional[str] = Query(None, description="Internal exchange source (hyperliquid, ostium, avantis, aster, vest, orderly, paradex, dydx, aevo)")
 ):
     """
     Lightweight technical payload used by data analysis tools.
@@ -898,19 +916,29 @@ async def get_technical_analysis(
     """
     try:
         normalized_asset = asset_type.lower()
+        # Use explicit exchange parameter if provided, else fallback to asset_type
+        source = (exchange or normalized_asset).lower()
         normalized_symbol = _normalize_hl_symbol(symbol)
         view_symbol = symbol.upper().replace("/", "-").replace("_", "-")
         if "-" not in view_symbol:
             view_symbol = f"{normalized_symbol}-USD"
 
-        if normalized_asset in {"crypto", "hyperliquid"}:
-            connector = _require_connector("hyperliquid")
-            source = "hyperliquid"
-            price_payload = await connector.fetch(normalized_symbol, data_type="price")
-        else:
-            connector = _require_connector("ostium")
-            source = "ostium"
-            price_payload = await connector.fetch(normalized_symbol, data_type="price")
+        # Explicitly check for supported exchanges; default to hyperliquid if unsure
+        exchange_connectors = {
+            "hyperliquid": "hyperliquid",
+            "ostium": "ostium",
+            "aster": "hyperliquid", # Fallback logic for price if specific connector missing
+            "vest": "hyperliquid",
+            "avantis": "hyperliquid",
+            "orderly": "hyperliquid",
+            "paradex": "hyperliquid",
+            "dydx": "hyperliquid",
+            "aevo": "hyperliquid"
+        }
+        
+        target_connector_name = exchange_connectors.get(source, "hyperliquid")
+        connector = _require_connector(target_connector_name)
+        price_payload = await connector.fetch(normalized_symbol, data_type="price")
 
         price_data = (
             (price_payload or {}).get("data", {})
@@ -967,14 +995,15 @@ async def get_technical_analysis(
                         timeframe=timeframe,
                         ohlcv_data=candles,
                     )
-                    if not indicators and isinstance(analysis_result, dict):
-                        fallback_indicators = analysis_result.get("indicators", {})
-                        if isinstance(fallback_indicators, dict):
-                            indicators = {
-                                str(k): v
-                                for k, v in fallback_indicators.items()
-                                if v is not None
-                            }
+                    # Fallback indicators are disabled to ensure results reflect real chart state
+                    # if not indicators and isinstance(analysis_result, dict):
+                    #     fallback_indicators = analysis_result.get("indicators", {})
+                    #     if isinstance(fallback_indicators, dict):
+                    #         indicators = {
+                    #             str(k): v
+                    #             for k, v in fallback_indicators.items()
+                    #             if v is not None
+                    #         }
                     fallback_patterns = (
                         analysis_result.get("patterns", [])
                         if isinstance(analysis_result, dict)

@@ -239,6 +239,23 @@ class SimulationMatchingEngine:
             entry = float(getattr(pos, "entry_price", 0) or 0)
             tp = _resolve_trigger(pos.tp, "TP", side, entry) if pos.tp else None
             sl = _resolve_trigger(pos.sl, "SL", side, entry) if pos.sl else None
+
+            # Validate TP/SL direction relative to entry price to prevent
+            # immediate triggers from agent-set invalid values.
+            # LONG: valid TP must be above entry, valid SL must be below entry.
+            # SHORT: valid TP must be below entry, valid SL must be above entry.
+            if entry > 0:
+                if side == "long":
+                    if tp and tp <= entry:
+                        tp = None  # TP below/at entry is invalid for long
+                    if sl and sl >= entry:
+                        sl = None  # SL above/at entry is invalid for long
+                else:
+                    if tp and tp >= entry:
+                        tp = None  # TP above/at entry is invalid for short
+                    if sl and sl <= entry:
+                        sl = None  # SL below/at entry is invalid for short
+
             if side == "long":
                 if tp and current_price >= tp:
                     return "TP"

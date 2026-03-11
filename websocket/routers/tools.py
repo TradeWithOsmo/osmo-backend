@@ -47,9 +47,6 @@ from agent.Tools.data.market import (
 from agent.Tools.data.tradingview import (
     get_active_indicators,
 )
-from agent.Tools.data.analysis import (
-    get_technical_analysis
-)
 from agent.Tools.data.research import (
     research_market,
     scan_market_overview
@@ -223,18 +220,21 @@ class ClearDrawingsRequest(BaseModel):
 class GetPriceRequest(BaseModel):
     symbol: str
     asset_type: str = "crypto"
+    exchange: Optional[str] = None
 
 class GetCandlesRequest(BaseModel):
     symbol: str
     timeframe: str = "1H"
     limit: int = 100
     asset_type: str = "crypto"
+    exchange: Optional[str] = None
 
 class GetHighLowLevelsRequest(BaseModel):
     symbol: str
     timeframe: str = "1H"
     lookback: int = 7
     asset_type: str = "crypto"
+    exchange: Optional[str] = None
 
 
 class GetActiveIndicatorsRequest(BaseModel):
@@ -247,6 +247,7 @@ class TechnicalContextRequest(BaseModel):
     symbol: str
     timeframe: str = "1D"
     asset_type: str = "crypto"
+    exchange: Optional[str] = None
     tool_states: Optional[Dict[str, Any]] = None
     include_active_indicators: bool = True
 
@@ -278,6 +279,7 @@ async def _collect_market_technical_bundle(
     symbol: str,
     timeframe: str = "1D",
     asset_type: str = "crypto",
+    exchange: Optional[str] = None,
     tool_states: Optional[Dict[str, Any]] = None,
     include_analysis: bool = True,
     include_active_indicators: bool = True,
@@ -286,12 +288,8 @@ async def _collect_market_technical_bundle(
         "symbol": symbol,
         "timeframe": timeframe,
         "asset_type": asset_type,
+        "exchange": exchange,
     }
-
-    if include_analysis:
-        bundle["technical_analysis"] = await get_technical_analysis(
-            symbol, timeframe, asset_type
-        )
 
     if include_active_indicators:
         chart_ctx = await get_active_indicators(
@@ -472,15 +470,15 @@ async def execute_clear_drawings(request: ClearDrawingsRequest):
 # 5. Market Data
 @router.post("/data/price")
 async def execute_get_price(request: GetPriceRequest):
-    return await get_price(request.symbol, request.asset_type)
+    return await get_price(request.symbol, request.asset_type, request.exchange)
 
 @router.post("/data/candles")
 async def execute_get_candles(request: GetCandlesRequest):
-    return await get_candles(request.symbol, request.timeframe, request.limit, request.asset_type)
+    return await get_candles(request.symbol, request.timeframe, request.limit, request.asset_type, request.exchange)
 
 @router.post("/data/levels")
 async def execute_get_levels(request: GetHighLowLevelsRequest):
-    return await get_high_low_levels(request.symbol, request.timeframe, request.lookback, None, request.asset_type)
+    return await get_high_low_levels(request.symbol, request.timeframe, request.lookback, None, request.asset_type, request.exchange)
 
 
 @router.post("/data/active_indicators")
@@ -506,13 +504,20 @@ async def execute_scan_overview(request: ScanOverviewRequest):
 
 @router.post("/analysis/technical")
 async def execute_technical_analysis(request: TechnicalContextRequest):
-    # Unified technical endpoint: TA + active chart indicators in one payload.
+    # Resolve exchange from request or tool_states
+    exchange = request.exchange
+    if not exchange and request.tool_states:
+        exchange = request.tool_states.get("market_exchange")
+
+    # Unified technical endpoint: active chart indicators in one payload.
+    # Note: analysis_technical is now sourced ONLY from active chart indicators.
     return await _collect_market_technical_bundle(
         symbol=request.symbol,
         timeframe=request.timeframe,
         asset_type=request.asset_type,
+        exchange=exchange,
         tool_states=request.tool_states or {},
-        include_analysis=True,
+        include_analysis=False,
         include_active_indicators=request.include_active_indicators,
     )
 

@@ -52,7 +52,7 @@ async def get_history(
             "model": log.model,
             "tokens": f"{log.input_tokens + log.output_tokens:,}",
             "cost": f"${log.cost:.4f}",
-            "speed": "N/A", # Not tracked yet
+            "speed": f"{log.duration_ms / 1000:.1f}s" if getattr(log, 'duration_ms', 0) else "N/A",
             "finish": "Complete"
         }
         for log in logs

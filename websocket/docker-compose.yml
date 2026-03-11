@@ -8,6 +8,7 @@ services:
       - ../connectors:/app/connectors
       - ../analysis:/app/analysis
       - ../agent:/app/agent
+      - ../contracts:/app/contracts
     ports:
       - "8000:8000"
     env_file:
@@ -23,6 +24,9 @@ services:
       - QDRANT_PORT=6333
       - SYMBOL_REGISTRY_PATH=/app/contracts/config/symbol_registry.json
       - MEM0_API_URL=http://osmo-mem0:8000
+      - ALIBABA_API_KEY=${ALIBABA_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - AI_BILLING_ONCHAIN_ENABLED=${AI_BILLING_ONCHAIN_ENABLED:-false}
     depends_on:
       - db
       - redis

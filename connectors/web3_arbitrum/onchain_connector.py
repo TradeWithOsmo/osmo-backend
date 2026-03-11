@@ -111,7 +111,8 @@ class OnchainConnector(BaseConnector):
             )
             
             signed_txn = self.w3_connector.w3.eth.account.sign_transaction(txn, settings.TREASURY_PRIVATE_KEY)
-            tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, signed_txn.raw_transaction)
+            raw_tx = getattr(signed_txn, "raw_transaction", getattr(signed_txn, "rawTransaction", None))
+            tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, raw_tx)
             
             logger.info(f"✅ [JIT-Oracle] Price pushed! Tx: {tx_hash.hex()}. Waiting for inclusion...")
             
@@ -296,7 +297,8 @@ class OnchainConnector(BaseConnector):
 
             # 6. Send Transaction
             logger.info(f"[OnchainConnector] Sending raw transaction...")
-            tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, signed_tx.raw_transaction)
+            raw_tx = getattr(signed_tx, "raw_transaction", getattr(signed_tx, "rawTransaction", None))
+            tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, raw_tx)
             tx_hash_hex = tx_hash.hex()
 
             logger.info(f"[OnchainConnector] Tx sent: {tx_hash_hex}. Waiting for receipt...")
@@ -384,7 +386,8 @@ class OnchainConnector(BaseConnector):
             tx_data = await asyncio.to_thread(build_cancel_tx)
             
             signed_tx = await asyncio.to_thread(self.w3_connector.w3.eth.account.sign_transaction, tx_data, session_key)
-            tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, signed_tx.raw_transaction)
+            raw_tx = getattr(signed_tx, "raw_transaction", getattr(signed_tx, "rawTransaction", None))
+            tx_hash = await asyncio.to_thread(self.w3_connector.w3.eth.send_raw_transaction, raw_tx)
             
             return {"status": "cancelling", "tx_hash": tx_hash.hex()}
             

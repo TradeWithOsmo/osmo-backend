@@ -21,14 +21,12 @@ try:
         get_funding_rate,
         get_high_low_levels,
     )
-    from agent.Tools.data.analysis import get_technical_analysis
 except Exception:
     from backend.agent.Tools.data.market import (
         get_price,
         get_funding_rate,
         get_high_low_levels,
     )
-    from backend.agent.Tools.data.analysis import get_technical_analysis
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +36,8 @@ except Exception:
 
 @dataclass
 class MarketSnapshot:
-    """Data snapshot from a single market source."""
-    market: str  # "hyperliquid" or "ostium"
+    """Data snapshot from a single exchange."""
+    market: str  # exchange name: "hyperliquid", "ostium", "aster", etc.
     symbol: str
     price: Optional[float] = None
     change_24h: Optional[float] = None
@@ -67,6 +65,23 @@ class ResearchReport:
     warnings: List[str] = field(default_factory=list)
 
 
+# All supported exchanges on the platform
+ALL_EXCHANGES = ["hyperliquid", "ostium", "avantis", "aster", "vest", "orderly", "paradex", "dydx", "aevo"]
+
+# Exchange descriptions for agent context
+EXCHANGE_INFO = {
+    "hyperliquid": "Crypto perpetuals DEX — BTC, ETH, SOL, ARB, and 200+ altcoin tokens.",
+    "ostium":      "Real-World Asset (RWA) DEX — forex pairs (EURUSD, GBPUSD, USDJPY...), metals (XAU, XAG), stock indices (SPX, NDX, DAX) and individual stocks (AAPL, TSLA, NVDA...).",
+    "avantis":     "Crypto + RWA perpetuals on Base. Overlaps with Hyperliquid (BTC, ETH, SOL) and some forex/commodity pairs.",
+    "aster":       "Crypto perpetuals (USDT-quoted). Covers BTC, ETH, SOL and mid/small-cap tokens.",
+    "vest":        "Crypto perpetuals — BTC, ETH, SOL and a selection of altcoins.",
+    "orderly":     "Crypto spot and perps — primarily BTC, ETH, SOL and USDC pairs.",
+    "paradex":     "Crypto perpetuals on StarkNet — BTC, ETH, SOL and select altcoins.",
+    "dydx":        "Crypto perpetuals (dYdX chain) — BTC, ETH, SOL and 50+ tokens.",
+    "aevo":        "Crypto options + perpetuals — BTC, ETH, SOL and mid-cap tokens.",
+}
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -74,16 +89,19 @@ class ResearchReport:
 
 async def _fetch_market_snapshot(
     symbol: str,
-    asset_type: str,
+    exchange: str,
     timeframe: str = "1H",
-    include_depth: bool = False,
 ) -> MarketSnapshot:
-    """Gather price, technicals, levels, and optionally depth for one market."""
-    market_name = "hyperliquid" if asset_type == "crypto" else "ostium"
-    snap = MarketSnapshot(market=market_name, symbol=symbol)
+    """Gather price, levels, and funding for one exchange."""
+    snap = MarketSnapshot(market=exchange, symbol=symbol)
 
-    # 1 – Price
-    price_data = await get_price(symbol, asset_type=asset_type)
+    # Determine routing params
+    _PRIMARY = {"hyperliquid": "crypto", "ostium": "rwa"}
+    if exchange in _PRIMARY:
+        price_data = await get_price(symbol, asset_type=_PRIMARY[exchange])
+    else:
+        price_data = await get_price(symbol, exchange=exchange)
+
     if isinstance(price_data, dict) and price_data.get("error"):
         snap.error = price_data["error"]
         return snap
@@ -96,57 +114,34 @@ async def _fetch_market_snapshot(
     snap.high_24h = price_data.get("high_24h")
     snap.low_24h = price_data.get("low_24h")
 
-    task_pairs: List[tuple[str, Any]] = [
-        (
-            "technical",
-            get_technical_analysis(symbol, timeframe=timeframe, asset_type=asset_type),
-        ),
-        (
-            "levels",
-            get_high_low_levels(
-                symbol, timeframe=timeframe, lookback=7, asset_type=asset_type
+    # Levels + funding (best-effort, only for primary sources)
+    asset_type = _PRIMARY.get(exchange)
+    if asset_type:
+        task_pairs: List[tuple[str, Any]] = [
+            (
+                "levels",
+                get_high_low_levels(
+                    symbol, timeframe=timeframe, lookback=7, asset_type=asset_type
+                ),
             ),
-        ),
-    ]
-    if asset_type == "crypto":
-        task_pairs.append(("funding", get_funding_rate(symbol, asset_type=asset_type)))
-        pass
+        ]
+        if asset_type == "crypto":
+            task_pairs.append(("funding", get_funding_rate(symbol, asset_type=asset_type)))
 
-    labels = [name for name, _ in task_pairs]
-    raw_results = await asyncio.gather(
-        *[coro for _, coro in task_pairs], return_exceptions=True
-    )
-    result_map = dict(zip(labels, raw_results))
+        labels = [name for name, _ in task_pairs]
+        raw_results = await asyncio.gather(
+            *[coro for _, coro in task_pairs], return_exceptions=True
+        )
+        result_map = dict(zip(labels, raw_results))
 
-    ta_data = result_map.get("technical")
-    if isinstance(ta_data, dict) and not ta_data.get("error"):
-        indicators = ta_data.get("indicators", {})
-        snap.rsi = indicators.get("RSI_14")
-        snap.patterns = ta_data.get("patterns", [])
+        levels = result_map.get("levels")
+        if isinstance(levels, dict) and levels.get("status") == "ok":
+            snap.support = levels.get("support")
+            snap.resistance = levels.get("resistance")
 
-    levels = result_map.get("levels")
-    if isinstance(levels, dict) and levels.get("status") == "ok":
-        snap.support = levels.get("support")
-        snap.resistance = levels.get("resistance")
-
-    funding = result_map.get("funding")
-    if isinstance(funding, dict) and not funding.get("error"):
-        snap.funding_rate = funding.get("rate") or funding.get("funding_rate")
-
-    depth = result_map.get("depth")
-    if isinstance(depth, dict) and not depth.get("error"):
-        bids = depth.get("bids", [])
-        asks = depth.get("asks", [])
-        if bids and asks:
-            try:
-                best_bid = float(bids[0][0])
-                best_ask = float(asks[0][0])
-                if best_bid > 0:
-                    ob_spread = (best_ask - best_bid) / best_bid * 100
-                    if ob_spread > 1.0:
-                        snap.error = f"Wide spread detected: {ob_spread:.2f}%"
-            except Exception:
-                pass
+        funding = result_map.get("funding")
+        if isinstance(funding, dict) and not funding.get("error"):
+            snap.funding_rate = funding.get("rate") or funding.get("funding_rate")
 
     return snap
 
@@ -191,14 +186,10 @@ def _build_summary(symbol: str, snapshots: List[MarketSnapshot], spread_pct: Opt
             lines.append(f"- 24h change: {s.change_pct_24h:+.2f}%")
         if s.volume_24h is not None:
             lines.append(f"- 24h volume: ${s.volume_24h:,.0f}")
-        if s.rsi is not None:
-            lines.append(f"- RSI(14): {s.rsi:.1f}")
         if s.support is not None and s.resistance is not None:
             lines.append(f"- Support: ${s.support:,.4f} | Resistance: ${s.resistance:,.4f}")
         if s.funding_rate is not None:
             lines.append(f"- Funding rate: {s.funding_rate}")
-        if s.patterns:
-            lines.append(f"- Patterns: {', '.join(s.patterns[:5])}")
 
     if spread_pct is not None:
         lines.append(f"\n**Cross-market spread: {spread_pct:.4f}%**")
@@ -220,22 +211,22 @@ async def research_market(
     include_depth: bool = False,
 ) -> Dict[str, Any]:
     """
-    Research a symbol across ALL available markets (Hyperliquid + Ostium).
-    Compares prices, technicals, levels, and trading conditions.
+    Research a symbol across ALL 9 available exchanges.
+    Compares prices, spread, and trading conditions.
 
     Args:
         symbol: Trading symbol to research (e.g. "BTC", "ETH", "EUR-USD", "XAU-USD").
         timeframe: Timeframe for technical analysis (default "1H").
-        include_depth: If True, also fetch orderbook depth (crypto only).
+        include_depth: Unused, kept for backwards compatibility.
 
     Returns:
         Comprehensive multi-market research report with price comparison,
         cross-market spread, technical context, and key levels.
     """
-    # Run both market fetches concurrently
+    # Query all 9 exchanges concurrently
     tasks = [
-        _fetch_market_snapshot(symbol, asset_type="crypto", timeframe=timeframe, include_depth=include_depth),
-        _fetch_market_snapshot(symbol, asset_type="rwa", timeframe=timeframe, include_depth=include_depth),
+        _fetch_market_snapshot(symbol, exchange=ex, timeframe=timeframe)
+        for ex in ALL_EXCHANGES
     ]
     snapshots = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -345,15 +336,14 @@ async def scan_market_overview(
     asset_class: str = "all",
 ) -> Dict[str, Any]:
     """
-    Get a high-level overview of available markets and top movers.
-    Scans Hyperliquid (crypto) and/or Ostium (RWA) for broad market context.
+    Get a high-level overview of available markets and top movers across all 9 exchanges.
 
     Args:
-        asset_class: "crypto" for Hyperliquid only, "rwa" for Ostium only,
-                     or "all" for both markets.
+        asset_class: "crypto" for crypto exchanges, "rwa" for Ostium only,
+                     or "all" for all 9 exchanges.
 
     Returns:
-        Overview of available markets with price data for each.
+        Overview of available markets with price data for each exchange.
     """
     try:
         from agent.Config.tools_config import DATA_SOURCES
@@ -361,80 +351,67 @@ async def scan_market_overview(
         from backend.agent.Config.tools_config import DATA_SOURCES
 
     connectors_api = DATA_SOURCES.get("connectors", "http://localhost:8000/api/connectors")
+    markets_base = connectors_api.replace("/api/connectors", "")
     results: Dict[str, Any] = {"status": "ok", "markets": {}}
 
-    client = await get_http_client(timeout_sec=10.0)
-    if asset_class in ("crypto", "all"):
-        try:
-            resp = await client.get(f"{connectors_api}/hyperliquid/prices")
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list):
-                # Sort by volume, take top 10
-                sorted_data = sorted(
-                    data,
-                    key=lambda x: float(x.get("volume_24h") or 0),
-                    reverse=True,
-                )
-                results["markets"]["hyperliquid"] = {
-                    "total_pairs": len(data),
-                    "top_movers": [
-                        {
-                            "symbol": m.get("symbol"),
-                            "price": m.get("price"),
-                            "change_24h": m.get("change_percent_24h"),
-                            "volume_24h": m.get("volume_24h"),
-                        }
-                        for m in sorted_data[:10]
-                    ],
-                }
-        except Exception as e:
-            results["markets"]["hyperliquid"] = {"error": str(e)}
+    client = await get_http_client(timeout_sec=15.0)
 
-    if asset_class in ("rwa", "all"):
+    # Determine which exchanges to scan
+    _RWA_EXCHANGES = {"ostium"}
+    _CRYPTO_EXCHANGES = set(ALL_EXCHANGES) - _RWA_EXCHANGES
+    if asset_class == "crypto":
+        exchanges_to_scan = _CRYPTO_EXCHANGES
+    elif asset_class == "rwa":
+        exchanges_to_scan = _RWA_EXCHANGES
+    else:
+        exchanges_to_scan = set(ALL_EXCHANGES)
+
+    # Primary sources have dedicated /prices endpoints (faster)
+    _PRIMARY_ENDPOINTS = {
+        "hyperliquid": f"{connectors_api}/hyperliquid/prices",
+        "ostium": f"{connectors_api}/ostium/prices",
+    }
+
+    async def _fetch_exchange(ex: str) -> tuple:
         try:
-            resp = await client.get(f"{connectors_api}/ostium/prices")
+            if ex in _PRIMARY_ENDPOINTS:
+                resp = await client.get(_PRIMARY_ENDPOINTS[ex])
+            else:
+                resp = await client.get(f"{markets_base}/api/markets/", params={"exchange": ex})
             resp.raise_for_status()
             data = resp.json()
-            if isinstance(data, list):
-                sorted_data = sorted(
-                    data,
-                    key=lambda x: abs(float(x.get("change_percent_24h") or 0)),
-                    reverse=True,
-                )
-                results["markets"]["ostium"] = {
-                    "total_pairs": len(data),
-                    "top_movers": [
-                        {
-                            "symbol": m.get("symbol"),
-                            "price": m.get("price"),
-                            "change_24h": m.get("change_percent_24h"),
-                            "volume_24h": m.get("volume_24h"),
-                        }
-                        for m in sorted_data[:10]
-                    ],
-                }
+            markets = data if isinstance(data, list) else data.get("markets", data.get("data", []))
+            sorted_data = sorted(
+                markets,
+                key=lambda x: abs(float(x.get("volume_24h") or x.get("change_percent_24h") or 0)),
+                reverse=True,
+            )
+            return ex, {
+                "total_pairs": len(markets),
+                "top_movers": [
+                    {
+                        "symbol": m.get("symbol"),
+                        "price": m.get("price"),
+                        "change_24h": m.get("change_percent_24h"),
+                        "volume_24h": m.get("volume_24h"),
+                    }
+                    for m in sorted_data[:10]
+                ],
+            }
         except Exception as e:
-            results["markets"]["ostium"] = {"error": str(e)}
+            return ex, {"error": str(e)}
+
+    fetches = await asyncio.gather(
+        *[_fetch_exchange(ex) for ex in exchanges_to_scan],
+        return_exceptions=True,
+    )
+    for item in fetches:
+        if isinstance(item, Exception):
+            continue
+        ex_name, ex_data = item
+        results["markets"][ex_name] = ex_data
 
     return results
-
-
-# All supported exchanges on the platform
-ALL_EXCHANGES = ["hyperliquid", "ostium", "avantis", "aster", "vest", "orderly", "paradex", "dydx", "aevo"]
-
-# Exchange descriptions for agent context
-EXCHANGE_INFO = {
-    "hyperliquid": "Crypto perpetuals DEX — BTC, ETH, SOL, ARB, and 200+ altcoin tokens.",
-    "ostium":      "Real-World Asset (RWA) DEX — forex pairs (EURUSD, GBPUSD, USDJPY...), metals (XAU, XAG), stock indices (SPX, NDX, DAX) and individual stocks (AAPL, TSLA, NVDA...).",
-    "avantis":     "Crypto + RWA perpetuals on Base. Overlaps with Hyperliquid (BTC, ETH, SOL) and some forex/commodity pairs.",
-    "aster":       "Crypto perpetuals (USDT-quoted). Covers BTC, ETH, SOL and mid/small-cap tokens.",
-    "vest":        "Crypto perpetuals — BTC, ETH, SOL and a selection of altcoins.",
-    "orderly":     "Crypto spot and perps — primarily BTC, ETH, SOL and USDC pairs.",
-    "paradex":     "Crypto perpetuals on StarkNet — BTC, ETH, SOL and select altcoins.",
-    "dydx":        "Crypto perpetuals (dYdX chain) — BTC, ETH, SOL and 50+ tokens.",
-    "aevo":        "Crypto options + perpetuals — BTC, ETH, SOL and mid-cap tokens.",
-}
 
 
 async def list_symbols(

@@ -170,40 +170,52 @@ class AIBillingService:
             return {"charged": False, "reason": "zero_cost", "amount_usdc": 0}
 
         if not getattr(settings, "AI_BILLING_ONCHAIN_ENABLED", True):
-            return {"charged": False, "reason": "billing_disabled", "amount_usdc": 0}
+            return {"charged": True, "reason": "billing_disabled", "amount_usdc": 0}
 
         if not settings.AI_VAULT_ADDRESS:
             return {"charged": False, "reason": "missing_ai_vault_address", "amount_usdc": 0}
 
-        # Prefer session-key signer (user-side flow), fallback to configured operator signer.
-        signer_pk, signer_account, signer_source = await self._latest_session_signer(user_key)
-        if signer_account:
-            logger.info("Using User Session Key %s for billing", signer_account.address)
-        else:
+        # 1. Look for user session key first
+        s_pk, s_acc, s_src = await self._latest_session_signer(user_key)
+        
+        # 2. Check if we have the user-side deduction function in ABI
+        try:
+            ai_vault = web3_connector.get_contract("AIVault")
+        except Exception as e:
+            return {"charged": False, "reason": f"vault_not_found: {e}", "amount_usdc": 0}
+
+        function_names = {
+            entry.get("name")
+            for entry in (ai_vault.abi or [])
+            if isinstance(entry, dict) and entry.get("type") == "function"
+        }
+        has_user_deduct = "deductFeeAmountByUser" in function_names
+
+        # 3. Decide which signer to use
+        # If we have deductFeeAmountByUser, we prefer session keys or user's own address.
+        # Otherwise, we MUST use the configured operator signer.
+        use_user_side_path = has_user_deduct and s_acc and (
+            s_src == "session_key" or s_acc.address.lower() == user_key
+        )
+
+        if not use_user_side_path:
+            # Fallback to configured operator
             signer_pk, signer_account, signer_source = self._configured_signer()
             if signer_account:
-                logger.info("Using configured AI billing signer %s", signer_account.address)
+                logger.info("Using configured AI billing operator %s (source: %s)", signer_account.address, signer_source)
+            else:
+                logger.warning("No fallback operator available for on-chain billing")
+        else:
+            signer_pk, signer_account, signer_source = s_pk, s_acc, s_src
+            logger.info("Using user-side signer %s (source: %s)", signer_account.address, signer_source)
 
         if not signer_pk or not signer_account:
-            logger.warning("No billing signer available for %s", user_address)
             return {"charged": False, "reason": "missing_billing_signer", "amount_usdc": 0}
 
         amount_usdc = max(1, int(math.ceil(cost * self.USDC_BASE)))
         try:
-            ai_vault = web3_connector.get_contract("AIVault")
             user_checksum = Web3.to_checksum_address(user_key)
             signer_checksum = Web3.to_checksum_address(signer_account.address)
-
-            function_names = {
-                entry.get("name")
-                for entry in (ai_vault.abi or [])
-                if isinstance(entry, dict) and entry.get("type") == "function"
-            }
-            has_user_deduct = "deductFeeAmountByUser" in function_names
-            use_user_side_path = has_user_deduct and (
-                signer_source == "session_key"
-                or str(signer_account.address).lower() == user_key
-            )
 
             if use_user_side_path:
                 tx_fn = ai_vault.functions.deductFeeAmountByUser(
@@ -267,9 +279,14 @@ class AIBillingService:
                 tx,
                 signer_pk,
             )
+            # Handle different web3 versions: raw_transaction vs rawTransaction
+            raw_tx = getattr(signed, "raw_transaction", getattr(signed, "rawTransaction", None))
+            if not raw_tx:
+                raise AttributeError("SignedTransaction object has no 'raw_transaction' or 'rawTransaction'")
+
             tx_hash = await asyncio.to_thread(
                 web3_connector.w3.eth.send_raw_transaction,
-                signed.raw_transaction,
+                raw_tx,
             )
             timeout_seconds = max(
                 15,

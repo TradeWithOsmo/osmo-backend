@@ -402,6 +402,48 @@ async def set_symbol(
     target_source: Optional[str] = None,
     write_txn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    Switch the active TradingView chart to a different symbol or exchange.
+
+    This tool can be used to:
+    - Switch to a completely different symbol (e.g. BTC-USD -> ETH-USD)
+    - Switch to the SAME symbol but on a DIFFERENT exchange/source
+      (e.g. BTC-USD on Hyperliquid vs BTC-USD on Aster vs BTC-USD on dYdX)
+
+    Args:
+        symbol: The currently active chart symbol (used to route the command).
+        target_symbol: The symbol to switch to (e.g. "BTC-USD", "ETH-USDT").
+        target_source: The exchange/data source to use. Supported values:
+            - "hyperliquid" → Hyperliquid perpetuals (default for most crypto)
+            - "aster"       → Aster exchange
+            - "aevo"        → Aevo options & perpetuals
+            - "avantis"     → Avantis perpetuals
+            - "dydx"        → dYdX perpetuals
+            - "paradex"     → Paradex perpetuals
+            - "orderly"     → Orderly Network
+            - "vest"        → Vest exchange
+            - "ostium"      → Ostium (RWA, forex pairs, stocks, commodities)
+            If omitted, the exchange is auto-inferred from the symbol type.
+            To switch the SAME symbol to a different exchange, always pass
+            target_source explicitly (e.g. target_source="aster" for BTC on Aster).
+        write_txn_id: Optional transaction ID for write verification.
+
+    Examples:
+        # Switch to ETH on Hyperliquid (auto-inferred)
+        set_symbol("BTC-USD", "ETH-USD")
+
+        # Switch BTC to Aster exchange (same symbol, different exchange)
+        set_symbol("BTC-USD", "BTC-USD", target_source="aster")
+
+        # Switch BTC to dYdX
+        set_symbol("BTC-USD", "BTC-USD", target_source="dydx")
+
+        # Switch BTC to Aevo
+        set_symbol("BTC-USD", "BTC-USD", target_source="aevo")
+
+        # Switch to a forex pair on Ostium
+        set_symbol("BTC-USD", "EUR-USD", target_source="ostium")
+    """
     resolved_source = str(target_source or "").strip().lower() or _infer_target_source_from_symbol(target_symbol)
     return await send_tradingview_command(
         symbol=symbol,
@@ -434,6 +476,10 @@ async def setup_trade(
     validation_note: Optional[str] = None,
     invalidation_note: Optional[str] = None,
     write_txn_id: Optional[str] = None,
+    tool_states: Optional[Dict[str, Any]] = None,
+    amount_usd: Optional[float] = None,
+    size_pct: Optional[float] = None,
+    leverage: int = 1,
 ) -> Dict[str, Any]:
     normalized_side = str(side or "").lower()
     validation_level_raw = gp if gp is not None else validation
@@ -451,7 +497,7 @@ async def setup_trade(
         expected["validation"] = validation_level
     if invalidation_level is not None:
         expected["invalidation"] = invalidation_level
-    return await send_tradingview_command(
+    chart_result = await send_tradingview_command(
         symbol=symbol,
         action="setup_trade",
         params={
@@ -464,7 +510,6 @@ async def setup_trade(
             "trailing_sl": trailing_sl,
             "be": be,
             "liq": liq,
-            # Keep legacy gp/gl while exposing clearer validation/invalidation semantics.
             "gp": validation_level,
             "gl": invalidation_level,
             "validation": validation_level,
@@ -476,6 +521,46 @@ async def setup_trade(
         mode="write",
         expected_state=expected,
     )
+    
+    # NEW logic: Execute order alongside visualization if user expects setup_trade to also place order
+    try:
+        from agent.Tools.trade_execution import place_order
+        
+        # Use a sensible default size_pct if amount is not specified, so it actually places an order
+        # as requested by the user. If they specify neither, we default to 25% balance.
+        actual_size_pct = size_pct
+        if amount_usd is None and size_pct is None:
+            actual_size_pct = 0.25
+            
+        order_result = await place_order(
+            symbol=symbol,
+            side=side,
+            amount_usd=amount_usd,
+            size_pct=actual_size_pct,
+            tool_states=tool_states,
+            leverage=leverage,
+            order_type="market",
+            price=entry,
+            tp=tp,
+            sl=sl,
+            validation=validation_level,
+            invalidation=invalidation_level,
+        )
+        
+        # If it returns a HITL proposal, bubble it up so the frontend catches it
+        if order_result.get("status") == "proposal":
+            order_result["visual_setup"] = chart_result
+            return order_result
+            
+        return {
+            "visual_setup": chart_result,
+            "order_execution": order_result
+        }
+    except Exception as e:
+        return {
+            "visual_setup": chart_result,
+            "order_execution_error": str(e)
+        }
 
 
 async def add_price_alert(symbol: str, price: float, message: str, write_txn_id: Optional[str] = None) -> Dict[str, Any]:

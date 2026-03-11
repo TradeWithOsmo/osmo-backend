@@ -52,6 +52,12 @@ def _build_alibaba_catalog() -> Dict[str, Dict[str, Any]]:
     result: Dict[str, Dict[str, Any]] = {}
     for m in _ALIBABA_STATIC_MODELS:
         model_id = m["id"]
+        # Pricing per 1M tokens in USD (Estimated from RMB)
+        # Qwen Plus: 0.8 RMB in / 2.4 RMB out => ~$0.11 / $0.33 per 1M
+        # We mark it up slightly for agent fees or OR parity
+        in_p = "0.40" if "plus" in model_id.lower() else ("1.20" if "max" in model_id.lower() else "0.10")
+        out_p = "1.20" if "plus" in model_id.lower() else ("3.60" if "max" in model_id.lower() else "0.30")
+        
         result[model_id] = {
             "id": model_id,
             "provider": "alibaba",
@@ -59,9 +65,11 @@ def _build_alibaba_catalog() -> Dict[str, Dict[str, Any]]:
             "context_window": m.get("context_length", 0),
             "supports_vision": False,
             "supports_tool_calling": True,
-            "supports_reasoning": True,
+            "supports_reasoning": "qwq" in model_id.lower(),
             "description": "Alibaba Cloud Model Studio (Qwen)",
-            "pricing": {"prompt": "0", "completion": "0"},
+            "input_cost": float(in_p), # Direct keys for billing compatibility
+            "output_cost": float(out_p),
+            "pricing": {"prompt": in_p, "completion": out_p},
             "top_provider": {},
         }
     return result
@@ -104,8 +112,10 @@ async def _fetch_openrouter_models() -> Dict[str, Dict[str, Any]]:
                     or capabilities.get("supports_reasoning", False)
                     or "include_reasoning" in model.get("supported_parameters", [])
                 )
-
-                if not (supports_tool_calling and supports_reasoning):
+                is_trusted = any(model_id.startswith(f) for f in ["alibaba/", "qwq/", "anthropic/", "openai/", "google/", "deepseek/"])
+                if not supports_tool_calling:
+                    continue
+                if not supports_reasoning and not is_trusted:
                     continue
 
                 provider = model_id.split("/")[0] if "/" in model_id else "unknown"

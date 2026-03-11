@@ -131,7 +131,8 @@ async def main():
         })
         
         signed_tx = web3_connector.w3.eth.account.sign_transaction(tx_data, session_key)
-        tx_hash = web3_connector.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        raw_tx = getattr(signed_tx, "raw_transaction", getattr(signed_tx, "rawTransaction", None))
+        tx_hash = web3_connector.w3.eth.send_raw_transaction(raw_tx)
         logger.info(f"✅ Transaction Sent! Hash: {tx_hash.hex()}")
 
     except Exception as e:

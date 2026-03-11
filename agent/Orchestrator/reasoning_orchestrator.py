@@ -198,12 +198,10 @@ class ReasoningOrchestrator:
                         args={"symbol": symbol, "asset_type": asset_type},
                     ),
                     ToolCall(
-                        name="get_technical_analysis",
-                        reason="Generate compact technical summary",
+                        name="get_active_indicators",
+                        reason="Read indicator values from chart for technical context",
                         args={
                             "symbol": symbol,
-                            "timeframe": tf,
-                            "asset_type": asset_type,
                         },
                     ),
                 ]

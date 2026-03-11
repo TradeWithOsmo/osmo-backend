@@ -340,7 +340,7 @@ class OrderService:
             await session.refresh(order)
 
         # 8. Optimistic Shadow Update for On-chain
-        if False:#exchange == "onchain":
+        if exchange == "onchain":
             try:
                 # We reuse the logic from report_onchain_order to update shadow position record
                 await self.report_onchain_order(
@@ -491,11 +491,6 @@ class OrderService:
                     "reduce_only": reduce_only,
                 },
             )
-            return {
-                "order_id": order_id,
-                "status": "reported",
-                "message": "Order reported (shadow position creation disabled)",
-            }
 
             # 2. Check if we should create a shadow position record
             # This ensures the position shows up even if indexing is slow
@@ -1179,12 +1174,11 @@ class OrderService:
                 if account:
                     # SIMULATION MODE: Use Ledger as source of truth
                     if use_simulation:
-                        initial_simulation_balance = float(
-                            os.getenv("INITIAL_SIMULATION_BALANCE", "1000")
-                        )
-                        normalized_sim_balance = initial_simulation_balance + float(
-                            account.realized_pnl or 0.0
-                        )
+                        # Use account.balance as the base (seeded from vault balance on creation).
+                        # Falls back to INITIAL_SIMULATION_BALANCE if balance is 0.
+                        stored_balance = float(account.balance or 0.0)
+                        fallback_balance = float(os.getenv("INITIAL_SIMULATION_BALANCE", "1000"))
+                        normalized_sim_balance = stored_balance if stored_balance > 0 else fallback_balance
 
                         # Calculate total margin usage from simulation positions
                         simulation_positions_margin = sum(
@@ -1306,8 +1300,11 @@ class OrderService:
                             if db_pos.position_id
                             else False
                         )
+                        # Only match by symbol for non-simulation exchanges (connector positions).
+                        # For simulation, the DB is the source of truth so each row is a distinct position.
                         match_symbol = (
-                            pos.get("symbol") == db_pos.symbol
+                            db_pos.exchange != "simulation"
+                            and pos.get("symbol") == db_pos.symbol
                             and pos.get("exchange") == db_pos.exchange
                         )
                         if (match_id or match_symbol) and pos.get(
@@ -1385,7 +1382,7 @@ class OrderService:
                         unrealized_pnl = 0
 
                         shadow_pos = {
-                            "id": f"shadow_{db_pos.id}",
+                            "id": db_pos.position_id or str(db_pos.id),
                             "symbol": db_pos.symbol,
                             "side": db_pos.side,
                             "size": db_pos.size,

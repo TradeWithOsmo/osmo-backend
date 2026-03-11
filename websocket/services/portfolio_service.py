@@ -14,6 +14,8 @@ from database.connection import get_db
 logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
+import asyncio
+from connectors.init_connectors import connector_registry
 
 class PortfolioService:
     """Service for calculating and managing portfolio values"""
@@ -31,19 +33,32 @@ class PortfolioService:
         result = await self.db.execute(select(LedgerAccount).where(LedgerAccount.address == user_address.lower()))
         ledger = result.scalar_one_or_none()
 
+        # --- ROBUSTNESS: Fetch on-chain balance as fallback if ledger is empty or for On-chain users ---
+        onchain_cash = 0.0
+        try:
+            onchain_conn = connector_registry.get_connector("onchain")
+            if onchain_conn:
+                onchain_data = await onchain_conn.get_user_balances(user_address)
+                onchain_cash = float(onchain_data.get("free_collateral", 0.0))
+        except Exception as e:
+            logger.debug(f"Could not fetch on-chain balance for {user_address}: {e}")
+
         force_mode = os.getenv("FORCE_EXECUTION_MODE", "auto").lower().strip()
         if ledger:
             realized_pnl = float(ledger.realized_pnl or 0.0)
             if force_mode == "simulation":
-                initial_simulation_balance = float(
-                    os.getenv("INITIAL_SIMULATION_BALANCE", "1000")
-                )
-                cash_balance = initial_simulation_balance + realized_pnl
+                # Use account.balance (seeded from vault at creation) as the base.
+                stored_balance = float(ledger.balance or 0.0)
+                fallback_balance = float(os.getenv("INITIAL_SIMULATION_BALANCE", "1000"))
+                cash_balance = stored_balance if stored_balance > 0 else fallback_balance
             else:
-                cash_balance = float(ledger.balance or 0.0)
+                # Use whichever is higher/available: Ledger (Internal Snapshot) or Onchain (Real Vault)
+                # This ensures size_pct works for fresh on-chain users who haven't deposited to the local ledger.
+                db_balance = float(ledger.balance or 0.0)
+                cash_balance = max(db_balance, onchain_cash)
             locked_margin = float(ledger.locked_margin or 0.0)
         else:
-            cash_balance = 0.0
+            cash_balance = onchain_cash
             locked_margin = 0.0
             realized_pnl = 0.0
         

@@ -68,6 +68,7 @@ async def persist_ai_output(
     input_tokens: int,
     output_tokens: int,
     total_cost: float,
+    duration_ms: int = 0,
 ) -> None:
     await asyncio.gather(
         chat_service.save_message(
@@ -86,6 +87,7 @@ async def persist_ai_output(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost=total_cost,
+            duration_ms=duration_ms,
             session_id=session_id,
         ),
     )

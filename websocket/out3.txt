@@ -1,0 +1,7 @@
+Testing place_order...
+[Ledger.process_trade_open] Opening buy position for BTC-USD, size=0.002105263157894737, exchange=simulation
+
+Testing get_positions...
+[OrderService] Error fetching/syncing LedgerAccount: [WinError 1225] The remote computer refused the network connection
+[OrderService] Error merging shadow positions/TPSL: [WinError 1225] The remote computer refused the network connection
+get_positions response: {'positions': [], 'summary': {'account_value': 0, 'total_margin_used': 0, 'free_collateral': 0, 'margin_usage': 0, 'leverage': 0}}

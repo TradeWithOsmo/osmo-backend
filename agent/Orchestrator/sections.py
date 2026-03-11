@@ -60,9 +60,9 @@ OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 RESEARCH_TOOLS = {
     # Data
-    "get_price", "get_technical_analysis", "get_high_low_levels",
+    "get_price", "get_high_low_levels",
     "get_ticker_stats", "get_funding_rate",
-    "get_indicators", "get_chainlink_price", "get_technical_summary",
+    "get_chainlink_price",
     # Canvas read
     "get_active_indicators",
     # Web (conditionally enabled by web gate)
@@ -78,7 +78,7 @@ STRATEGY_TOOLS = {
     # Drawing
     "draw", "update_drawing", "clear_drawings",
     # Data (for validation)
-    "get_price", "get_high_low_levels", "get_technical_analysis",
+    "get_price", "get_high_low_levels", "get_active_indicators",
 }
 
 EXECUTION_TOOLS = {
@@ -104,7 +104,7 @@ RISK_TOOLS = {
 MONITORING_TOOLS: set = set()  # No tools — works from context only
 
 SIMULATION_TOOLS = {
-    "get_price", "get_technical_analysis", "get_high_low_levels",
+    "get_price", "get_active_indicators", "get_high_low_levels",
     "get_ticker_stats",
 }
 

@@ -15,8 +15,11 @@ def _resolve_user_address(
     user_address: Optional[str],
     tool_states: Optional[Dict[str, Any]] = None,
 ) -> str:
-    if user_address:
-        return str(user_address).strip()
+    # Only use explicitly-passed address if it looks like a real wallet (0x + min length).
+    # This prevents LLM-hallucinated placeholders from being used.
+    explicit = str(user_address or "").strip()
+    if explicit.startswith("0x") and len(explicit) >= 10:
+        return explicit
     tool_states = tool_states or {}
     return str(tool_states.get("user_address") or "").strip()
 

@@ -34,12 +34,7 @@ EvalResult = Tuple[ActionStatus, str, Optional[str]]
 
 _PRICE_TOOLS = {"get_price", "get_ticker_stats"}
 _LEVEL_TOOLS = {"get_high_low_levels"}
-_TA_TOOLS = {
-    "get_technical_analysis",
-    "get_technical_summary",
-    "get_patterns",
-    "get_indicators",
-}
+_TA_TOOLS: set = set()  # TA values come from get_active_indicators (in _INDICATOR_READ_TOOLS)
 _INDICATOR_READ_TOOLS = {"get_active_indicators"}
 _INDICATOR_WRITE_TOOLS = {"add_indicator", "remove_indicator", "clear_indicators"}
 _DRAW_TOOLS = {"draw", "update_drawing", "clear_drawings"}
@@ -83,9 +78,9 @@ _DISCOVERY_TOOLS = {
     "list_supported_indicator_aliases",
     "verify_indicator_present",
 }
-_ORDERBOOK_TOOLS = {"get_orderbook", "get_funding_rate", "get_chainlink_price"}
-_ANALYTICS_TOOLS = {"get_whale_activity", "get_token_distribution"}
-_KNOWLEDGE_TOOLS = {"search_knowledge_base"}
+_ORDERBOOK_TOOLS = {"get_funding_rate", "get_chainlink_price"}
+_ANALYTICS_TOOLS: set = set()
+_KNOWLEDGE_TOOLS: set = set()
 
 
 # ---------------------------------------------------------------------------
