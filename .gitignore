@@ -64,6 +64,7 @@ github-token.md
 # Temp/scratch files
 agent_sync.tar.gz
 tmp_*.py
+**/tmp_*.py
 
 # Generated reports
 reports/
