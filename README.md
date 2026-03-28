@@ -1,6 +1,21 @@
-# Osmo Backend
+<p align="center">
+  <img src="https://raw.githubusercontent.com/TradeWithOsmo/osmo-web/main/public/Logos/icon.png" width="80" height="80" alt="Osmo" />
+</p>
 
-Backend services for Osmo — market streaming, API aggregation, portfolio/leaderboard, and AI agent.
+<h1 align="center">Osmo Backend</h1>
+
+<p align="center">
+  Market streaming, API aggregation, portfolio/leaderboard, and AI agent services.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Base-0052FF?style=flat-square&logo=ethereum&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python_3.13-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" />
+</p>
+
+---
 
 Repository: https://github.com/TradeWithOsmo/osmo-backend
 
