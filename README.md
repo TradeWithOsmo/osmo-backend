@@ -126,16 +126,16 @@ From `.env` / `websocket/.env` (depends on run mode):
 - `CHAIN_ID` — `84532`
 - `NETWORK_NAME` — `base_sepolia`
 - `ARBITRUM_RPC_URL` — Base Sepolia RPC URL (named for legacy reasons)
-- `TRADING_VAULT_ADDRESS` — `0x7D909A44b5eb12cEf16ce4D824e259bC07E2927D`
-- `ORDER_ROUTER_ADDRESS` — `0x411985C7f9C64c66A2C2390AbAC7AD9a718da60e`
-- `SESSION_KEY_MANAGER_ADDRESS` — `0xc2853D45DA39B36b31cf12D92b6fe2e643c12DD8`
-- `POSITION_MANAGER_ADDRESS` — `0xBE46bDB894325cf26A50AecFC0CED7a3c58271a0`
+- `TRADING_VAULT_ADDRESS` — deployed contract address (see `osmo-contracts/.env`)
+- `ORDER_ROUTER_ADDRESS` — deployed contract address
+- `SESSION_KEY_MANAGER_ADDRESS` — deployed contract address
+- `POSITION_MANAGER_ADDRESS` — deployed contract address
 - `SESSION_KEY_PRIVATE_KEY` — backend signing key for session-key transactions
 
 ### Fee Collection
 
-Trading fee (0.08% per order) accumulates in AIVault (`0x5aBb786D8fa77D8Cc7c689d78E871dbD57039ad4`).
-To cover LZ cross-chain fees, periodically top up the HyperliquidLayerZeroAdapter (`0x009Df011949879ac88392B41B403765b22365BE3`) with ETH.
+Trading fee (0.08% per order) accumulates in AIVault (see `AI_VAULT_ADDRESS` in `.env`).
+To cover LZ cross-chain fees, periodically top up the HyperliquidLayerZeroAdapter with ETH.
 
 ## AI Agent Architecture
 
