@@ -31,7 +31,6 @@ env/
 .env
 .env.*
 !.env.example
-!.env
 
 # OS
 .DS_Store
@@ -57,11 +56,21 @@ websocket/foundry_project/
 agent/Resources/
 websocket/Resources/
 
+# Sensitive files
+github-token.md
+*.pem
+*.key
+
+# Temp/scratch files
+agent_sync.tar.gz
+tmp_*.py
+
+# Generated reports
+reports/
+
 # Local generated/work folders
 /backend/
 /agent_backup_Tools/
-/pytest-cache-files-98z3g4bk/
-/pytest-cache-files-na1ittcj/
+/pytest-cache-files-*/
 /agent/logs/
 /agent/Knowledge/
-/agent/Knowledge/ContectCats/
