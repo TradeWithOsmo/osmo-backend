@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/TradeWithOsmo/osmo-web/main/public/Logos/icon.png" alt="Osmo" width="64" />
+
 # Osmo Backend
 
 Market streaming, API aggregation, portfolio/leaderboard, and AI agent services.
